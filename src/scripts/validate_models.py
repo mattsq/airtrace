@@ -20,6 +20,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.nn.parameter import UninitializedParameter
 from torch.utils.data import DataLoader, TensorDataset
 
 # Add src to path for imports
@@ -32,6 +33,20 @@ from airtrace.models.registry import list_models, build_model
 
 # Sensor columns (excluding timestamp)
 SENSOR_COLUMNS = ["fuel_flow", "mach", "altitude", "oat", "n1", "weight"]
+
+
+def count_trainable_parameters(model: nn.Module) -> int:
+    """Count initialized trainable parameters for a model."""
+    total = 0
+    for param in model.parameters():
+        if not param.requires_grad:
+            continue
+        if isinstance(param, UninitializedParameter):
+            # Lazy modules defer materialising parameters until the first forward
+            # pass. Skip them here so validation can run without a warmup call.
+            continue
+        total += param.numel()
+    return total
 
 
 def generate_synthetic_data(
@@ -179,7 +194,7 @@ def train_model(
     model = model.to(device)
 
     # Check if model has trainable parameters
-    n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    n_trainable = count_trainable_parameters(model)
 
     if n_trainable == 0:
         # Model has no trainable parameters (e.g., baseline models)
@@ -343,7 +358,7 @@ def validate_single_model(
         model = build_model(config, input_dim=input_dim, output_dim=output_dim)
 
         n_params = model.get_num_params()
-        n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        n_trainable = count_trainable_parameters(model)
         print(f"📊 Model parameters: {n_params:,} (trainable: {n_trainable:,})")
 
         # Training phase
