@@ -372,6 +372,17 @@ def test_drift_model_linear_sequence():
     torch.testing.assert_close(output["preds"], expected_pred, atol=1e-4, rtol=1e-4)
 
 
+def test_lazy_baseline_model_repr_handles_uninitialized_parameters():
+    """Ensure lazy modules don't break model representations or validation."""
+    model = LinearARModel(input_dim=5, output_dim=3)
+
+    # ``repr`` calls ``get_num_params`` which previously failed for lazy params.
+    model_repr = repr(model)
+
+    assert "LinearARModel" in model_repr
+    assert "num_params" in model_repr
+
+
 def test_exponential_smoothing_model_forward(batch):
     """Test exponential smoothing model forward pass."""
     model = ExponentialSmoothingModel(input_dim=5, output_dim=3, alpha=0.3)

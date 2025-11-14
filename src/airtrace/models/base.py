@@ -1,10 +1,11 @@
 """Base classes for autoregressive models."""
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 
 import torch
 import torch.nn as nn
+from torch.nn.parameter import UninitializedParameter
 
 
 class ARBaseModel(nn.Module, ABC):
@@ -54,7 +55,24 @@ class ARBaseModel(nn.Module, ABC):
         Returns:
             Number of trainable parameters
         """
-        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+        total_params = 0
+        for param in self.parameters():
+            if not param.requires_grad:
+                continue
+
+            if isinstance(param, UninitializedParameter):
+                # Lazy modules register parameters immediately but defer
+                # materialising their shapes until the first forward pass.
+                # Accessing ``numel`` on these tensors raises an error, so we
+                # skip them here to keep utility methods like ``__repr__``
+                # functional before initialisation. Once the module receives
+                # a batch the parameter will become a regular ``Parameter``
+                # and will be counted normally.
+                continue
+
+            total_params += param.numel()
+
+        return total_params
 
     def reset_parameters(self):
         """Reset model parameters to initial state.
