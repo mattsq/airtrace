@@ -7,13 +7,17 @@ from airtrace.models import (
     DriftModel,
     ExponentialSmoothingModel,
     GRUARModel,
+    HoltLinearTrendModel,
+    LinearARModel,
     LinearTrendModel,
     MeanModel,
     MedianModel,
     MovingAverageModel,
     PersistenceModel,
+    PolynomialTrendModel,
     SeasonalNaiveModel,
     TCNModel,
+    ThetaModel,
     TransformerModel,
     ZeroModel,
 )
@@ -468,6 +472,9 @@ def test_seasonal_naive_season_validation():
     (DriftModel, {}),
     (ExponentialSmoothingModel, {"alpha": 0.3}),
     (SeasonalNaiveModel, {"season_length": 10}),
+    (PolynomialTrendModel, {"degree": 2}),
+    (HoltLinearTrendModel, {"alpha": 0.3, "beta": 0.1}),
+    (ThetaModel, {"theta": 2.0, "alpha": 0.5}),
 ])
 def test_baseline_models_no_nan(model_class, kwargs):
     """Test that baseline models don't produce NaN values."""
@@ -490,6 +497,9 @@ def test_baseline_models_no_nan(model_class, kwargs):
     (DriftModel, {}),
     (ExponentialSmoothingModel, {"alpha": 0.3}),
     (SeasonalNaiveModel, {"season_length": 10}),
+    (PolynomialTrendModel, {"degree": 2}),
+    (HoltLinearTrendModel, {"alpha": 0.3, "beta": 0.1}),
+    (ThetaModel, {"theta": 2.0, "alpha": 0.5}),
 ])
 def test_baseline_models_num_params(model_class, kwargs):
     """Test that baseline models have minimal parameters."""
@@ -512,6 +522,9 @@ def test_baseline_models_deterministic():
         DriftModel(input_dim=5, output_dim=3),
         ExponentialSmoothingModel(input_dim=5, output_dim=3, alpha=0.3),
         SeasonalNaiveModel(input_dim=5, output_dim=3, season_length=10),
+        PolynomialTrendModel(input_dim=5, output_dim=3, degree=2),
+        HoltLinearTrendModel(input_dim=5, output_dim=3, alpha=0.3, beta=0.1),
+        ThetaModel(input_dim=5, output_dim=3, theta=2.0, alpha=0.5),
     ]
 
     x = torch.randn(2, 16, 5)
@@ -523,3 +536,165 @@ def test_baseline_models_deterministic():
 
         # Should produce identical results
         torch.testing.assert_close(output1["preds"], output2["preds"])
+
+
+# ============================================================================
+# New Baseline Model Tests
+# ============================================================================
+
+
+def test_polynomial_trend_model_forward(batch):
+    """Test polynomial trend model forward pass."""
+    model = PolynomialTrendModel(input_dim=5, output_dim=3, degree=2)
+
+    output = model(batch)
+
+    assert "preds" in output
+    assert output["preds"].shape == (4, 1, 3)
+    assert "degree" in output["extras"]
+    assert output["extras"]["degree"] == 2
+
+
+def test_polynomial_trend_quadratic_sequence():
+    """Test polynomial trend on quadratic sequence."""
+    model = PolynomialTrendModel(input_dim=1, output_dim=1, degree=2)
+
+    # Create quadratic sequence: y = 1 + 2*t + 3*t^2
+    t = torch.arange(10, dtype=torch.float32)
+    x = (1 + 2 * t + 3 * t ** 2).reshape(1, 10, 1)  # [1, 10, 1]
+
+    output = model(x)
+
+    # Should predict next value: y(10) = 1 + 2*10 + 3*100 = 321
+    expected = torch.tensor([[[321.0]]])
+    torch.testing.assert_close(output["preds"], expected, atol=1.0, rtol=1e-3)
+
+
+def test_polynomial_trend_degree_validation():
+    """Test that invalid degree raises error."""
+    with pytest.raises(ValueError):
+        PolynomialTrendModel(input_dim=5, output_dim=3, degree=0)
+
+    with pytest.raises(ValueError):
+        PolynomialTrendModel(input_dim=5, output_dim=3, degree=-1)
+
+
+def test_holt_linear_trend_model_forward(batch):
+    """Test Holt's linear trend model forward pass."""
+    model = HoltLinearTrendModel(input_dim=5, output_dim=3, alpha=0.3, beta=0.1)
+
+    output = model(batch)
+
+    assert "preds" in output
+    assert output["preds"].shape == (4, 1, 3)
+    assert "alpha" in output["extras"]
+    assert "beta" in output["extras"]
+    assert "level" in output["extras"]
+    assert "trend" in output["extras"]
+
+
+def test_holt_linear_trend_alpha_beta_validation():
+    """Test that invalid alpha/beta values raise errors."""
+    with pytest.raises(ValueError):
+        HoltLinearTrendModel(input_dim=5, output_dim=3, alpha=0.0, beta=0.1)
+
+    with pytest.raises(ValueError):
+        HoltLinearTrendModel(input_dim=5, output_dim=3, alpha=1.5, beta=0.1)
+
+    with pytest.raises(ValueError):
+        HoltLinearTrendModel(input_dim=5, output_dim=3, alpha=0.3, beta=0.0)
+
+    with pytest.raises(ValueError):
+        HoltLinearTrendModel(input_dim=5, output_dim=3, alpha=0.3, beta=1.5)
+
+
+def test_holt_linear_trend_constant_sequence():
+    """Test Holt's linear trend on constant sequence."""
+    model = HoltLinearTrendModel(input_dim=5, output_dim=5, alpha=0.3, beta=0.1)
+
+    # Create constant sequence
+    x = torch.ones(2, 10, 5) * 5.0
+
+    output = model(x)
+
+    # For constant sequence, trend should approach zero
+    # and prediction should be close to constant value
+    assert output["preds"].shape == (2, 1, 5)
+    # Trend should be small
+    assert output["extras"]["trend"].abs().max() < 1.0
+
+
+def test_theta_model_forward(batch):
+    """Test Theta model forward pass."""
+    model = ThetaModel(input_dim=5, output_dim=3, theta=2.0, alpha=0.5)
+
+    output = model(batch)
+
+    assert "preds" in output
+    assert output["preds"].shape == (4, 1, 3)
+    assert "theta" in output["extras"]
+    assert "alpha" in output["extras"]
+    assert "theta0_forecast" in output["extras"]
+    assert "theta2_forecast" in output["extras"]
+
+
+def test_theta_model_linear_sequence():
+    """Test Theta model on linear sequence."""
+    model = ThetaModel(input_dim=1, output_dim=1, theta=2.0, alpha=0.5)
+
+    # Create linear sequence: y = 2 + 3*t
+    t = torch.arange(10, dtype=torch.float32)
+    x = (2 + 3 * t).reshape(1, 10, 1)  # [1, 10, 1]
+
+    output = model(x)
+
+    # For linear sequence, theta-0 should give good forecast
+    # Expected: y(10) = 2 + 3*10 = 32
+    # Prediction should be close to 32
+    assert output["preds"].shape == (1, 1, 1)
+    # Allow some tolerance due to theta-2 line
+    assert 28.0 < output["preds"][0, 0, 0] < 36.0
+
+
+def test_linear_ar_model_forward(batch):
+    """Test Linear AR model forward pass."""
+    model = LinearARModel(input_dim=5, output_dim=3)
+
+    output = model(batch)
+
+    assert "preds" in output
+    assert output["preds"].shape == (4, 1, 3)
+
+
+def test_linear_ar_model_trainable():
+    """Test that Linear AR model has trainable parameters."""
+    model = LinearARModel(input_dim=5, output_dim=3)
+    x = torch.randn(2, 10, 5)
+
+    # First forward pass creates the linear layer
+    output1 = model(x)
+
+    # Check that model has parameters
+    num_params = model.get_num_params()
+    assert num_params > 0
+    # Should have input_dim * T_in * output_dim + output_dim (bias) params
+    # For T_in=10, D_in=5, D_out=3: 10*5*3 + 3 = 153
+    assert num_params == 10 * 5 * 3 + 3
+
+
+def test_linear_ar_model_gradient_flow():
+    """Test that gradients flow through Linear AR model."""
+    model = LinearARModel(input_dim=5, output_dim=3)
+    x = torch.randn(2, 10, 5, requires_grad=True)
+
+    output = model(x)
+    preds = output["preds"]
+
+    # Compute dummy loss
+    loss = preds.mean()
+    loss.backward()
+
+    # Check that model parameters have gradients
+    for param in model.parameters():
+        if param.requires_grad:
+            assert param.grad is not None

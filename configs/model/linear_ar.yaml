@@ -1,0 +1,5 @@
+# @package _global_
+
+model:
+  name: linear_ar
+  params: {}  # No hyperparameters - trainable linear weights

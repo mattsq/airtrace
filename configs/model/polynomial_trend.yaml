@@ -1,0 +1,6 @@
+# @package _global_
+
+model:
+  name: polynomial_trend
+  params:
+    degree: 2  # Polynomial degree: 2=quadratic, 3=cubic, etc.

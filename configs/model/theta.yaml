@@ -1,0 +1,7 @@
+# @package _global_
+
+model:
+  name: theta
+  params:
+    theta: 2.0  # Theta coefficient for curvature line (typically 2.0)
+    alpha: 0.5  # Weight for combining theta-0 and theta-2 lines (0.5 = equal weight)
