@@ -117,6 +117,31 @@ window:
   target_sensors: ["fuel_flow", "mach"]
 ```
 
+### Synthetic Data Generation
+
+For testing and experimentation, AirTrace includes a physics-based synthetic data generator:
+
+```bash
+# Generate 20 synthetic cruise flights
+python src/scripts/generate_synthetic_data.py --n-flights 20 --output data/
+
+# Or use the Python API
+from airtrace.data.synthetic import create_synthetic_dataset
+splits = create_synthetic_dataset(
+    data_root="data/",
+    n_flights=20,
+    seed=42
+)
+```
+
+The generator produces realistic aircraft cruise sensor readings with:
+- Physically plausible sensor relationships (fuel flow ↔ thrust ↔ weight)
+- ISA temperature model
+- Configurable turbulence and noise levels
+- Deterministic generation from seed
+
+See [Synthetic Data Documentation](docs/synthetic_data.md) for details.
+
 ## Adding New Components
 
 ### New Model

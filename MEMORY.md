@@ -140,11 +140,42 @@ INTERIM and PROCESSED are caches and can be deleted/regenerated. RAW is sacred.
 
 ---
 
+### 2025-11-14: Synthetic Data: Physics-Based Cruise Generator
+
+**Discovered by**: Synthetic dataset generator implementation
+**Impact**: Data generation, testing, experimentation
+
+A physics-based synthetic data generator was added for aircraft cruise sensor readings. Key insights:
+
+1. **Physical relationships modeled**:
+   - Fuel flow ∝ N1 (engine thrust)
+   - Weight decreases linearly as fuel burns
+   - OAT follows ISA model with altitude
+   - N1 depends on weight, altitude, and speed
+
+2. **Follows standard pipeline**: Generated data goes through Raw → Interim → Processed like real data
+
+3. **Reproducibility**: Same seed produces identical data, critical for experiments
+
+4. **Limitations**: Only models stable cruise conditions, NOT takeoff/descent/maneuvers/anomalies
+
+**Usage**:
+```python
+from airtrace.data.synthetic import create_synthetic_dataset
+splits = create_synthetic_dataset(data_root="data/", n_flights=20, seed=42)
+```
+
+**Code Reference**: `src/airtrace/data/synthetic.py`, `configs/data/synthetic_cruise.yaml`
+
+**Related**: Data Pipeline learning (three-stage transformation)
+
+---
+
 ## Current State
 
-**Total learnings**: 3
+**Total learnings**: 4
 **Last updated**: 2025-11-14
-**Most active areas**: Project structure, configuration system, data pipeline
+**Most active areas**: Project structure, configuration system, data pipeline, synthetic data
 
 ---
 
