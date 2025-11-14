@@ -1,0 +1,19 @@
+defaults:
+  - data: qantas_737
+  - model: gru_ar
+  - transforms: zscore_diff
+  - task: one_step
+  - train: default
+  - _self_
+
+mode: train
+seed: 42
+log_dir: runs/${now:%Y%m%d}/${exp_name}
+exp_name: "debug"
+
+# Hydra configuration
+hydra:
+  run:
+    dir: ${log_dir}
+  job:
+    chdir: false

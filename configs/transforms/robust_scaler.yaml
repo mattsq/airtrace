@@ -1,0 +1,11 @@
+# @package _global_
+
+transforms:
+  pipeline:
+    - name: robust_scaler
+      per_sensor: true
+      quantile_range: [25.0, 75.0]
+      with_centering: true
+      with_scaling: true
+    - name: context
+      use_static: ["aircraft_type"]

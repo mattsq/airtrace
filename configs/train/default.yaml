@@ -1,0 +1,39 @@
+# @package _global_
+
+train:
+  batch_size: 64
+  epochs: 50
+  num_workers: 8
+
+  optimizer:
+    name: adam
+    lr: 1e-3
+    weight_decay: 1e-5
+    betas: [0.9, 0.999]
+
+  scheduler:
+    name: cosine
+    warmup_epochs: 3
+    min_lr: 1e-6
+
+  # Early stopping
+  early_stopping:
+    patience: 10
+    min_delta: 1e-4
+    monitor: val_loss
+    mode: min
+
+  # Checkpointing
+  checkpoint:
+    save_top_k: 3
+    monitor: val_loss
+    mode: min
+
+  # Gradient clipping
+  grad_clip:
+    enabled: true
+    max_norm: 1.0
+
+  # Logging
+  log_every_n_steps: 50
+  val_check_interval: 1.0  # Validate every epoch

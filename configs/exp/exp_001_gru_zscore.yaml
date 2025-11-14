@@ -1,0 +1,9 @@
+defaults:
+  - override /data: qantas_737
+  - override /model: gru_ar
+  - override /transforms: zscore_diff
+  - override /task: one_step
+  - override /train: default
+
+exp_name: "gru_zscore_one_step"
+seed: 123

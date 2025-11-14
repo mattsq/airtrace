@@ -1,0 +1,12 @@
+# @package _global_
+
+task:
+  name: anomaly
+  loss: nll  # Negative log-likelihood for probabilistic anomaly scoring
+  metrics:
+    - nll
+    - auroc
+    - average_precision
+  # Anomaly detection: score log-likelihood of observed trace
+  score_type: "log_likelihood"
+  threshold_percentile: 99.0  # Anomaly threshold at 99th percentile

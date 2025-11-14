@@ -1,0 +1,10 @@
+# @package _global_
+
+model:
+  name: gru_ar
+  params:
+    hidden_size: 128
+    num_layers: 2
+    dropout: 0.1
+    bidirectional: false
+    use_attention: false
