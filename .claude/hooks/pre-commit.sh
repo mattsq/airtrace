@@ -1,0 +1,211 @@
+#!/bin/bash
+# AirTrace Pre-Commit Hook - Enforces Project Structure
+# This hook runs before each git commit to validate changes comply with AirTrace framework rules
+
+set -e
+
+echo "🔍 AirTrace Structure Validation Hook"
+echo "======================================"
+
+# Get list of staged files
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
+
+if [ -z "$STAGED_FILES" ]; then
+    echo "✅ No files to validate"
+    exit 0
+fi
+
+ERRORS=0
+WARNINGS=0
+
+# Color codes
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+GREEN='\033[0;32m'
+NC='\033[0m' # No Color
+
+# Rule 1: Check for files created in disallowed locations
+echo ""
+echo "📋 Rule 1: Validating file locations..."
+for file in $STAGED_FILES; do
+    # Skip deleted files
+    if [ ! -f "$file" ]; then
+        continue
+    fi
+
+    # Allowed patterns
+    if [[ "$file" =~ ^src/airtrace/ ]] || \
+       [[ "$file" =~ ^configs/ ]] || \
+       [[ "$file" =~ ^tests/ ]] || \
+       [[ "$file" =~ ^notebooks/.*\.ipynb$ ]] || \
+       [[ "$file" =~ ^docs/.*\.md$ ]] || \
+       [[ "$file" =~ ^\.claude/ ]] || \
+       [[ "$file" =~ ^(README\.md|CLAUDE\.md|MEMORY\.md|AGENTS\.md|GEMINI\.md|LICENSE|\.gitignore|pyproject\.toml|setup\.py|requirements\.txt)$ ]]; then
+        echo "  ✓ $file (valid location)"
+    elif [[ "$file" =~ ^data/ ]]; then
+        echo -e "  ${RED}✗ $file${NC} - NEVER commit files in data/ (should be gitignored)"
+        ERRORS=$((ERRORS + 1))
+    else
+        echo -e "  ${YELLOW}⚠ $file${NC} - Unusual location, verify this is intentional"
+        WARNINGS=$((WARNINGS + 1))
+    fi
+done
+
+# Rule 2: Check config-code synchronization for models
+echo ""
+echo "📋 Rule 2: Validating model config-code sync..."
+for file in $STAGED_FILES; do
+    if [[ "$file" =~ ^src/airtrace/models/(.+)\.py$ ]]; then
+        model_name="${BASH_REMATCH[1]}"
+        if [ "$model_name" != "base" ] && [ "$model_name" != "__init__" ]; then
+            # Check if model has @register decorator
+            if grep -q "@register" "$file"; then
+                # Extract registered name(s)
+                registered_names=$(grep -oP "@register\(\s*['\"]\\K[^'\"]+(?=['\"])" "$file" || echo "")
+                for reg_name in $registered_names; do
+                    config_file="configs/model/${reg_name}.yaml"
+                    if [ -f "$config_file" ]; then
+                        echo "  ✓ Model $reg_name: $file ↔ $config_file"
+                    else
+                        echo -e "  ${YELLOW}⚠ Model $reg_name${NC}: $file exists but $config_file missing"
+                        echo "    Create $config_file or this model won't be usable in experiments"
+                        WARNINGS=$((WARNINGS + 1))
+                    fi
+                done
+            fi
+        fi
+    fi
+done
+
+# Rule 3: Check config-code synchronization for transforms
+echo ""
+echo "📋 Rule 3: Validating transform config-code sync..."
+for file in $STAGED_FILES; do
+    if [[ "$file" =~ ^src/airtrace/transforms/(.+)\.py$ ]]; then
+        transform_name="${BASH_REMATCH[1]}"
+        if [ "$transform_name" != "base" ] && [ "$transform_name" != "__init__" ]; then
+            if grep -q "@register" "$file"; then
+                registered_names=$(grep -oP "@register\(\s*['\"]\\K[^'\"]+(?=['\"])" "$file" || echo "")
+                for reg_name in $registered_names; do
+                    config_file="configs/transforms/${reg_name}.yaml"
+                    if [ -f "$config_file" ]; then
+                        echo "  ✓ Transform $reg_name: $file ↔ $config_file"
+                    else
+                        echo -e "  ${YELLOW}⚠ Transform $reg_name${NC}: $file exists but $config_file missing"
+                        echo "    Create $config_file or include in a transform pipeline config"
+                        WARNINGS=$((WARNINGS + 1))
+                    fi
+                done
+            fi
+        fi
+    fi
+done
+
+# Rule 4: Check config-code synchronization for tasks
+echo ""
+echo "📋 Rule 4: Validating task config-code sync..."
+for file in $STAGED_FILES; do
+    if [[ "$file" =~ ^src/airtrace/tasks/(.+)\.py$ ]]; then
+        task_name="${BASH_REMATCH[1]}"
+        if [ "$task_name" != "base" ] && [ "$task_name" != "__init__" ]; then
+            if grep -q "@register" "$file"; then
+                registered_names=$(grep -oP "@register\(\s*['\"]\\K[^'\"]+(?=['\"])" "$file" || echo "")
+                for reg_name in $registered_names; do
+                    config_file="configs/task/${reg_name}.yaml"
+                    if [ -f "$config_file" ]; then
+                        echo "  ✓ Task $reg_name: $file ↔ $config_file"
+                    else
+                        echo -e "  ${YELLOW}⚠ Task $reg_name${NC}: $file exists but $config_file missing"
+                        echo "    Create $config_file or this task won't be usable in experiments"
+                        WARNINGS=$((WARNINGS + 1))
+                    fi
+                done
+            fi
+        fi
+    fi
+done
+
+# Rule 5: Check for __init__.py updates when adding new modules
+echo ""
+echo "📋 Rule 5: Validating __init__.py updates..."
+for file in $STAGED_FILES; do
+    if [[ "$file" =~ ^src/airtrace/(models|transforms|tasks|data)/(.+)\.py$ ]]; then
+        component_dir="${BASH_REMATCH[1]}"
+        module_name="${BASH_REMATCH[2]}"
+        if [ "$module_name" != "__init__" ] && [ "$module_name" != "base" ]; then
+            init_file="src/airtrace/${component_dir}/__init__.py"
+            if [ -f "$init_file" ]; then
+                # Check if new module is imported in __init__.py
+                if git diff --cached "$init_file" | grep -q "from.*${module_name}"; then
+                    echo "  ✓ $module_name added to $init_file"
+                else
+                    echo -e "  ${YELLOW}⚠ New module $file${NC} - consider adding to $init_file"
+                    WARNINGS=$((WARNINGS + 1))
+                fi
+            fi
+        fi
+    fi
+done
+
+# Rule 6: Check for tests when adding new implementations
+echo ""
+echo "📋 Rule 6: Validating test coverage..."
+for file in $STAGED_FILES; do
+    if [[ "$file" =~ ^src/airtrace/(models|transforms|tasks)/(.+)\.py$ ]]; then
+        component_type="${BASH_REMATCH[1]}"
+        module_name="${BASH_REMATCH[2]}"
+        if [ "$module_name" != "__init__" ] && [ "$module_name" != "base" ]; then
+            test_file="tests/${component_type}/test_${module_name}.py"
+            if echo "$STAGED_FILES" | grep -q "$test_file"; then
+                echo "  ✓ $file has corresponding $test_file"
+            elif [ -f "$test_file" ]; then
+                echo "  ✓ $file (existing test: $test_file)"
+            else
+                echo -e "  ${YELLOW}⚠ $file${NC} - no test file found at $test_file"
+                echo "    Consider adding tests for new implementations"
+                WARNINGS=$((WARNINGS + 1))
+            fi
+        fi
+    fi
+done
+
+# Rule 7: Validate Python files have type hints (sample check)
+echo ""
+echo "📋 Rule 7: Checking for type hints in new Python files..."
+for file in $STAGED_FILES; do
+    if [[ "$file" =~ \.py$ ]] && [ -f "$file" ]; then
+        # Skip __init__.py and check if file has functions without type hints
+        if [ "$(basename $file)" != "__init__.py" ]; then
+            # Simple heuristic: check if 'def ' exists without '->' in the same line
+            untyped_funcs=$(grep -n "def " "$file" | grep -v "__init__" | grep -v "->") || true
+            if [ ! -z "$untyped_funcs" ]; then
+                echo -e "  ${YELLOW}⚠ $file${NC} - some functions may be missing return type hints"
+                WARNINGS=$((WARNINGS + 1))
+            else
+                echo "  ✓ $file (type hints look good)"
+            fi
+        fi
+    fi
+done
+
+# Summary
+echo ""
+echo "======================================"
+if [ $ERRORS -gt 0 ]; then
+    echo -e "${RED}❌ Validation FAILED with $ERRORS error(s) and $WARNINGS warning(s)${NC}"
+    echo ""
+    echo "Please fix the errors above before committing."
+    echo "See CLAUDE.md for project structure guidelines."
+    exit 1
+elif [ $WARNINGS -gt 0 ]; then
+    echo -e "${YELLOW}⚠️  Validation passed with $WARNINGS warning(s)${NC}"
+    echo ""
+    echo "Review warnings above. They may indicate missing configs, tests, or docs."
+    echo "See CLAUDE.md for best practices."
+    echo ""
+    echo "Proceeding with commit..."
+    exit 0
+else
+    echo -e "${GREEN}✅ All validations passed!${NC}"
+    exit 0
+fi
