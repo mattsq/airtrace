@@ -2,10 +2,14 @@
 
 from .base import ARBaseModel
 from .baselines import (
+    DriftModel,
+    ExponentialSmoothingModel,
     LinearTrendModel,
     MeanModel,
+    MedianModel,
     MovingAverageModel,
     PersistenceModel,
+    SeasonalNaiveModel,
     ZeroModel,
 )
 from .gru_ar import GRUARModel
@@ -27,4 +31,8 @@ __all__ = [
     "ZeroModel",
     "LinearTrendModel",
     "MeanModel",
+    "MedianModel",
+    "DriftModel",
+    "ExponentialSmoothingModel",
+    "SeasonalNaiveModel",
 ]
