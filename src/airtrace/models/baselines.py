@@ -1052,9 +1052,9 @@ class LinearARModel(ARBaseModel):
         """
         super().__init__(input_dim, output_dim, **kwargs)
 
-        # We don't know T_in at init time, so we'll create the linear layer
-        # lazily on first forward pass
-        self.linear = None
+        # Use LazyLinear to defer input size determination until first forward pass
+        # This ensures parameters are registered immediately for optimizer creation
+        self.linear = nn.LazyLinear(output_dim)
 
     def forward(
         self,
@@ -1073,12 +1073,6 @@ class LinearARModel(ARBaseModel):
             Dictionary with 'preds' [B, 1, D_out]
         """
         B, T_in, D_in = x.shape
-
-        # Create linear layer if needed (lazy initialization)
-        if self.linear is None:
-            # Input: flattened sequence [B, T_in * D_in]
-            # Output: [B, D_out]
-            self.linear = nn.Linear(T_in * D_in, self.output_dim).to(x.device)
 
         # Flatten input sequence
         x_flat = x.reshape(B, -1)  # [B, T_in * D_in]
@@ -1139,40 +1133,34 @@ class MLPARModel(ARBaseModel):
 
         # Select activation function
         if activation == "relu":
-            self.activation = nn.ReLU()
+            activation_fn = nn.ReLU
         elif activation == "gelu":
-            self.activation = nn.GELU()
+            activation_fn = nn.GELU
         elif activation == "tanh":
-            self.activation = nn.Tanh()
+            activation_fn = nn.Tanh
         else:
             raise ValueError(f"Unknown activation: {activation}")
 
-        # We don't know T_in at init time, so we'll create the MLP
-        # lazily on first forward pass
-        self.mlp = None
-        self._input_size = None
-
-    def _build_mlp(self, input_size: int):
-        """Build MLP layers.
-
-        Args:
-            input_size: Size of flattened input (T_in * D_in)
-        """
+        # Build MLP using LazyLinear for first layer
+        # This allows parameters to be registered immediately while deferring
+        # input size determination until first forward pass
         layers = []
-        prev_dim = input_size
 
-        # Hidden layers
-        for hidden_dim in self.hidden_dims:
-            layers.append(nn.Linear(prev_dim, hidden_dim))
-            layers.append(self.activation)
-            layers.append(nn.Dropout(self.dropout_p))
-            prev_dim = hidden_dim
+        # First hidden layer - use LazyLinear since we don't know T_in
+        layers.append(nn.LazyLinear(hidden_dims[0]))
+        layers.append(activation_fn())
+        layers.append(nn.Dropout(dropout))
+
+        # Remaining hidden layers
+        for i in range(1, len(hidden_dims)):
+            layers.append(nn.Linear(hidden_dims[i - 1], hidden_dims[i]))
+            layers.append(activation_fn())
+            layers.append(nn.Dropout(dropout))
 
         # Output layer
-        layers.append(nn.Linear(prev_dim, self.output_dim))
+        layers.append(nn.Linear(hidden_dims[-1], output_dim))
 
         self.mlp = nn.Sequential(*layers)
-        self._input_size = input_size
 
     def forward(
         self,
@@ -1191,12 +1179,6 @@ class MLPARModel(ARBaseModel):
             Dictionary with 'preds' [B, 1, D_out]
         """
         B, T_in, D_in = x.shape
-        input_size = T_in * D_in
-
-        # Build MLP if needed (lazy initialization)
-        if self.mlp is None or self._input_size != input_size:
-            self._build_mlp(input_size)
-            self.mlp = self.mlp.to(x.device)
 
         # Flatten input sequence
         x_flat = x.reshape(B, -1)  # [B, T_in * D_in]

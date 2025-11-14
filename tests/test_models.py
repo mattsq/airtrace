@@ -675,10 +675,15 @@ def test_linear_ar_model_trainable():
     model = LinearARModel(input_dim=5, output_dim=3)
     x = torch.randn(2, 10, 5)
 
-    # First forward pass creates the linear layer
+    # Parameters should be registered immediately (as UninitializedParameter)
+    # This ensures optimizers can capture them before first forward pass
+    params_before = list(model.parameters())
+    assert len(params_before) > 0, "LazyLinear should register parameters immediately"
+
+    # First forward pass materializes the lazy parameters
     output1 = model(x)
 
-    # Check that model has parameters
+    # Check that model has parameters with correct shape
     num_params = model.get_num_params()
     assert num_params > 0
     # Should have input_dim * T_in * output_dim + output_dim (bias) params
@@ -739,7 +744,12 @@ def test_mlp_ar_model_trainable():
     model = MLPARModel(input_dim=5, output_dim=3, hidden_dims=[64, 32])
     x = torch.randn(2, 10, 5)
 
-    # First forward pass creates the MLP
+    # Parameters should be registered immediately (as UninitializedParameter for first layer)
+    # This ensures optimizers can capture them before first forward pass
+    params_before = list(model.parameters())
+    assert len(params_before) > 0, "LazyLinear should register parameters immediately"
+
+    # First forward pass materializes the lazy parameters
     output = model(x)
 
     # Check that model has parameters
