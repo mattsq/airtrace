@@ -673,3 +673,423 @@ class SeasonalNaiveModel(ARBaseModel):
                 "used_seasonal": T_in >= self.season_length
             }
         }
+
+
+@register("polynomial_trend")
+class PolynomialTrendModel(ARBaseModel):
+    """Polynomial trend baseline model.
+
+    Fits a polynomial trend (quadratic, cubic, etc.) to the input sequence
+    and extrapolates one step ahead using least squares fitting.
+
+    For each feature independently:
+        y_pred = a_0 + a_1*t + a_2*t^2 + ... + a_n*t^n
+    where coefficients are fitted to the input window.
+
+    Useful for time series with curved trends.
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        output_dim: int,
+        degree: int = 2,
+        **kwargs
+    ):
+        """Initialize polynomial trend model.
+
+        Args:
+            input_dim: Dimension of input features
+            output_dim: Dimension of output predictions
+            degree: Degree of polynomial (2=quadratic, 3=cubic, etc.)
+            **kwargs: Additional arguments (ignored)
+        """
+        super().__init__(input_dim, output_dim, **kwargs)
+
+        if degree < 1:
+            raise ValueError(f"degree must be >= 1, got {degree}")
+
+        self.degree = degree
+
+        # Handle dimension mismatch
+        if input_dim != output_dim:
+            self.projection = nn.Linear(input_dim, output_dim, bias=False)
+        else:
+            self.projection = None
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        context: Optional[torch.Tensor] = None,
+        **kwargs
+    ) -> Dict[str, torch.Tensor]:
+        """Forward pass - fit polynomial trend and extrapolate.
+
+        Args:
+            x: Input tensor [B, T_in, D_in]
+            context: Optional context tensor (ignored)
+            **kwargs: Additional arguments (ignored)
+
+        Returns:
+            Dictionary with 'preds' [B, 1, D_out]
+        """
+        B, T_in, D_in = x.shape
+
+        # Create time indices [0, 1, 2, ..., T_in-1]
+        t = torch.arange(T_in, device=x.device, dtype=x.dtype)  # [T_in]
+
+        # Create design matrix for polynomial regression
+        # X = [1, t, t^2, ..., t^degree]
+        # Shape: [T_in, degree+1]
+        X = torch.stack([t ** i for i in range(self.degree + 1)], dim=1)  # [T_in, degree+1]
+
+        # Solve least squares for each batch and feature
+        # y = X @ coeffs
+        # coeffs = (X^T X)^{-1} X^T y
+        # Using PyTorch's lstsq for numerical stability
+
+        # Reshape x for batch processing: [B, T_in, D_in] -> [B*D_in, T_in]
+        y = x.transpose(1, 2).reshape(B * D_in, T_in)  # [B*D_in, T_in]
+
+        # Solve least squares
+        # coeffs shape: [B*D_in, degree+1]
+        try:
+            solution = torch.linalg.lstsq(X, y.T)  # X: [T_in, degree+1], y.T: [T_in, B*D_in]
+            coeffs = solution.solution.T  # [B*D_in, degree+1]
+        except RuntimeError:
+            # If lstsq fails (singular matrix), fall back to zeros
+            coeffs = torch.zeros(B * D_in, self.degree + 1, device=x.device, dtype=x.dtype)
+
+        # Predict at next timestep (t = T_in)
+        t_next = torch.tensor(T_in, device=x.device, dtype=x.dtype)
+        x_next = torch.stack([t_next ** i for i in range(self.degree + 1)], dim=0)  # [degree+1]
+
+        # Compute predictions: coeffs @ x_next
+        next_value = (coeffs * x_next.unsqueeze(0)).sum(dim=1)  # [B*D_in]
+
+        # Reshape back: [B*D_in] -> [B, D_in]
+        next_value = next_value.reshape(B, D_in)
+
+        # Handle dimension mismatch
+        if self.projection is not None:
+            next_value = self.projection(next_value)  # [B, D_out]
+
+        # Reshape to [B, 1, D_out]
+        preds = next_value.unsqueeze(1)
+
+        return {
+            "preds": preds,
+            "extras": {
+                "degree": self.degree
+            }
+        }
+
+
+@register("holt_linear_trend")
+class HoltLinearTrendModel(ARBaseModel):
+    """Holt's linear trend model (double exponential smoothing).
+
+    Uses two smoothing equations:
+    - Level equation: l_t = alpha * y_t + (1 - alpha) * (l_{t-1} + b_{t-1})
+    - Trend equation: b_t = beta * (l_t - l_{t-1}) + (1 - beta) * b_{t-1}
+
+    Prediction: y_{t+1} = l_t + b_t
+
+    This is a classic baseline for trending time series that is more
+    sophisticated than simple exponential smoothing.
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        output_dim: int,
+        alpha: float = 0.3,
+        beta: float = 0.1,
+        **kwargs
+    ):
+        """Initialize Holt's linear trend model.
+
+        Args:
+            input_dim: Dimension of input features
+            output_dim: Dimension of output predictions
+            alpha: Level smoothing parameter (0 < alpha <= 1)
+            beta: Trend smoothing parameter (0 < beta <= 1)
+            **kwargs: Additional arguments (ignored)
+        """
+        super().__init__(input_dim, output_dim, **kwargs)
+
+        if not 0 < alpha <= 1:
+            raise ValueError(f"alpha must be in (0, 1], got {alpha}")
+        if not 0 < beta <= 1:
+            raise ValueError(f"beta must be in (0, 1], got {beta}")
+
+        self.alpha = alpha
+        self.beta = beta
+
+        # Handle dimension mismatch
+        if input_dim != output_dim:
+            self.projection = nn.Linear(input_dim, output_dim, bias=False)
+        else:
+            self.projection = None
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        context: Optional[torch.Tensor] = None,
+        **kwargs
+    ) -> Dict[str, torch.Tensor]:
+        """Forward pass - apply Holt's linear trend method.
+
+        Args:
+            x: Input tensor [B, T_in, D_in]
+            context: Optional context tensor (ignored)
+            **kwargs: Additional arguments (ignored)
+
+        Returns:
+            Dictionary with 'preds' [B, 1, D_out]
+        """
+        B, T_in, D_in = x.shape
+
+        # Initialize level and trend
+        # l_0 = y_0, b_0 = y_1 - y_0 (or 0 if T_in == 1)
+        level = x[:, 0, :]  # [B, D_in]
+
+        if T_in > 1:
+            trend = x[:, 1, :] - x[:, 0, :]  # [B, D_in]
+        else:
+            trend = torch.zeros_like(level)
+
+        # Apply Holt's equations iteratively
+        for t in range(1, T_in):
+            y_t = x[:, t, :]  # [B, D_in]
+
+            # Update level
+            level_prev = level
+            level = self.alpha * y_t + (1 - self.alpha) * (level_prev + trend)
+
+            # Update trend
+            trend = self.beta * (level - level_prev) + (1 - self.beta) * trend
+
+        # Forecast: l_T + b_T
+        next_value = level + trend  # [B, D_in]
+
+        # Handle dimension mismatch
+        if self.projection is not None:
+            next_value = self.projection(next_value)  # [B, D_out]
+
+        # Reshape to [B, 1, D_out]
+        preds = next_value.unsqueeze(1)
+
+        return {
+            "preds": preds,
+            "extras": {
+                "alpha": self.alpha,
+                "beta": self.beta,
+                "level": level,
+                "trend": trend
+            }
+        }
+
+
+@register("theta")
+class ThetaModel(ARBaseModel):
+    """Theta method baseline model.
+
+    The Theta method decomposes the time series into two "theta lines":
+    - Theta-0 line: Long-term linear trend
+    - Theta-2 line: Short-term curvature (double the local curve)
+
+    The final forecast combines these with weights (default: 0.5 each).
+
+    This simple method won the M3 forecasting competition and is a
+    strong baseline for many time series.
+
+    Reference: Assimakopoulos & Nikolopoulos (2000)
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        output_dim: int,
+        theta: float = 2.0,
+        alpha: float = 0.5,
+        **kwargs
+    ):
+        """Initialize Theta model.
+
+        Args:
+            input_dim: Dimension of input features
+            output_dim: Dimension of output predictions
+            theta: Theta coefficient for curvature line (typically 2.0)
+            alpha: Weight for combining lines (0.5 = equal weight)
+            **kwargs: Additional arguments (ignored)
+        """
+        super().__init__(input_dim, output_dim, **kwargs)
+
+        self.theta = theta
+        self.alpha = alpha
+
+        # Handle dimension mismatch
+        if input_dim != output_dim:
+            self.projection = nn.Linear(input_dim, output_dim, bias=False)
+        else:
+            self.projection = None
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        context: Optional[torch.Tensor] = None,
+        **kwargs
+    ) -> Dict[str, torch.Tensor]:
+        """Forward pass - apply Theta method.
+
+        Args:
+            x: Input tensor [B, T_in, D_in]
+            context: Optional context tensor (ignored)
+            **kwargs: Additional arguments (ignored)
+
+        Returns:
+            Dictionary with 'preds' [B, 1, D_out]
+        """
+        B, T_in, D_in = x.shape
+
+        # Create time indices
+        t = torch.arange(T_in, device=x.device, dtype=x.dtype)  # [T_in]
+
+        # Theta-0 line: Linear regression (long-term trend)
+        # This is the same as linear_trend model
+        t_mean = t.mean()
+        t_sum = t.sum()
+        t_sq_sum = (t ** 2).sum()
+
+        t_bc = t.unsqueeze(0).unsqueeze(2)  # [1, T_in, 1]
+
+        y_mean = x.mean(dim=1)  # [B, D_in]
+        ty_sum = (t_bc * x).sum(dim=1)  # [B, D_in]
+        y_sum = x.sum(dim=1)  # [B, D_in]
+
+        numerator = T_in * ty_sum - t_sum * y_sum
+        denominator = T_in * t_sq_sum - t_sum ** 2
+
+        b = torch.where(
+            denominator.abs() > 1e-8,
+            numerator / denominator,
+            torch.zeros_like(numerator)
+        )  # [B, D_in]
+
+        a = y_mean - b * t_mean  # [B, D_in]
+
+        # Theta-0 forecast
+        theta0_forecast = a + b * T_in  # [B, D_in]
+
+        # Theta-2 line: Apply second differences and extrapolate
+        # Compute second differences: z_t = y_t - 2*theta*y_{t-1} + theta*y_{t-2}
+        # For theta=2: z_t = y_t - 4*y_{t-1} + 2*y_{t-2}
+        if T_in >= 2:
+            # Remove linear trend to get detrended series
+            detrended = x - (a.unsqueeze(1) + b.unsqueeze(1) * t_bc)  # [B, T_in, D_in]
+
+            # Apply simple exponential smoothing to detrended series
+            # (classic Theta method uses SES for theta-2 line)
+            ses_alpha = 0.3  # Can be tuned
+            smoothed = detrended[:, 0, :]  # [B, D_in]
+
+            for i in range(1, T_in):
+                smoothed = ses_alpha * detrended[:, i, :] + (1 - ses_alpha) * smoothed
+
+            # Theta-2 forecast is trend + smoothed residual
+            theta2_forecast = theta0_forecast + smoothed  # [B, D_in]
+        else:
+            # Not enough data for theta-2, fall back to theta-0
+            theta2_forecast = theta0_forecast
+
+        # Combine forecasts
+        next_value = self.alpha * theta0_forecast + (1 - self.alpha) * theta2_forecast  # [B, D_in]
+
+        # Handle dimension mismatch
+        if self.projection is not None:
+            next_value = self.projection(next_value)  # [B, D_out]
+
+        # Reshape to [B, 1, D_out]
+        preds = next_value.unsqueeze(1)
+
+        return {
+            "preds": preds,
+            "extras": {
+                "theta": self.theta,
+                "alpha": self.alpha,
+                "theta0_forecast": theta0_forecast,
+                "theta2_forecast": theta2_forecast
+            }
+        }
+
+
+@register("linear_ar")
+class LinearARModel(ARBaseModel):
+    """Simple linear autoregressive (AR) baseline model.
+
+    Learns linear weights to combine past values:
+        y_{t+1} = w_1 * y_t + w_2 * y_{t-1} + ... + w_p * y_{t-p+1} + b
+
+    This is a trainable baseline (unlike the other non-trainable baselines).
+    It provides a simple learned baseline to compare neural models against.
+
+    The model uses all available timesteps in the input window as predictors.
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        output_dim: int,
+        **kwargs
+    ):
+        """Initialize linear AR model.
+
+        Args:
+            input_dim: Dimension of input features
+            output_dim: Dimension of output predictions
+            **kwargs: Additional arguments (ignored)
+        """
+        super().__init__(input_dim, output_dim, **kwargs)
+
+        # We don't know T_in at init time, so we'll create the linear layer
+        # lazily on first forward pass
+        self.linear = None
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        context: Optional[torch.Tensor] = None,
+        **kwargs
+    ) -> Dict[str, torch.Tensor]:
+        """Forward pass - apply linear AR model.
+
+        Args:
+            x: Input tensor [B, T_in, D_in]
+            context: Optional context tensor (ignored)
+            **kwargs: Additional arguments (ignored)
+
+        Returns:
+            Dictionary with 'preds' [B, 1, D_out]
+        """
+        B, T_in, D_in = x.shape
+
+        # Create linear layer if needed (lazy initialization)
+        if self.linear is None:
+            # Input: flattened sequence [B, T_in * D_in]
+            # Output: [B, D_out]
+            self.linear = nn.Linear(T_in * D_in, self.output_dim).to(x.device)
+
+        # Flatten input sequence
+        x_flat = x.reshape(B, -1)  # [B, T_in * D_in]
+
+        # Apply linear transformation
+        next_value = self.linear(x_flat)  # [B, D_out]
+
+        # Reshape to [B, 1, D_out]
+        preds = next_value.unsqueeze(1)
+
+        return {
+            "preds": preds,
+            "extras": {}
+        }
