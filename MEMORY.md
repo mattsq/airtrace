@@ -210,6 +210,8 @@ model:
 
 **Documentation**: Full guide at `docs/baseline_models.md` with usage examples and interpretation guidelines
 
+**CI/CD Integration**: The model validation script (`src/scripts/validate_models.py`) was updated to handle models with zero trainable parameters. It detects parameter-free models and skips optimizer creation/backprop, instead computing only forward pass and loss.
+
 ---
 
 ## Current State
