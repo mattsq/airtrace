@@ -4,11 +4,15 @@ import pytest
 import torch
 
 from airtrace.models import (
+    DriftModel,
+    ExponentialSmoothingModel,
     GRUARModel,
     LinearTrendModel,
     MeanModel,
+    MedianModel,
     MovingAverageModel,
     PersistenceModel,
+    SeasonalNaiveModel,
     TCNModel,
     TransformerModel,
     ZeroModel,
@@ -285,12 +289,185 @@ def test_linear_trend_model_linear_sequence():
     torch.testing.assert_close(output["preds"], expected, atol=1e-4, rtol=1e-4)
 
 
+def test_median_model_forward(batch):
+    """Test median model forward pass."""
+    model = MedianModel(input_dim=5, output_dim=3)
+
+    output = model(batch)
+
+    assert "preds" in output
+    assert output["preds"].shape == (4, 1, 3)
+
+
+def test_median_model_same_dims():
+    """Test median model with same input/output dims."""
+    model = MedianModel(input_dim=5, output_dim=5)
+    x = torch.randn(2, 10, 5)
+
+    output = model(x)
+
+    # Should return median across time
+    expected = x.median(dim=1, keepdim=True).values  # [2, 1, 5]
+    assert output["preds"].shape == expected.shape
+    torch.testing.assert_close(output["preds"], expected)
+
+
+def test_drift_model_forward(batch):
+    """Test drift model forward pass."""
+    model = DriftModel(input_dim=5, output_dim=3)
+
+    output = model(batch)
+
+    assert "preds" in output
+    assert output["preds"].shape == (4, 1, 3)
+    assert "drift" in output["extras"]
+
+
+def test_drift_model_constant_sequence():
+    """Test drift on constant sequence."""
+    model = DriftModel(input_dim=5, output_dim=5)
+
+    # Create constant sequence
+    x = torch.ones(2, 10, 5) * 5.0
+
+    output = model(x)
+
+    # For constant sequence, drift should be zero
+    assert output["extras"]["drift"].abs().max() < 1e-6
+    # Prediction should be the constant value
+    torch.testing.assert_close(
+        output["preds"],
+        torch.ones_like(output["preds"]) * 5.0,
+        atol=1e-5,
+        rtol=1e-5
+    )
+
+
+def test_drift_model_linear_sequence():
+    """Test drift on linear sequence."""
+    model = DriftModel(input_dim=1, output_dim=1)
+
+    # Create linear sequence with slope 3: y = 2 + 3*t
+    t = torch.arange(10, dtype=torch.float32)
+    x = (2 + 3 * t).reshape(1, 10, 1)  # [1, 10, 1]
+
+    output = model(x)
+
+    # Drift should be 3.0
+    expected_drift = torch.tensor([[3.0]])
+    torch.testing.assert_close(
+        output["extras"]["drift"], expected_drift, atol=1e-4, rtol=1e-4
+    )
+
+    # Should predict: last_value + drift = 29 + 3 = 32
+    expected_pred = torch.tensor([[[32.0]]])
+    torch.testing.assert_close(output["preds"], expected_pred, atol=1e-4, rtol=1e-4)
+
+
+def test_exponential_smoothing_model_forward(batch):
+    """Test exponential smoothing model forward pass."""
+    model = ExponentialSmoothingModel(input_dim=5, output_dim=3, alpha=0.3)
+
+    output = model(batch)
+
+    assert "preds" in output
+    assert output["preds"].shape == (4, 1, 3)
+    assert "alpha" in output["extras"]
+    assert output["extras"]["alpha"] == 0.3
+
+
+def test_exponential_smoothing_alpha_validation():
+    """Test that invalid alpha values raise errors."""
+    with pytest.raises(ValueError):
+        ExponentialSmoothingModel(input_dim=5, output_dim=3, alpha=0.0)
+
+    with pytest.raises(ValueError):
+        ExponentialSmoothingModel(input_dim=5, output_dim=3, alpha=1.5)
+
+    with pytest.raises(ValueError):
+        ExponentialSmoothingModel(input_dim=5, output_dim=3, alpha=-0.1)
+
+
+def test_exponential_smoothing_high_alpha():
+    """Test exponential smoothing with high alpha (more weight on recent)."""
+    model = ExponentialSmoothingModel(input_dim=1, output_dim=1, alpha=0.9)
+
+    # Create sequence where last value is very different
+    x = torch.cat([
+        torch.ones(1, 9, 1) * 1.0,
+        torch.ones(1, 1, 1) * 10.0
+    ], dim=1)
+
+    output = model(x)
+
+    # With high alpha, prediction should be closer to last value
+    # Should be heavily weighted toward 10.0
+    assert output["preds"][0, 0, 0] > 5.0
+
+
+def test_seasonal_naive_model_forward(batch):
+    """Test seasonal naive model forward pass."""
+    model = SeasonalNaiveModel(input_dim=5, output_dim=3, season_length=10)
+
+    output = model(batch)
+
+    assert "preds" in output
+    assert output["preds"].shape == (4, 1, 3)
+    assert "season_length" in output["extras"]
+    assert "used_seasonal" in output["extras"]
+
+
+def test_seasonal_naive_with_sufficient_history():
+    """Test seasonal naive with enough history."""
+    model = SeasonalNaiveModel(input_dim=5, output_dim=5, season_length=5)
+
+    # Create data with clear seasonal pattern
+    x = torch.randn(2, 10, 5)
+
+    output = model(x)
+
+    # Should use seasonal value (5 timesteps back from end)
+    expected = x[:, -5, :].unsqueeze(1)  # [2, 1, 5]
+    assert output["preds"].shape == expected.shape
+    torch.testing.assert_close(output["preds"], expected)
+    assert output["extras"]["used_seasonal"] is True
+
+
+def test_seasonal_naive_insufficient_history():
+    """Test seasonal naive with insufficient history."""
+    model = SeasonalNaiveModel(input_dim=5, output_dim=5, season_length=20)
+
+    # Only 10 timesteps, but season_length is 20
+    x = torch.randn(2, 10, 5)
+
+    output = model(x)
+
+    # Should fall back to persistence (last value)
+    expected = x[:, -1, :].unsqueeze(1)  # [2, 1, 5]
+    assert output["preds"].shape == expected.shape
+    torch.testing.assert_close(output["preds"], expected)
+    assert output["extras"]["used_seasonal"] is False
+
+
+def test_seasonal_naive_season_validation():
+    """Test that invalid season_length raises error."""
+    with pytest.raises(ValueError):
+        SeasonalNaiveModel(input_dim=5, output_dim=3, season_length=0)
+
+    with pytest.raises(ValueError):
+        SeasonalNaiveModel(input_dim=5, output_dim=3, season_length=-1)
+
+
 @pytest.mark.parametrize("model_class,kwargs", [
     (PersistenceModel, {}),
     (ZeroModel, {}),
     (MeanModel, {}),
+    (MedianModel, {}),
     (MovingAverageModel, {"window_size": 5}),
     (LinearTrendModel, {}),
+    (DriftModel, {}),
+    (ExponentialSmoothingModel, {"alpha": 0.3}),
+    (SeasonalNaiveModel, {"season_length": 10}),
 ])
 def test_baseline_models_no_nan(model_class, kwargs):
     """Test that baseline models don't produce NaN values."""
@@ -307,8 +484,12 @@ def test_baseline_models_no_nan(model_class, kwargs):
     (PersistenceModel, {}),
     (ZeroModel, {}),
     (MeanModel, {}),
+    (MedianModel, {}),
     (MovingAverageModel, {"window_size": 5}),
     (LinearTrendModel, {}),
+    (DriftModel, {}),
+    (ExponentialSmoothingModel, {"alpha": 0.3}),
+    (SeasonalNaiveModel, {"season_length": 10}),
 ])
 def test_baseline_models_num_params(model_class, kwargs):
     """Test that baseline models have minimal parameters."""
@@ -325,8 +506,12 @@ def test_baseline_models_deterministic():
         PersistenceModel(input_dim=5, output_dim=3),
         ZeroModel(input_dim=5, output_dim=3),
         MeanModel(input_dim=5, output_dim=3),
+        MedianModel(input_dim=5, output_dim=3),
         MovingAverageModel(input_dim=5, output_dim=3, window_size=5),
         LinearTrendModel(input_dim=5, output_dim=3),
+        DriftModel(input_dim=5, output_dim=3),
+        ExponentialSmoothingModel(input_dim=5, output_dim=3, alpha=0.3),
+        SeasonalNaiveModel(input_dim=5, output_dim=3, season_length=10),
     ]
 
     x = torch.randn(2, 16, 5)

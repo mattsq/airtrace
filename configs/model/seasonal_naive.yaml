@@ -1,0 +1,6 @@
+# @package _global_
+
+model:
+  name: seasonal_naive
+  params:
+    season_length: 24  # Length of seasonal cycle (e.g., 24 for daily pattern in hourly data)

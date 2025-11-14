@@ -1,0 +1,6 @@
+# @package _global_
+
+model:
+  name: exponential_smoothing
+  params:
+    alpha: 0.3  # Smoothing parameter: higher = more weight on recent values
