@@ -1,0 +1,151 @@
+# AirTrace Agent Memory
+
+This file captures **surprising, unexpected, or non-obvious learnings** discovered by AI agents working on AirTrace. Future agents should read this before making significant changes.
+
+## Purpose
+
+When you discover something that:
+- Contradicts initial assumptions
+- Has subtle implications for how components interact
+- Represents a gotcha or edge case
+- Would save future agents debugging time
+- Reveals hidden dependencies or constraints
+
+**Add it here!** Use this format:
+
+```
+## [Date] [Component/Area]: Brief Title
+
+**Discovered by**: [Agent name/session]
+**Impact**: [What this affects]
+
+Description of the learning...
+
+**Example/Code Reference**: [file:line if relevant]
+```
+
+---
+
+## Agent Learnings
+
+### 2025-11-14: Project Structure: Config-Code Synchronization Required
+
+**Discovered by**: Initial setup agent
+**Impact**: All components (models, transforms, tasks, data)
+
+The framework enforces a strict 1:1 mapping between config files and registered Python components. When adding any component:
+
+1. Python file with `@register("component_name")` decorator
+2. YAML config file with matching name: `configs/category/component_name.yaml`
+3. Base class inheritance (ARBaseModel, Transform, or Task)
+
+Breaking this contract causes Hydra composition failures at runtime, not import time.
+
+**Example**: If you create `src/airtrace/models/lstm.py` with `@register("lstm")`, you MUST create `configs/model/lstm.yaml`.
+
+---
+
+### 2025-11-14: Project Philosophy: Modular Config-Driven Framework
+
+**Discovered by**: Initial setup agent
+**Impact**: Overall development approach
+
+AirTrace is fundamentally a **framework for composing experiments**, not a monolithic training script. Key insights:
+
+1. **Hydra composition**: Experiments are built by composing small config files
+2. **Registry pattern**: All components discovered via decorator registration
+3. **Interface contracts**: Base classes enforce consistent APIs across components
+4. **Reproducibility**: Config + seed = deterministic experiment
+
+This means: Don't hardcode, don't bypass registration, don't break interfaces.
+
+---
+
+### 2025-11-14: Data Pipeline: Three-Stage Transformation
+
+**Discovered by**: Initial setup agent
+**Impact**: Data loading and preprocessing
+
+Data flows through exactly three stages:
+
+1. **RAW** (`data/raw/`): Immutable source of truth, never modified
+2. **INTERIM** (`data/interim/`): Cleaned, resampled timeseries (can be regenerated)
+3. **PROCESSED** (`data/processed/`): Windowed tensors ready for DataLoader (cached)
+
+INTERIM and PROCESSED are caches and can be deleted/regenerated. RAW is sacred.
+
+**Gotcha**: If you modify raw data processing logic, you MUST delete `data/interim/` and `data/processed/` to force regeneration. Stale caches cause silent errors.
+
+---
+
+## How to Use This File
+
+### As a Reader (Every Agent Should Do This)
+
+1. **Read this file** before starting significant work
+2. Search for keywords related to your task (model, transform, data, etc.)
+3. If you find relevant learnings, factor them into your approach
+
+### As a Writer (When You Discover Something)
+
+1. Use the template format above
+2. Be specific: Include file paths, line numbers, code examples
+3. Explain the **impact** and **why it matters**
+4. Keep it concise but complete
+5. Add to the bottom of the "Agent Learnings" section
+
+### Examples of What to Log
+
+✅ **DO LOG**:
+- "Model forward() expects [B, T, D] but optimizer state assumes [B, D, T]"
+- "Config list overrides replace entire list, not merge - affects transform pipelines"
+- "Tests require GPU if model uses .cuda() even with torch.device('cpu')"
+- "Hydra instantiate() doesn't work with custom __init__ patterns in X"
+
+❌ **DON'T LOG**:
+- Obvious things documented in README.md or CLAUDE.md
+- Personal preferences or style choices
+- Things already clear from type hints or docstrings
+- Temporary hacks you plan to fix immediately
+
+---
+
+## Template for New Entries
+
+```markdown
+## [YYYY-MM-DD] [Component]: Brief Description
+
+**Discovered by**: [Agent/Session ID]
+**Impact**: [What areas of the codebase this affects]
+
+[Detailed explanation of the learning, including:]
+- What you expected
+- What actually happens
+- Why this matters
+- How to work with it
+
+**Example/Code Reference**: [file.py:line]
+
+**Related**: [Links to other MEMORY.md entries if relevant]
+```
+
+---
+
+## Maintenance Notes
+
+- **Keep this file organized**: Newer entries at the bottom of "Agent Learnings"
+- **Remove outdated entries**: If a learning becomes obsolete (e.g., code refactored), strike through and note: `~~OLD: ...~~ [Fixed in commit abc123]`
+- **Link to code**: When referencing specific behavior, include file:line references
+- **Search before adding**: Check if someone already logged a similar learning
+
+---
+
+## Current State
+
+**Total learnings**: 3
+**Last updated**: 2025-11-14
+**Most active areas**: Project structure, configuration system, data pipeline
+
+---
+
+*This file is a living document. Every agent contributes to making AirTrace easier to work with.*
