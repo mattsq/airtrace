@@ -1,0 +1,9 @@
+defaults:
+  - override /data: qantas_737
+  - override /model: tcn
+  - override /transforms: zscore_diff
+  - override /task: multi_step
+  - override /train: long_context
+
+exp_name: "tcn_zscore_multi_step"
+seed: 456

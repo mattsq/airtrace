@@ -1,0 +1,10 @@
+# @package _global_
+
+model:
+  name: tcn
+  params:
+    num_channels: [64, 128, 128, 256]
+    kernel_size: 3
+    dropout: 0.2
+    causal: true
+    use_skip_connections: true

@@ -1,0 +1,21 @@
+# @package _global_
+
+data:
+  root: data/
+  dataset_name: "qantas_737"
+  train_index: "metadata/train_index.parquet"
+  val_index: "metadata/val_index.parquet"
+  test_index: "metadata/test_index.parquet"
+
+  window:
+    input_len: 256
+    pred_len: 32
+    stride: 32
+    target_sensors: ["fuel_flow", "mach"]
+
+  sensors:
+    use: ["fuel_flow", "mach", "altitude", "oat", "n1"]
+
+  # Optional: static features from flight metadata
+  static_features:
+    use: ["aircraft_type", "route_length", "planned_fuel"]

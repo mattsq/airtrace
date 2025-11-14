@@ -205,3 +205,30 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# AirTrace specific
+# Data files (raw data should not be committed)
+data/raw/**
+!data/raw/.gitkeep
+data/interim/**
+!data/interim/.gitkeep
+data/processed/**
+!data/processed/.gitkeep
+
+# Model checkpoints and experiment runs
+runs/
+outputs/
+multirun/
+*.ckpt
+*.pth
+*.pt
+
+# Weights & Biases
+wandb/
+
+# Hydra
+.hydra/
+
+# IDE
+.idea/
+.vscode/

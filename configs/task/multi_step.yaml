@@ -1,0 +1,12 @@
+# @package _global_
+
+task:
+  name: multi_step
+  loss: mse
+  metrics:
+    - rmse
+    - mae
+    - mape
+  # Multi-step prediction: predict x[t+1:t+K] from x[:t]
+  horizon: 32
+  teacher_forcing_ratio: 0.5  # Probability of using ground truth during training

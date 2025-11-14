@@ -1,0 +1,11 @@
+# @package _global_
+
+task:
+  name: one_step
+  loss: mse
+  metrics:
+    - rmse
+    - mae
+    - mape
+  # One-step prediction: predict x[t+1] from x[:t]
+  horizon: 1
