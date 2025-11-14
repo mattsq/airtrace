@@ -1,0 +1,6 @@
+# @package _global_
+
+model:
+  name: moving_average
+  params:
+    window_size: null  # null = use all available values, or set to integer (e.g., 5, 10)
