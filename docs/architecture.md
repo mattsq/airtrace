@@ -57,9 +57,18 @@ def forward(self, x, context=None) -> Dict[str, torch.Tensor]:
 ```
 
 **Available Models:**
+
+Advanced models:
 - `GRUARModel`: GRU-based encoder
 - `TCNModel`: Temporal convolutional network
 - `TransformerModel`: Causal transformer
+
+Baseline models (for comparison):
+- `PersistenceModel`: Repeats the last observed value (naive forecast)
+- `ZeroModel`: Always predicts zero
+- `MeanModel`: Predicts the historical mean
+- `MovingAverageModel`: Predicts the average of recent values
+- `LinearTrendModel`: Fits a linear trend and extrapolates
 
 ### 3. Tasks
 

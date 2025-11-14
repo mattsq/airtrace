@@ -171,11 +171,54 @@ splits = create_synthetic_dataset(data_root="data/", n_flights=20, seed=42)
 
 ---
 
+### 2025-11-14: Models: Baseline Models for Benchmarking
+
+**Discovered by**: Baseline models implementation
+**Impact**: Model evaluation, experiment comparisons, research validity
+
+Five simple baseline models were added to establish performance floors for deep learning models:
+
+1. **PersistenceModel**: Repeats last value - surprisingly strong for autocorrelated data
+2. **ZeroModel**: Always predicts zero - floor baseline
+3. **MeanModel**: Predicts historical mean - good for stationary processes
+4. **MovingAverageModel**: Averages recent k values - handles noise
+5. **LinearTrendModel**: Linear extrapolation - captures trends
+
+**Key implementation details**:
+
+- **Minimal parameters**: Baselines have ≤ `input_dim × output_dim` params (just projection if dims differ)
+- **No training needed**: Predictions computed directly in forward pass, no optimizer required
+- **Deterministic**: Same input always produces same output (important for reproducibility)
+- **Dimension handling**: When `input_dim != output_dim`, baselines use a learnable linear projection
+
+**Usage pattern**:
+```yaml
+# configs/model/persistence.yaml
+model:
+  name: persistence
+  params: {}
+```
+
+**Why this matters**:
+- Deep learning models MUST beat these baselines (especially Persistence) to be useful
+- Provides interpretable reference points: if GRU ≈ Persistence, model isn't learning
+- Validates experimental setup: if Zero > Persistence, something is wrong with preprocessing
+
+**Code Reference**: `src/airtrace/models/baselines.py`, `configs/model/{persistence,zero,mean,moving_average,linear_trend}.yaml`
+
+**Testing**: Comprehensive tests in `tests/test_models.py` verify correctness (e.g., persistence actually returns last value)
+
+**Documentation**: Full guide at `docs/baseline_models.md` with usage examples and interpretation guidelines
+
+**CI/CD Integration**: The model validation script (`src/scripts/validate_models.py`) was updated to handle models with zero trainable parameters. It detects parameter-free models and skips optimizer creation/backprop, instead computing only forward pass and loss.
+
+---
+
 ## Current State
 
-**Total learnings**: 4
+**Total learnings**: 5
 **Last updated**: 2025-11-14
-**Most active areas**: Project structure, configuration system, data pipeline, synthetic data
+**Most active areas**: Project structure, configuration system, data pipeline, synthetic data, baseline models
 
 ---
 

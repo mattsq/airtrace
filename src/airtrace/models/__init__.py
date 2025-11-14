@@ -1,6 +1,13 @@
 """Model implementations."""
 
 from .base import ARBaseModel
+from .baselines import (
+    LinearTrendModel,
+    MeanModel,
+    MovingAverageModel,
+    PersistenceModel,
+    ZeroModel,
+)
 from .gru_ar import GRUARModel
 from .registry import build_model, list_models, register
 from .tcn import TCNModel
@@ -14,4 +21,10 @@ __all__ = [
     "GRUARModel",
     "TCNModel",
     "TransformerModel",
+    # Baseline models
+    "PersistenceModel",
+    "MovingAverageModel",
+    "ZeroModel",
+    "LinearTrendModel",
+    "MeanModel",
 ]

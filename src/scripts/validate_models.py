@@ -177,6 +177,43 @@ def train_model(
         List of training losses per epoch
     """
     model = model.to(device)
+
+    # Check if model has trainable parameters
+    n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    if n_trainable == 0:
+        # Model has no trainable parameters (e.g., baseline models)
+        # Just compute and return losses without training
+        print(f"  ⚠️  Model has no trainable parameters - skipping optimization")
+        model.eval()
+        criterion = nn.MSELoss()
+        losses = []
+
+        with torch.no_grad():
+            for epoch in range(n_epochs):
+                epoch_loss = 0.0
+                n_batches = 0
+
+                for X_batch, y_batch in train_loader:
+                    X_batch = X_batch.to(device)
+                    y_batch = y_batch.to(device)
+
+                    output = model(X_batch)
+                    preds = output["preds"]
+                    loss = criterion(preds, y_batch)
+
+                    epoch_loss += loss.item()
+                    n_batches += 1
+
+                avg_loss = epoch_loss / n_batches
+                losses.append(avg_loss)
+
+                if (epoch + 1) % 5 == 0:
+                    print(f"  Epoch {epoch + 1}/{n_epochs}, Loss: {avg_loss:.6f}")
+
+        return losses
+
+    # Normal training for models with parameters
     model.train()
 
     optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -306,10 +343,14 @@ def validate_single_model(
         model = build_model(config, input_dim=input_dim, output_dim=output_dim)
 
         n_params = model.get_num_params()
-        print(f"📊 Model parameters: {n_params:,}")
+        n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"📊 Model parameters: {n_params:,} (trainable: {n_trainable:,})")
 
         # Training phase
-        print(f"🏋️  Training for {n_epochs} epochs...")
+        if n_trainable > 0:
+            print(f"🏋️  Training for {n_epochs} epochs...")
+        else:
+            print(f"📐 Baseline model (no training) - computing loss...")
         start_time = time.time()
         train_losses = train_model(
             model=model,
