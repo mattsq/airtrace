@@ -6,8 +6,9 @@ Welcome to the AirTrace documentation. AirTrace is a modular framework for autor
 
 1. [Getting Started](../README.md)
 2. [Data Format](data_format.md)
-3. [Architecture](architecture.md)
-4. [Experiments](experiments.md)
+3. [Synthetic Data Generation](synthetic_data.md)
+4. [Architecture](architecture.md)
+5. [Experiments](experiments.md)
 
 ## Quick Links
 

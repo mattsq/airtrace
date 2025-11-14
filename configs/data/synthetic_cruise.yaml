@@ -1,0 +1,52 @@
+# @package _global_
+# Configuration for synthetic aircraft cruise dataset
+
+data:
+  root: data/
+  dataset_name: "synthetic_cruise"
+  train_index: "metadata/synthetic_cruise_train_index.parquet"
+  val_index: "metadata/synthetic_cruise_val_index.parquet"
+  test_index: "metadata/synthetic_cruise_test_index.parquet"
+
+  # Window specification
+  window:
+    input_len: 256      # 256 seconds of history (~4 minutes)
+    pred_len: 32        # Predict 32 seconds ahead
+    stride: 32          # Slide window by 32 steps
+    target_sensors: ["fuel_flow", "mach", "n1"]
+
+  # Sensor configuration
+  sensors:
+    use: ["fuel_flow", "mach", "altitude", "oat", "n1", "weight"]
+
+  # No static features for synthetic data
+  static_features:
+    use: []
+
+  # Generation parameters (used by synthetic generator)
+  generation:
+    n_flights: 20
+    seed: 42
+    train_val_test_split: [0.7, 0.15, 0.15]
+
+    # Cruise profile parameters
+    cruise_profile:
+      initial_altitude: 35000.0      # feet
+      initial_mach: 0.82             # Mach number
+      initial_weight: 70000.0        # kg
+      cruise_duration: 3600          # seconds (1 hour)
+      fuel_flow_base: 2500.0         # kg/hour
+      n1_base: 85.0                  # percent
+      sample_rate: 1.0               # Hz
+
+      # Variation parameters
+      altitude_variation: 100.0      # feet
+      mach_variation: 0.01           # Mach
+      turbulence_level: 0.1          # 0-1 scale
+
+      # Noise levels
+      fuel_flow_noise: 0.01          # relative std dev
+      mach_noise: 0.005              # absolute std dev
+      altitude_noise: 10.0           # feet std dev
+      n1_noise: 0.5                  # percent std dev
+      oat_noise: 1.0                 # Celsius std dev
