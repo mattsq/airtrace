@@ -35,6 +35,54 @@ from airtrace.models.registry import list_models, build_model
 SENSOR_COLUMNS = ["fuel_flow", "mach", "altitude", "oat", "n1", "weight"]
 
 
+def initialise_lazy_modules(
+    model: nn.Module,
+    data_loader: DataLoader,
+    device: str
+) -> None:
+    """Materialise parameters of lazy modules using a sample batch.
+
+    Some models make use of ``nn.Lazy*`` layers whose parameters are only
+    materialised after the first forward pass. The validation script inspects
+    trainable parameters to decide whether optimisation should run; therefore we
+    need to execute a dummy forward pass before counting so genuine models are
+    not mistaken for parameterless baselines.
+    """
+
+    has_uninitialised = any(
+        isinstance(param, UninitializedParameter)
+        for param in model.parameters()
+    )
+
+    if not has_uninitialised:
+        return
+
+    try:
+        batch = next(iter(data_loader))
+    except StopIteration:
+        return
+
+    if isinstance(batch, (list, tuple)):
+        example_inputs = batch[0]
+    else:
+        example_inputs = batch
+
+    if isinstance(example_inputs, dict):
+        # Fall back to the first value when data loaders return dictionaries.
+        example_inputs = next(iter(example_inputs.values()))
+
+    example_inputs = example_inputs.to(device)
+
+    was_training = model.training
+    model.to(device)
+    model.eval()
+
+    with torch.no_grad():
+        model(example_inputs)
+
+    model.train(was_training)
+
+
 def count_trainable_parameters(model: nn.Module) -> int:
     """Count initialized trainable parameters for a model."""
     total = 0
@@ -42,8 +90,6 @@ def count_trainable_parameters(model: nn.Module) -> int:
         if not param.requires_grad:
             continue
         if isinstance(param, UninitializedParameter):
-            # Lazy modules defer materialising parameters until the first forward
-            # pass. Skip them here so validation can run without a warmup call.
             continue
         total += param.numel()
     return total
@@ -192,6 +238,8 @@ def train_model(
         List of training losses per epoch
     """
     model = model.to(device)
+
+    initialise_lazy_modules(model=model, data_loader=train_loader, device=device)
 
     # Check if model has trainable parameters
     n_trainable = count_trainable_parameters(model)
@@ -356,6 +404,9 @@ def validate_single_model(
             }
 
         model = build_model(config, input_dim=input_dim, output_dim=output_dim)
+
+        model = model.to(device)
+        initialise_lazy_modules(model=model, data_loader=train_loader, device=device)
 
         n_params = model.get_num_params()
         n_trainable = count_trainable_parameters(model)
