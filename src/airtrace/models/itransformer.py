@@ -30,21 +30,22 @@ class VariateEmbedding(nn.Module):
 
     For each variate (sensor), the entire input time series is embedded
     into a d_model dimensional vector.
+
+    Uses LazyLinear to adapt to any input sequence length.
     """
 
-    def __init__(self, seq_len: int, d_model: int):
+    def __init__(self, d_model: int):
         """Initialize variate embedding.
 
         Args:
-            seq_len: Length of input time series
             d_model: Embedding dimension
         """
         super().__init__()
-        self.seq_len = seq_len
         self.d_model = d_model
 
         # Linear projection from time series to embedding
-        self.projection = nn.Linear(seq_len, d_model)
+        # LazyLinear adapts to any input sequence length
+        self.projection = nn.LazyLinear(d_model)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Embed each variate's time series.
@@ -131,7 +132,6 @@ class iTransformerModel(ARBaseModel):
         self,
         input_dim: int,
         output_dim: int,
-        seq_len: int = 256,
         pred_len: int = 1,
         d_model: int = 512,
         nhead: int = 8,
@@ -147,7 +147,6 @@ class iTransformerModel(ARBaseModel):
         Args:
             input_dim: Dimension of input features (number of sensors)
             output_dim: Dimension of output predictions
-            seq_len: Input sequence length (lookback window)
             pred_len: Prediction horizon length (1 for one-step, >1 for multi-step)
             d_model: Model dimension (embedding size)
             nhead: Number of attention heads
@@ -160,13 +159,13 @@ class iTransformerModel(ARBaseModel):
         """
         super().__init__(input_dim, output_dim, **kwargs)
 
-        self.seq_len = seq_len
         self.pred_len = pred_len
         self.d_model = d_model
         self.num_layers = num_layers
 
         # Variate embedding: project each sensor's time series to d_model
-        self.variate_embedding = VariateEmbedding(seq_len, d_model)
+        # Uses LazyLinear to adapt to any input sequence length
+        self.variate_embedding = VariateEmbedding(d_model)
 
         # Positional encoding for variates
         self.pos_encoder = LearnablePositionalEncoding(
@@ -240,13 +239,6 @@ class iTransformerModel(ARBaseModel):
         """
         B, T_in, D_in = x.shape
 
-        # Validate input sequence length
-        if T_in != self.seq_len:
-            raise ValueError(
-                f"Input sequence length {T_in} does not match "
-                f"expected length {self.seq_len}"
-            )
-
         # Step 1: Embed each variate's time series
         # [B, T_in, D_in] -> [B, D_in, d_model]
         x = self.variate_embedding(x)
@@ -290,7 +282,6 @@ class iTransformerModel(ARBaseModel):
             f"{self.__class__.__name__}(\n"
             f"  input_dim={self.input_dim},\n"
             f"  output_dim={self.output_dim},\n"
-            f"  seq_len={self.seq_len},\n"
             f"  pred_len={self.pred_len},\n"
             f"  d_model={self.d_model},\n"
             f"  num_layers={self.num_layers},\n"

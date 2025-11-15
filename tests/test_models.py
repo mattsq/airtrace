@@ -1219,7 +1219,6 @@ def test_itransformer_model_forward(batch):
     model = iTransformerModel(
         input_dim=5,
         output_dim=3,
-        seq_len=32,
         pred_len=1,
         d_model=64,
         nhead=4,
@@ -1240,7 +1239,6 @@ def test_itransformer_model_variate_embedding():
     model = iTransformerModel(
         input_dim=3,
         output_dim=3,
-        seq_len=32,
         pred_len=1,
         d_model=64,
         nhead=4,
@@ -1260,7 +1258,6 @@ def test_itransformer_model_multi_step_prediction():
     model = iTransformerModel(
         input_dim=5,
         output_dim=3,
-        seq_len=32,
         pred_len=10,
         d_model=64,
         nhead=4,
@@ -1278,7 +1275,6 @@ def test_itransformer_model_same_input_output_dims():
     model = iTransformerModel(
         input_dim=5,
         output_dim=5,
-        seq_len=32,
         pred_len=1,
         d_model=64,
         nhead=4
@@ -1295,7 +1291,6 @@ def test_itransformer_model_different_input_output_dims():
     model = iTransformerModel(
         input_dim=8,
         output_dim=3,
-        seq_len=32,
         pred_len=1,
         d_model=64,
         nhead=4
@@ -1307,22 +1302,21 @@ def test_itransformer_model_different_input_output_dims():
     assert output["preds"].shape == (2, 1, 3)
 
 
-def test_itransformer_model_seq_len_validation():
-    """Test that seq_len mismatch raises error."""
+def test_itransformer_model_variable_seq_len():
+    """Test that iTransformer handles variable sequence lengths."""
     model = iTransformerModel(
         input_dim=5,
         output_dim=3,
-        seq_len=32,
         pred_len=1,
         d_model=64,
         nhead=4
     )
 
-    # Input with wrong sequence length
-    x = torch.randn(2, 16, 5)  # seq_len=16, but model expects 32
-
-    with pytest.raises(ValueError, match="Input sequence length"):
-        model(x)
+    # Test with different sequence lengths
+    for seq_len in [16, 32, 64]:
+        x = torch.randn(2, seq_len, 5)
+        output = model(x)
+        assert output["preds"].shape == (2, 1, 3)
 
 
 def test_itransformer_model_gradient_flow():
@@ -1330,7 +1324,6 @@ def test_itransformer_model_gradient_flow():
     model = iTransformerModel(
         input_dim=5,
         output_dim=3,
-        seq_len=32,
         pred_len=1,
         d_model=32,
         nhead=4,
@@ -1356,7 +1349,6 @@ def test_itransformer_model_num_params():
     model = iTransformerModel(
         input_dim=5,
         output_dim=3,
-        seq_len=64,
         pred_len=1,
         d_model=128,
         nhead=8,
@@ -1374,7 +1366,6 @@ def test_itransformer_model_different_activations():
         model = iTransformerModel(
             input_dim=5,
             output_dim=3,
-            seq_len=32,
             pred_len=1,
             d_model=32,
             nhead=4,
@@ -1391,7 +1382,6 @@ def test_itransformer_model_with_without_norm():
         model = iTransformerModel(
             input_dim=5,
             output_dim=3,
-            seq_len=32,
             pred_len=1,
             d_model=32,
             nhead=4,
@@ -1407,7 +1397,6 @@ def test_itransformer_model_no_nan():
     model = iTransformerModel(
         input_dim=5,
         output_dim=3,
-        seq_len=32,
         pred_len=1,
         d_model=32,
         nhead=4,
@@ -1426,7 +1415,6 @@ def test_itransformer_model_repr():
     model = iTransformerModel(
         input_dim=5,
         output_dim=3,
-        seq_len=64,
         pred_len=1,
         d_model=256,
         num_layers=4
@@ -1434,7 +1422,6 @@ def test_itransformer_model_repr():
 
     model_repr = repr(model)
     assert "iTransformerModel" in model_repr
-    assert "seq_len=64" in model_repr
     assert "pred_len=1" in model_repr
     assert "d_model=256" in model_repr
     assert "num_layers=4" in model_repr
