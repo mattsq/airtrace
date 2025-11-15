@@ -7,11 +7,15 @@ from airtrace.models import (
     DriftModel,
     ExponentialSmoothingModel,
     GRUARModel,
+    GRUSeq2SeqModel,
     HoltLinearTrendModel,
     LinearARModel,
     LinearTrendModel,
+    LSTMARModel,
+    LSTMSeq2SeqModel,
     MeanModel,
     MedianModel,
+    MLPARModel,
     MovingAverageModel,
     PersistenceModel,
     PolynomialTrendModel,
@@ -368,6 +372,17 @@ def test_drift_model_linear_sequence():
     torch.testing.assert_close(output["preds"], expected_pred, atol=1e-4, rtol=1e-4)
 
 
+def test_lazy_baseline_model_repr_handles_uninitialized_parameters():
+    """Ensure lazy modules don't break model representations or validation."""
+    model = LinearARModel(input_dim=5, output_dim=3)
+
+    # ``repr`` calls ``get_num_params`` which previously failed for lazy params.
+    model_repr = repr(model)
+
+    assert "LinearARModel" in model_repr
+    assert "num_params" in model_repr
+
+
 def test_exponential_smoothing_model_forward(batch):
     """Test exponential smoothing model forward pass."""
     model = ExponentialSmoothingModel(input_dim=5, output_dim=3, alpha=0.3)
@@ -671,10 +686,15 @@ def test_linear_ar_model_trainable():
     model = LinearARModel(input_dim=5, output_dim=3)
     x = torch.randn(2, 10, 5)
 
-    # First forward pass creates the linear layer
+    # Parameters should be registered immediately (as UninitializedParameter)
+    # This ensures optimizers can capture them before first forward pass
+    params_before = list(model.parameters())
+    assert len(params_before) > 0, "LazyLinear should register parameters immediately"
+
+    # First forward pass materializes the lazy parameters
     output1 = model(x)
 
-    # Check that model has parameters
+    # Check that model has parameters with correct shape
     num_params = model.get_num_params()
     assert num_params > 0
     # Should have input_dim * T_in * output_dim + output_dim (bias) params
@@ -698,3 +718,314 @@ def test_linear_ar_model_gradient_flow():
     for param in model.parameters():
         if param.requires_grad:
             assert param.grad is not None
+
+
+# ============================================================================
+# New Model Tests (MLP AR, LSTM AR, Seq2Seq)
+# ============================================================================
+
+
+def test_mlp_ar_model_forward(batch):
+    """Test MLP AR model forward pass."""
+    model = MLPARModel(
+        input_dim=5,
+        output_dim=3,
+        hidden_dims=[128, 64],
+        dropout=0.1
+    )
+
+    output = model(batch)
+
+    assert "preds" in output
+    assert output["preds"].shape == (4, 1, 3)
+
+
+def test_mlp_ar_model_default_hidden_dims():
+    """Test MLP AR with default hidden dimensions."""
+    model = MLPARModel(input_dim=5, output_dim=3)
+    x = torch.randn(2, 10, 5)
+
+    output = model(x)
+
+    assert output["preds"].shape == (2, 1, 3)
+
+
+def test_mlp_ar_model_trainable():
+    """Test that MLP AR model has trainable parameters."""
+    model = MLPARModel(input_dim=5, output_dim=3, hidden_dims=[64, 32])
+    x = torch.randn(2, 10, 5)
+
+    # Parameters should be registered immediately (as UninitializedParameter for first layer)
+    # This ensures optimizers can capture them before first forward pass
+    params_before = list(model.parameters())
+    assert len(params_before) > 0, "LazyLinear should register parameters immediately"
+
+    # First forward pass materializes the lazy parameters
+    output = model(x)
+
+    # Check that model has parameters
+    num_params = model.get_num_params()
+    assert num_params > 0
+    # Should have multiple layers with non-zero parameters
+    assert num_params > 100
+
+
+def test_mlp_ar_model_gradient_flow():
+    """Test that gradients flow through MLP AR model."""
+    model = MLPARModel(input_dim=5, output_dim=3, hidden_dims=[64, 32])
+    x = torch.randn(2, 10, 5, requires_grad=True)
+
+    output = model(x)
+    preds = output["preds"]
+
+    # Compute dummy loss
+    loss = preds.mean()
+    loss.backward()
+
+    # Check that model parameters have gradients
+    for param in model.parameters():
+        if param.requires_grad:
+            assert param.grad is not None
+
+
+def test_mlp_ar_model_activation():
+    """Test MLP AR with different activations."""
+    for activation in ["relu", "gelu", "tanh"]:
+        model = MLPARModel(
+            input_dim=5,
+            output_dim=3,
+            hidden_dims=[32],
+            activation=activation
+        )
+        x = torch.randn(2, 10, 5)
+        output = model(x)
+        assert output["preds"].shape == (2, 1, 3)
+
+
+def test_mlp_ar_model_invalid_activation():
+    """Test that invalid activation raises error."""
+    with pytest.raises(ValueError):
+        MLPARModel(input_dim=5, output_dim=3, activation="invalid")
+
+
+def test_lstm_ar_model_forward(batch):
+    """Test LSTM AR model forward pass."""
+    model = LSTMARModel(
+        input_dim=5,
+        output_dim=3,
+        hidden_size=64,
+        num_layers=2
+    )
+
+    output = model(batch)
+
+    assert "preds" in output
+    assert "extras" in output
+    assert output["preds"].shape == (4, 1, 3)
+    assert "hidden" in output["extras"]
+    assert "cell" in output["extras"]
+
+
+def test_lstm_ar_model_with_attention(batch):
+    """Test LSTM AR model with attention."""
+    model = LSTMARModel(
+        input_dim=5,
+        output_dim=3,
+        hidden_size=64,
+        num_layers=2,
+        use_attention=True
+    )
+
+    output = model(batch)
+
+    assert output["preds"].shape == (4, 1, 3)
+    assert "attention_weights" in output["extras"]
+
+
+def test_lstm_ar_model_bidirectional(batch):
+    """Test bidirectional LSTM AR model."""
+    model = LSTMARModel(
+        input_dim=5,
+        output_dim=3,
+        hidden_size=64,
+        num_layers=2,
+        bidirectional=True
+    )
+
+    output = model(batch)
+
+    assert output["preds"].shape == (4, 1, 3)
+
+
+def test_lstm_ar_model_gradient_flow():
+    """Test that gradients flow through LSTM AR model."""
+    model = LSTMARModel(input_dim=5, output_dim=3, hidden_size=32)
+    x = torch.randn(2, 16, 5, requires_grad=True)
+
+    output = model(x)
+    preds = output["preds"]
+
+    # Compute dummy loss
+    loss = preds.mean()
+    loss.backward()
+
+    # Check that parameters have gradients
+    for param in model.parameters():
+        if param.requires_grad:
+            assert param.grad is not None
+
+
+def test_gru_seq2seq_model_forward(batch):
+    """Test GRU Seq2Seq model forward pass."""
+    model = GRUSeq2SeqModel(
+        input_dim=5,
+        output_dim=3,
+        hidden_size=64,
+        num_layers=2,
+        use_attention=False
+    )
+
+    output = model(batch, pred_len=5)
+
+    assert "preds" in output
+    assert "extras" in output
+    assert output["preds"].shape == (4, 5, 3)  # [B, pred_len, D_out]
+
+
+def test_gru_seq2seq_model_single_step(batch):
+    """Test GRU Seq2Seq with single step prediction."""
+    model = GRUSeq2SeqModel(
+        input_dim=5,
+        output_dim=3,
+        hidden_size=64,
+        num_layers=1
+    )
+
+    output = model(batch, pred_len=1)
+
+    assert output["preds"].shape == (4, 1, 3)
+
+
+def test_gru_seq2seq_model_with_attention(batch):
+    """Test GRU Seq2Seq model with attention."""
+    model = GRUSeq2SeqModel(
+        input_dim=5,
+        output_dim=3,
+        hidden_size=64,
+        num_layers=2,
+        use_attention=True
+    )
+
+    output = model(batch, pred_len=3)
+
+    assert output["preds"].shape == (4, 3, 3)
+    assert "attention_weights" in output["extras"]
+
+
+def test_gru_seq2seq_model_teacher_forcing():
+    """Test GRU Seq2Seq with teacher forcing."""
+    model = GRUSeq2SeqModel(
+        input_dim=5,
+        output_dim=3,
+        hidden_size=32,
+        num_layers=1,
+        teacher_forcing_ratio=1.0  # Always use teacher forcing
+    )
+    model.train()
+
+    x = torch.randn(2, 10, 5)
+    target = torch.randn(2, 5, 3)
+
+    output = model(x, target=target, pred_len=5)
+
+    assert output["preds"].shape == (2, 5, 3)
+
+
+def test_gru_seq2seq_model_gradient_flow():
+    """Test that gradients flow through GRU Seq2Seq model."""
+    model = GRUSeq2SeqModel(input_dim=5, output_dim=3, hidden_size=32)
+    x = torch.randn(2, 10, 5, requires_grad=True)
+
+    output = model(x, pred_len=3)
+    preds = output["preds"]
+
+    # Compute dummy loss
+    loss = preds.mean()
+    loss.backward()
+
+    # Check that parameters have gradients
+    for param in model.parameters():
+        if param.requires_grad:
+            assert param.grad is not None
+
+
+def test_lstm_seq2seq_model_forward(batch):
+    """Test LSTM Seq2Seq model forward pass."""
+    model = LSTMSeq2SeqModel(
+        input_dim=5,
+        output_dim=3,
+        hidden_size=64,
+        num_layers=2,
+        use_attention=False
+    )
+
+    output = model(batch, pred_len=5)
+
+    assert "preds" in output
+    assert "extras" in output
+    assert output["preds"].shape == (4, 5, 3)  # [B, pred_len, D_out]
+    assert "cell" in output["extras"]
+
+
+def test_lstm_seq2seq_model_with_attention(batch):
+    """Test LSTM Seq2Seq model with attention."""
+    model = LSTMSeq2SeqModel(
+        input_dim=5,
+        output_dim=3,
+        hidden_size=64,
+        num_layers=2,
+        use_attention=True
+    )
+
+    output = model(batch, pred_len=3)
+
+    assert output["preds"].shape == (4, 3, 3)
+    assert "attention_weights" in output["extras"]
+
+
+def test_lstm_seq2seq_model_gradient_flow():
+    """Test that gradients flow through LSTM Seq2Seq model."""
+    model = LSTMSeq2SeqModel(input_dim=5, output_dim=3, hidden_size=32)
+    x = torch.randn(2, 10, 5, requires_grad=True)
+
+    output = model(x, pred_len=3)
+    preds = output["preds"]
+
+    # Compute dummy loss
+    loss = preds.mean()
+    loss.backward()
+
+    # Check that parameters have gradients
+    for param in model.parameters():
+        if param.requires_grad:
+            assert param.grad is not None
+
+
+@pytest.mark.parametrize("model_class,kwargs", [
+    (MLPARModel, {"hidden_dims": [64, 32]}),
+    (LSTMARModel, {"hidden_size": 32, "num_layers": 1}),
+    (GRUSeq2SeqModel, {"hidden_size": 32, "num_layers": 1}),
+    (LSTMSeq2SeqModel, {"hidden_size": 32, "num_layers": 1}),
+])
+def test_new_models_no_nan(model_class, kwargs):
+    """Test that new models don't produce NaN values."""
+    model = model_class(input_dim=5, output_dim=3, **kwargs)
+    x = torch.randn(2, 16, 5)
+
+    if "Seq2Seq" in model_class.__name__:
+        output = model(x, pred_len=1)
+    else:
+        output = model(x)
+
+    assert not torch.isnan(output["preds"]).any()
+    assert not torch.isinf(output["preds"]).any()

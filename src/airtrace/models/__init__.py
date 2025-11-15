@@ -9,6 +9,7 @@ from .baselines import (
     LinearTrendModel,
     MeanModel,
     MedianModel,
+    MLPARModel,
     MovingAverageModel,
     PersistenceModel,
     PolynomialTrendModel,
@@ -17,7 +18,9 @@ from .baselines import (
     ZeroModel,
 )
 from .gru_ar import GRUARModel
+from .lstm_ar import LSTMARModel
 from .registry import build_model, list_models, register
+from .seq2seq import GRUSeq2SeqModel, LSTMSeq2SeqModel
 from .tcn import TCNModel
 from .transformer import TransformerModel
 
@@ -26,7 +29,11 @@ __all__ = [
     "register",
     "build_model",
     "list_models",
+    # Deep learning models
     "GRUARModel",
+    "LSTMARModel",
+    "GRUSeq2SeqModel",
+    "LSTMSeq2SeqModel",
     "TCNModel",
     "TransformerModel",
     # Baseline models
@@ -43,4 +50,5 @@ __all__ = [
     "HoltLinearTrendModel",
     "ThetaModel",
     "LinearARModel",
+    "MLPARModel",
 ]

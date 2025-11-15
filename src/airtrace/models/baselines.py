@@ -3,7 +3,7 @@
 These models provide simple baselines to compare more sophisticated models against.
 """
 
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import torch
 import torch.nn as nn
@@ -1052,9 +1052,9 @@ class LinearARModel(ARBaseModel):
         """
         super().__init__(input_dim, output_dim, **kwargs)
 
-        # We don't know T_in at init time, so we'll create the linear layer
-        # lazily on first forward pass
-        self.linear = None
+        # Use LazyLinear to defer input size determination until first forward pass
+        # This ensures parameters are registered immediately for optimizer creation
+        self.linear = nn.LazyLinear(output_dim)
 
     def forward(
         self,
@@ -1074,17 +1074,117 @@ class LinearARModel(ARBaseModel):
         """
         B, T_in, D_in = x.shape
 
-        # Create linear layer if needed (lazy initialization)
-        if self.linear is None:
-            # Input: flattened sequence [B, T_in * D_in]
-            # Output: [B, D_out]
-            self.linear = nn.Linear(T_in * D_in, self.output_dim).to(x.device)
-
         # Flatten input sequence
         x_flat = x.reshape(B, -1)  # [B, T_in * D_in]
 
         # Apply linear transformation
         next_value = self.linear(x_flat)  # [B, D_out]
+
+        # Reshape to [B, 1, D_out]
+        preds = next_value.unsqueeze(1)
+
+        return {
+            "preds": preds,
+            "extras": {}
+        }
+
+
+@register("mlp_ar")
+class MLPARModel(ARBaseModel):
+    """Windowed MLP autoregressive baseline model.
+
+    Flattens the input window [T_in, D_in] into a vector and passes it through
+    a multi-layer perceptron (MLP) to predict the next timestep.
+
+    This is a non-sequential baseline that treats the window as a static feature
+    vector. It's useful for checking whether sequence modeling (RNNs, Transformers)
+    actually provides value over a simple feedforward network.
+
+    Unlike linear_ar, this model has hidden layers with nonlinearities, giving it
+    more capacity while still ignoring temporal structure.
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        output_dim: int,
+        hidden_dims: Optional[List[int]] = None,
+        dropout: float = 0.1,
+        activation: str = "relu",
+        **kwargs
+    ):
+        """Initialize MLP AR model.
+
+        Args:
+            input_dim: Dimension of input features
+            output_dim: Dimension of output predictions
+            hidden_dims: List of hidden layer dimensions (default: [256, 128])
+            dropout: Dropout probability
+            activation: Activation function ('relu', 'gelu', 'tanh')
+            **kwargs: Additional arguments (ignored)
+        """
+        super().__init__(input_dim, output_dim, **kwargs)
+
+        if hidden_dims is None:
+            hidden_dims = [256, 128]
+
+        self.hidden_dims = hidden_dims
+        self.dropout_p = dropout
+
+        # Select activation function
+        if activation == "relu":
+            activation_fn = nn.ReLU
+        elif activation == "gelu":
+            activation_fn = nn.GELU
+        elif activation == "tanh":
+            activation_fn = nn.Tanh
+        else:
+            raise ValueError(f"Unknown activation: {activation}")
+
+        # Build MLP using LazyLinear for first layer
+        # This allows parameters to be registered immediately while deferring
+        # input size determination until first forward pass
+        layers = []
+
+        # First hidden layer - use LazyLinear since we don't know T_in
+        layers.append(nn.LazyLinear(hidden_dims[0]))
+        layers.append(activation_fn())
+        layers.append(nn.Dropout(dropout))
+
+        # Remaining hidden layers
+        for i in range(1, len(hidden_dims)):
+            layers.append(nn.Linear(hidden_dims[i - 1], hidden_dims[i]))
+            layers.append(activation_fn())
+            layers.append(nn.Dropout(dropout))
+
+        # Output layer
+        layers.append(nn.Linear(hidden_dims[-1], output_dim))
+
+        self.mlp = nn.Sequential(*layers)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        context: Optional[torch.Tensor] = None,
+        **kwargs
+    ) -> Dict[str, torch.Tensor]:
+        """Forward pass - flatten and pass through MLP.
+
+        Args:
+            x: Input tensor [B, T_in, D_in]
+            context: Optional context tensor (ignored)
+            **kwargs: Additional arguments (ignored)
+
+        Returns:
+            Dictionary with 'preds' [B, 1, D_out]
+        """
+        B, T_in, D_in = x.shape
+
+        # Flatten input sequence
+        x_flat = x.reshape(B, -1)  # [B, T_in * D_in]
+
+        # Pass through MLP
+        next_value = self.mlp(x_flat)  # [B, D_out]
 
         # Reshape to [B, 1, D_out]
         preds = next_value.unsqueeze(1)
