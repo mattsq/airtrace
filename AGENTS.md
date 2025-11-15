@@ -66,6 +66,7 @@ docs/            ← Extended documentation
 - Use base classes (`ARBaseModel`, `Transform`, `Task`)
 - Add type hints to all functions
 - Write tests for new components
+- Update the Model Registry section in `README.md` when adding a new model
 - Update `MEMORY.md` when you learn something surprising
 
 ❌ **DON'T**:

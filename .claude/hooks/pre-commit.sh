@@ -177,7 +177,7 @@ for file in $STAGED_FILES; do
         # Skip __init__.py and check if file has functions without type hints
         if [ "$(basename $file)" != "__init__.py" ]; then
             # Simple heuristic: check if 'def ' exists without '->' in the same line
-            untyped_funcs=$(grep -n "def " "$file" | grep -v "__init__" | grep -v "->") || true
+            untyped_funcs=$(grep -n "def " "$file" | grep -v "__init__" | grep -v -- "->") || true
             if [ ! -z "$untyped_funcs" ]; then
                 echo -e "  ${YELLOW}⚠ $file${NC} - some functions may be missing return type hints"
                 WARNINGS=$((WARNINGS + 1))
@@ -187,6 +187,49 @@ for file in $STAGED_FILES; do
         fi
     fi
 done
+
+# Rule 8: Check README.md is updated when models are added/modified
+echo ""
+echo "📋 Rule 8: Validating README.md updates for new/modified models..."
+MODEL_FILES_CHANGED=false
+README_CHANGED=false
+
+for file in $STAGED_FILES; do
+    if [[ "$file" =~ ^src/airtrace/models/(.+)\.py$ ]]; then
+        model_name="${BASH_REMATCH[1]}"
+        # Check if this is a new model file or a modified one with new @register
+        if [ "$model_name" != "base" ] && [ "$model_name" != "__init__" ] && [ "$model_name" != "registry" ]; then
+            if grep -q "@register" "$file" 2>/dev/null; then
+                MODEL_FILES_CHANGED=true
+                break
+            fi
+        fi
+    fi
+done
+
+if echo "$STAGED_FILES" | grep -q "README.md"; then
+    README_CHANGED=true
+fi
+
+if [ "$MODEL_FILES_CHANGED" = true ]; then
+    if [ "$README_CHANGED" = true ]; then
+        # Check if the README Model Registry section was actually updated
+        if git diff --cached README.md | grep -q "Model Registry"; then
+            echo "  ✓ Model files changed and README.md Model Registry section updated"
+        else
+            echo -e "  ${YELLOW}⚠ Model files changed${NC} - ensure Model Registry section in README.md is updated"
+            echo "    Add model details (name, class, description) to the appropriate table"
+            WARNINGS=$((WARNINGS + 1))
+        fi
+    else
+        echo -e "  ${YELLOW}⚠ Model files changed${NC} but README.md is not being updated"
+        echo "    Update the Model Registry section in README.md with your new model's details"
+        echo "    See CLAUDE.md section 'Add a new model' for instructions"
+        WARNINGS=$((WARNINGS + 1))
+    fi
+else
+    echo "  ✓ No model files changed"
+fi
 
 # Summary
 echo ""
