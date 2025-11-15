@@ -10,8 +10,10 @@ Usage:
 
 import argparse
 import json
+import os
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -381,6 +383,40 @@ def evaluate_model(
     return preds, targets
 
 
+def _validate_model_worker(
+    model_name: str,
+    batch_size: int,
+    n_epochs: int,
+    device: str,
+    input_dim: int,
+    output_dim: int,
+    train_tensors: Tuple[torch.Tensor, torch.Tensor],
+    val_tensors: Tuple[torch.Tensor, torch.Tensor],
+) -> Dict:
+    """Execute ``validate_single_model`` inside a worker process."""
+
+    torch.set_num_threads(1)
+
+    X_train, y_train = train_tensors
+    X_val, y_val = val_tensors
+
+    train_dataset = TensorDataset(X_train, y_train)
+    val_dataset = TensorDataset(X_val, y_val)
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+
+    return validate_single_model(
+        model_name=model_name,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        input_dim=input_dim,
+        output_dim=output_dim,
+        n_epochs=n_epochs,
+        device=device,
+    )
+
+
 def validate_single_model(
     model_name: str,
     train_loader: DataLoader,
@@ -585,6 +621,24 @@ def main():
         default="cpu",
         help="Device to use (cpu or cuda)"
     )
+    parser.add_argument(
+        "--models",
+        type=str,
+        default="",
+        help=(
+            "Comma-separated list of model names to validate. "
+            "If omitted, all registered models are evaluated."
+        ),
+    )
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=None,
+        help=(
+            "Maximum number of worker processes for parallel validation. "
+            "Defaults to the number of available CPU cores or the number of models, whichever is smaller."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -618,41 +672,122 @@ def main():
         X_train, y_train, X_val, y_val
     )
 
-    # Create data loaders
+    # Share tensors across worker processes to avoid duplication
+    for tensor in (X_train, y_train, X_val, y_val):
+        if tensor.device.type == "cpu":
+            try:
+                tensor.share_memory_()
+            except RuntimeError:
+                # Sharing may fail on some platforms; fall back gracefully.
+                pass
+
+    # Create datasets (loaders will be constructed lazily as needed)
     train_dataset = TensorDataset(X_train, y_train)
     val_dataset = TensorDataset(X_val, y_val)
 
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=args.batch_size,
-        shuffle=True
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=args.batch_size,
-        shuffle=False
-    )
+    # Get all registered models and optionally filter by user selection
+    available_models = list_models()
+    print(f"\n📦 Found {len(available_models)} registered models: {available_models}")
 
-    # Get all registered models
-    model_names = list_models()
-    print(f"\n📦 Found {len(model_names)} registered models: {model_names}")
+    if args.models:
+        requested_models = [name.strip() for name in args.models.split(",") if name.strip()]
+        missing_models = [name for name in requested_models if name not in available_models]
 
-    # Validate each model
+        if missing_models:
+            print(f"❌ Unknown model(s) requested: {missing_models}")
+            sys.exit(1)
+
+        model_names = [name for name in available_models if name in requested_models]
+    else:
+        model_names = available_models
+
+    if not model_names:
+        print("⚠️ No models selected for validation. Exiting early.")
+        output_path = Path(args.output)
+        output_data = {
+            "seed": args.seed,
+            "n_flights": args.n_flights,
+            "n_epochs": args.n_epochs,
+            "batch_size": args.batch_size,
+            "device": args.device,
+            "input_dim": X_train.shape[-1],
+            "output_dim": y_train.shape[-1],
+            "train_samples": len(train_dataset),
+            "val_samples": len(val_dataset),
+            "results": [],
+        }
+
+        with output_path.open("w", encoding="utf-8") as handle:
+            json.dump(output_data, handle, indent=2)
+
+        sys.exit(0)
+
+    print(f"🔍 Validating models: {model_names}")
+
+    # Determine parallelism strategy
     input_dim = X_train.shape[-1]
     output_dim = y_train.shape[-1]
 
-    results = []
-    for model_name in model_names:
-        result = validate_single_model(
-            model_name=model_name,
-            train_loader=train_loader,
-            val_loader=val_loader,
-            input_dim=input_dim,
-            output_dim=output_dim,
-            n_epochs=args.n_epochs,
-            device=args.device
-        )
-        results.append(result)
+    available_cpus = os.cpu_count() or 1
+    max_workers = args.max_workers if args.max_workers is not None else min(len(model_names), available_cpus)
+
+    if args.device != "cpu":
+        # Parallelising GPU workloads from multiple processes adds unnecessary overhead.
+        max_workers = 1
+
+    max_workers = max(1, max_workers)
+
+    if max_workers == 1:
+        print("🧪 Running validation sequentially")
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
+
+        results = []
+        for model_name in model_names:
+            result = validate_single_model(
+                model_name=model_name,
+                train_loader=train_loader,
+                val_loader=val_loader,
+                input_dim=input_dim,
+                output_dim=output_dim,
+                n_epochs=args.n_epochs,
+                device=args.device,
+            )
+            results.append(result)
+    else:
+        print(f"⚡ Running validation with {max_workers} parallel workers")
+        train_tensors = (X_train, y_train)
+        val_tensors = (X_val, y_val)
+
+        futures = {}
+        results_buffer: Dict[int, Dict] = {}
+
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            for idx, model_name in enumerate(model_names):
+                future = executor.submit(
+                    _validate_model_worker,
+                    model_name,
+                    args.batch_size,
+                    args.n_epochs,
+                    args.device,
+                    input_dim,
+                    output_dim,
+                    train_tensors,
+                    val_tensors,
+                )
+                futures[future] = (idx, model_name)
+
+            for future in as_completed(futures):
+                idx, model_name = futures[future]
+                try:
+                    result = future.result()
+                except Exception as exc:  # pragma: no cover - surfaced in CI logs
+                    print(f"❌ Validation failed for model '{model_name}': {exc}")
+                    raise
+
+                results_buffer[idx] = result
+
+        results = [results_buffer[i] for i in range(len(model_names))]
 
     # Print summary
     print_summary_table(results)
