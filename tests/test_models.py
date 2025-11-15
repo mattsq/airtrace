@@ -25,6 +25,7 @@ from airtrace.models import (
     TCNModel,
     ThetaModel,
     TransformerModel,
+    VARModel,
     ZeroModel,
 )
 
@@ -39,12 +40,7 @@ def batch():
 
 def test_gru_ar_model_forward(batch):
     """Test GRU AR model forward pass."""
-    model = GRUARModel(
-        input_dim=5,
-        output_dim=3,
-        hidden_size=64,
-        num_layers=2
-    )
+    model = GRUARModel(input_dim=5, output_dim=3, hidden_size=64, num_layers=2)
 
     output = model(batch)
 
@@ -55,12 +51,7 @@ def test_gru_ar_model_forward(batch):
 
 def test_tcn_model_forward(batch):
     """Test TCN model forward pass."""
-    model = TCNModel(
-        input_dim=5,
-        output_dim=3,
-        num_channels=[32, 64, 64],
-        kernel_size=3
-    )
+    model = TCNModel(input_dim=5, output_dim=3, num_channels=[32, 64, 64], kernel_size=3)
 
     output = model(batch)
 
@@ -70,13 +61,7 @@ def test_tcn_model_forward(batch):
 
 def test_transformer_model_forward(batch):
     """Test Transformer model forward pass."""
-    model = TransformerModel(
-        input_dim=5,
-        output_dim=3,
-        d_model=64,
-        nhead=4,
-        num_encoder_layers=2
-    )
+    model = TransformerModel(input_dim=5, output_dim=3, d_model=64, nhead=4, num_encoder_layers=2)
 
     output = model(batch)
 
@@ -86,12 +71,7 @@ def test_transformer_model_forward(batch):
 
 def test_model_num_params():
     """Test parameter counting."""
-    model = GRUARModel(
-        input_dim=5,
-        output_dim=3,
-        hidden_size=64,
-        num_layers=2
-    )
+    model = GRUARModel(input_dim=5, output_dim=3, hidden_size=64, num_layers=2)
 
     num_params = model.get_num_params()
     assert num_params > 0
@@ -134,12 +114,15 @@ def test_model_gradient_flow():
             assert param.grad is not None
 
 
-@pytest.mark.parametrize("model_class,kwargs", [
-    (GRUARModel, {"hidden_size": 32, "num_layers": 1}),
-    (TCNModel, {"num_channels": [32, 32], "kernel_size": 3}),
-    (TransformerModel, {"d_model": 32, "nhead": 4, "num_encoder_layers": 1}),
-    (PatchTSTModel, {"patch_len": 8, "stride": 4, "d_model": 32, "nhead": 4, "num_layers": 2}),
-])
+@pytest.mark.parametrize(
+    "model_class,kwargs",
+    [
+        (GRUARModel, {"hidden_size": 32, "num_layers": 1}),
+        (TCNModel, {"num_channels": [32, 32], "kernel_size": 3}),
+        (TransformerModel, {"d_model": 32, "nhead": 4, "num_encoder_layers": 1}),
+        (PatchTSTModel, {"patch_len": 8, "stride": 4, "d_model": 32, "nhead": 4, "num_layers": 2}),
+    ],
+)
 def test_model_output_shape(model_class, kwargs):
     """Test output shapes for different models."""
     model = model_class(input_dim=5, output_dim=3, **kwargs)
@@ -189,6 +172,65 @@ def test_zero_model_forward(batch):
     assert output["preds"].shape == (4, 1, 3)
     # Check all predictions are zero
     torch.testing.assert_close(output["preds"], torch.zeros_like(output["preds"]))
+
+
+def test_var_model_forward(batch):
+    """Test VAR model forward pass and extras."""
+
+    model = VARModel(input_dim=5, output_dim=5, order=2, regularization=1e-3)
+
+    output = model(batch)
+
+    assert "preds" in output
+    assert output["preds"].shape == (4, 1, 5)
+    assert output["extras"]["fitted"].item() is True
+    assert output["extras"]["lag_matrices"].shape == (4, 2, 5, 5)
+
+
+def test_var_model_projection(batch):
+    """VAR model should project to different output dimensionality when needed."""
+
+    model = VARModel(input_dim=5, output_dim=3, order=1)
+
+    output = model(batch)
+
+    assert output["preds"].shape == (4, 1, 3)
+
+
+def test_var_model_insufficient_history():
+    """VAR model should gracefully fall back when history is too short."""
+
+    x = torch.randn(2, 2, 4)
+    model = VARModel(input_dim=4, output_dim=4, order=3)
+
+    output = model(x)
+
+    expected = x[:, -1:, :]
+    torch.testing.assert_close(output["preds"], expected)
+    assert output["extras"]["fitted"].item() is False
+
+
+def test_var_model_recovers_known_system():
+    """Fitted VAR should recover deterministic linear dynamics."""
+
+    A = torch.tensor([[0.7, -0.1], [0.25, 0.55]], dtype=torch.float32)
+    c = torch.tensor([0.1, -0.05], dtype=torch.float32)
+
+    seq = [torch.tensor([0.5, -0.3], dtype=torch.float32)]
+    for _ in range(20):
+        next_step = c + seq[-1] @ A
+        seq.append(next_step)
+
+    window = torch.stack(seq[:18])  # [T, D]
+    x = window.unsqueeze(0)
+
+    model = VARModel(input_dim=2, output_dim=2, order=1, regularization=0.0)
+
+    output = model(x)
+    preds = output["preds"].squeeze(0).squeeze(0)
+
+    expected_next = c + window[-1] @ A
+    torch.testing.assert_close(preds, expected_next, atol=1e-4, rtol=1e-4)
 
 
 def test_mean_model_forward(batch):
@@ -278,10 +320,7 @@ def test_linear_trend_model_constant_sequence():
     assert output["extras"]["slope"].abs().max() < 1e-5
     # Prediction should be close to constant value
     torch.testing.assert_close(
-        output["preds"],
-        torch.ones_like(output["preds"]) * 5.0,
-        atol=1e-5,
-        rtol=1e-5
+        output["preds"], torch.ones_like(output["preds"]) * 5.0, atol=1e-5, rtol=1e-5
     )
 
 
@@ -347,10 +386,7 @@ def test_drift_model_constant_sequence():
     assert output["extras"]["drift"].abs().max() < 1e-6
     # Prediction should be the constant value
     torch.testing.assert_close(
-        output["preds"],
-        torch.ones_like(output["preds"]) * 5.0,
-        atol=1e-5,
-        rtol=1e-5
+        output["preds"], torch.ones_like(output["preds"]) * 5.0, atol=1e-5, rtol=1e-5
     )
 
 
@@ -366,9 +402,7 @@ def test_drift_model_linear_sequence():
 
     # Drift should be 3.0
     expected_drift = torch.tensor([[3.0]])
-    torch.testing.assert_close(
-        output["extras"]["drift"], expected_drift, atol=1e-4, rtol=1e-4
-    )
+    torch.testing.assert_close(output["extras"]["drift"], expected_drift, atol=1e-4, rtol=1e-4)
 
     # Should predict: last_value + drift = 29 + 3 = 32
     expected_pred = torch.tensor([[[32.0]]])
@@ -415,10 +449,7 @@ def test_exponential_smoothing_high_alpha():
     model = ExponentialSmoothingModel(input_dim=1, output_dim=1, alpha=0.9)
 
     # Create sequence where last value is very different
-    x = torch.cat([
-        torch.ones(1, 9, 1) * 1.0,
-        torch.ones(1, 1, 1) * 10.0
-    ], dim=1)
+    x = torch.cat([torch.ones(1, 9, 1) * 1.0, torch.ones(1, 1, 1) * 10.0], dim=1)
 
     output = model(x)
 
@@ -480,20 +511,23 @@ def test_seasonal_naive_season_validation():
         SeasonalNaiveModel(input_dim=5, output_dim=3, season_length=-1)
 
 
-@pytest.mark.parametrize("model_class,kwargs", [
-    (PersistenceModel, {}),
-    (ZeroModel, {}),
-    (MeanModel, {}),
-    (MedianModel, {}),
-    (MovingAverageModel, {"window_size": 5}),
-    (LinearTrendModel, {}),
-    (DriftModel, {}),
-    (ExponentialSmoothingModel, {"alpha": 0.3}),
-    (SeasonalNaiveModel, {"season_length": 10}),
-    (PolynomialTrendModel, {"degree": 2}),
-    (HoltLinearTrendModel, {"alpha": 0.3, "beta": 0.1}),
-    (ThetaModel, {"theta": 2.0, "alpha": 0.5}),
-])
+@pytest.mark.parametrize(
+    "model_class,kwargs",
+    [
+        (PersistenceModel, {}),
+        (ZeroModel, {}),
+        (MeanModel, {}),
+        (MedianModel, {}),
+        (MovingAverageModel, {"window_size": 5}),
+        (LinearTrendModel, {}),
+        (DriftModel, {}),
+        (ExponentialSmoothingModel, {"alpha": 0.3}),
+        (SeasonalNaiveModel, {"season_length": 10}),
+        (PolynomialTrendModel, {"degree": 2}),
+        (HoltLinearTrendModel, {"alpha": 0.3, "beta": 0.1}),
+        (ThetaModel, {"theta": 2.0, "alpha": 0.5}),
+    ],
+)
 def test_baseline_models_no_nan(model_class, kwargs):
     """Test that baseline models don't produce NaN values."""
     model = model_class(input_dim=5, output_dim=3, **kwargs)
@@ -505,20 +539,23 @@ def test_baseline_models_no_nan(model_class, kwargs):
     assert not torch.isinf(output["preds"]).any()
 
 
-@pytest.mark.parametrize("model_class,kwargs", [
-    (PersistenceModel, {}),
-    (ZeroModel, {}),
-    (MeanModel, {}),
-    (MedianModel, {}),
-    (MovingAverageModel, {"window_size": 5}),
-    (LinearTrendModel, {}),
-    (DriftModel, {}),
-    (ExponentialSmoothingModel, {"alpha": 0.3}),
-    (SeasonalNaiveModel, {"season_length": 10}),
-    (PolynomialTrendModel, {"degree": 2}),
-    (HoltLinearTrendModel, {"alpha": 0.3, "beta": 0.1}),
-    (ThetaModel, {"theta": 2.0, "alpha": 0.5}),
-])
+@pytest.mark.parametrize(
+    "model_class,kwargs",
+    [
+        (PersistenceModel, {}),
+        (ZeroModel, {}),
+        (MeanModel, {}),
+        (MedianModel, {}),
+        (MovingAverageModel, {"window_size": 5}),
+        (LinearTrendModel, {}),
+        (DriftModel, {}),
+        (ExponentialSmoothingModel, {"alpha": 0.3}),
+        (SeasonalNaiveModel, {"season_length": 10}),
+        (PolynomialTrendModel, {"degree": 2}),
+        (HoltLinearTrendModel, {"alpha": 0.3, "beta": 0.1}),
+        (ThetaModel, {"theta": 2.0, "alpha": 0.5}),
+    ],
+)
 def test_baseline_models_num_params(model_class, kwargs):
     """Test that baseline models have minimal parameters."""
     model = model_class(input_dim=5, output_dim=3, **kwargs)
@@ -579,7 +616,7 @@ def test_polynomial_trend_quadratic_sequence():
 
     # Create quadratic sequence: y = 1 + 2*t + 3*t^2
     t = torch.arange(10, dtype=torch.float32)
-    x = (1 + 2 * t + 3 * t ** 2).reshape(1, 10, 1)  # [1, 10, 1]
+    x = (1 + 2 * t + 3 * t**2).reshape(1, 10, 1)  # [1, 10, 1]
 
     output = model(x)
 
@@ -730,12 +767,7 @@ def test_linear_ar_model_gradient_flow():
 
 def test_mlp_ar_model_forward(batch):
     """Test MLP AR model forward pass."""
-    model = MLPARModel(
-        input_dim=5,
-        output_dim=3,
-        hidden_dims=[128, 64],
-        dropout=0.1
-    )
+    model = MLPARModel(input_dim=5, output_dim=3, hidden_dims=[128, 64], dropout=0.1)
 
     output = model(batch)
 
@@ -794,12 +826,7 @@ def test_mlp_ar_model_gradient_flow():
 def test_mlp_ar_model_activation():
     """Test MLP AR with different activations."""
     for activation in ["relu", "gelu", "tanh"]:
-        model = MLPARModel(
-            input_dim=5,
-            output_dim=3,
-            hidden_dims=[32],
-            activation=activation
-        )
+        model = MLPARModel(input_dim=5, output_dim=3, hidden_dims=[32], activation=activation)
         x = torch.randn(2, 10, 5)
         output = model(x)
         assert output["preds"].shape == (2, 1, 3)
@@ -813,12 +840,7 @@ def test_mlp_ar_model_invalid_activation():
 
 def test_lstm_ar_model_forward(batch):
     """Test LSTM AR model forward pass."""
-    model = LSTMARModel(
-        input_dim=5,
-        output_dim=3,
-        hidden_size=64,
-        num_layers=2
-    )
+    model = LSTMARModel(input_dim=5, output_dim=3, hidden_size=64, num_layers=2)
 
     output = model(batch)
 
@@ -831,13 +853,7 @@ def test_lstm_ar_model_forward(batch):
 
 def test_lstm_ar_model_with_attention(batch):
     """Test LSTM AR model with attention."""
-    model = LSTMARModel(
-        input_dim=5,
-        output_dim=3,
-        hidden_size=64,
-        num_layers=2,
-        use_attention=True
-    )
+    model = LSTMARModel(input_dim=5, output_dim=3, hidden_size=64, num_layers=2, use_attention=True)
 
     output = model(batch)
 
@@ -847,13 +863,7 @@ def test_lstm_ar_model_with_attention(batch):
 
 def test_lstm_ar_model_bidirectional(batch):
     """Test bidirectional LSTM AR model."""
-    model = LSTMARModel(
-        input_dim=5,
-        output_dim=3,
-        hidden_size=64,
-        num_layers=2,
-        bidirectional=True
-    )
+    model = LSTMARModel(input_dim=5, output_dim=3, hidden_size=64, num_layers=2, bidirectional=True)
 
     output = model(batch)
 
@@ -881,11 +891,7 @@ def test_lstm_ar_model_gradient_flow():
 def test_gru_seq2seq_model_forward(batch):
     """Test GRU Seq2Seq model forward pass."""
     model = GRUSeq2SeqModel(
-        input_dim=5,
-        output_dim=3,
-        hidden_size=64,
-        num_layers=2,
-        use_attention=False
+        input_dim=5, output_dim=3, hidden_size=64, num_layers=2, use_attention=False
     )
 
     output = model(batch, pred_len=5)
@@ -897,12 +903,7 @@ def test_gru_seq2seq_model_forward(batch):
 
 def test_gru_seq2seq_model_single_step(batch):
     """Test GRU Seq2Seq with single step prediction."""
-    model = GRUSeq2SeqModel(
-        input_dim=5,
-        output_dim=3,
-        hidden_size=64,
-        num_layers=1
-    )
+    model = GRUSeq2SeqModel(input_dim=5, output_dim=3, hidden_size=64, num_layers=1)
 
     output = model(batch, pred_len=1)
 
@@ -912,11 +913,7 @@ def test_gru_seq2seq_model_single_step(batch):
 def test_gru_seq2seq_model_with_attention(batch):
     """Test GRU Seq2Seq model with attention."""
     model = GRUSeq2SeqModel(
-        input_dim=5,
-        output_dim=3,
-        hidden_size=64,
-        num_layers=2,
-        use_attention=True
+        input_dim=5, output_dim=3, hidden_size=64, num_layers=2, use_attention=True
     )
 
     output = model(batch, pred_len=3)
@@ -932,7 +929,7 @@ def test_gru_seq2seq_model_teacher_forcing():
         output_dim=3,
         hidden_size=32,
         num_layers=1,
-        teacher_forcing_ratio=1.0  # Always use teacher forcing
+        teacher_forcing_ratio=1.0,  # Always use teacher forcing
     )
     model.train()
 
@@ -965,11 +962,7 @@ def test_gru_seq2seq_model_gradient_flow():
 def test_lstm_seq2seq_model_forward(batch):
     """Test LSTM Seq2Seq model forward pass."""
     model = LSTMSeq2SeqModel(
-        input_dim=5,
-        output_dim=3,
-        hidden_size=64,
-        num_layers=2,
-        use_attention=False
+        input_dim=5, output_dim=3, hidden_size=64, num_layers=2, use_attention=False
     )
 
     output = model(batch, pred_len=5)
@@ -983,11 +976,7 @@ def test_lstm_seq2seq_model_forward(batch):
 def test_lstm_seq2seq_model_with_attention(batch):
     """Test LSTM Seq2Seq model with attention."""
     model = LSTMSeq2SeqModel(
-        input_dim=5,
-        output_dim=3,
-        hidden_size=64,
-        num_layers=2,
-        use_attention=True
+        input_dim=5, output_dim=3, hidden_size=64, num_layers=2, use_attention=True
     )
 
     output = model(batch, pred_len=3)
@@ -1014,12 +1003,15 @@ def test_lstm_seq2seq_model_gradient_flow():
             assert param.grad is not None
 
 
-@pytest.mark.parametrize("model_class,kwargs", [
-    (MLPARModel, {"hidden_dims": [64, 32]}),
-    (LSTMARModel, {"hidden_size": 32, "num_layers": 1}),
-    (GRUSeq2SeqModel, {"hidden_size": 32, "num_layers": 1}),
-    (LSTMSeq2SeqModel, {"hidden_size": 32, "num_layers": 1}),
-])
+@pytest.mark.parametrize(
+    "model_class,kwargs",
+    [
+        (MLPARModel, {"hidden_dims": [64, 32]}),
+        (LSTMARModel, {"hidden_size": 32, "num_layers": 1}),
+        (GRUSeq2SeqModel, {"hidden_size": 32, "num_layers": 1}),
+        (LSTMSeq2SeqModel, {"hidden_size": 32, "num_layers": 1}),
+    ],
+)
 def test_new_models_no_nan(model_class, kwargs):
     """Test that new models don't produce NaN values."""
     model = model_class(input_dim=5, output_dim=3, **kwargs)
@@ -1042,13 +1034,7 @@ def test_new_models_no_nan(model_class, kwargs):
 def test_patchtst_model_forward(batch):
     """Test PatchTST model forward pass."""
     model = PatchTSTModel(
-        input_dim=5,
-        output_dim=3,
-        patch_len=8,
-        stride=4,
-        d_model=64,
-        nhead=4,
-        num_layers=2
+        input_dim=5, output_dim=3, patch_len=8, stride=4, d_model=64, nhead=4, num_layers=2
     )
 
     output = model(batch)
@@ -1062,14 +1048,7 @@ def test_patchtst_model_forward(batch):
 
 def test_patchtst_model_patching():
     """Test that patching works correctly."""
-    model = PatchTSTModel(
-        input_dim=3,
-        output_dim=2,
-        patch_len=8,
-        stride=4,
-        d_model=32,
-        nhead=4
-    )
+    model = PatchTSTModel(input_dim=3, output_dim=2, patch_len=8, stride=4, d_model=32, nhead=4)
 
     # Input of length 32 with patch_len=8, stride=4
     # Should produce (32 - 8) // 4 + 1 = 7 patches
@@ -1084,28 +1063,14 @@ def test_patchtst_model_patching():
 def test_patchtst_model_different_patch_configs():
     """Test PatchTST with different patch configurations."""
     # Non-overlapping patches (stride = patch_len)
-    model1 = PatchTSTModel(
-        input_dim=5,
-        output_dim=3,
-        patch_len=16,
-        stride=16,
-        d_model=32,
-        nhead=4
-    )
+    model1 = PatchTSTModel(input_dim=5, output_dim=3, patch_len=16, stride=16, d_model=32, nhead=4)
     x = torch.randn(2, 64, 5)
     output1 = model1(x)
     # (64 - 16) // 16 + 1 = 4 patches
     assert output1["extras"]["num_patches"] == 4
 
     # Overlapping patches
-    model2 = PatchTSTModel(
-        input_dim=5,
-        output_dim=3,
-        patch_len=16,
-        stride=8,
-        d_model=32,
-        nhead=4
-    )
+    model2 = PatchTSTModel(input_dim=5, output_dim=3, patch_len=16, stride=8, d_model=32, nhead=4)
     output2 = model2(x)
     # (64 - 16) // 8 + 1 = 7 patches
     assert output2["extras"]["num_patches"] == 7
@@ -1114,13 +1079,7 @@ def test_patchtst_model_different_patch_configs():
 def test_patchtst_model_gradient_flow():
     """Test that gradients flow through PatchTST model."""
     model = PatchTSTModel(
-        input_dim=5,
-        output_dim=3,
-        patch_len=8,
-        stride=4,
-        d_model=32,
-        nhead=4,
-        num_layers=2
+        input_dim=5, output_dim=3, patch_len=8, stride=4, d_model=32, nhead=4, num_layers=2
     )
     x = torch.randn(2, 32, 5, requires_grad=True)
 
@@ -1140,13 +1099,7 @@ def test_patchtst_model_gradient_flow():
 def test_patchtst_model_num_params():
     """Test parameter counting for PatchTST."""
     model = PatchTSTModel(
-        input_dim=5,
-        output_dim=3,
-        patch_len=16,
-        stride=8,
-        d_model=64,
-        nhead=4,
-        num_layers=2
+        input_dim=5, output_dim=3, patch_len=16, stride=8, d_model=64, nhead=4, num_layers=2
     )
 
     num_params = model.get_num_params()
@@ -1157,13 +1110,7 @@ def test_patchtst_model_num_params():
 def test_patchtst_model_channel_independence():
     """Test that channels are processed independently."""
     model = PatchTSTModel(
-        input_dim=3,
-        output_dim=3,
-        patch_len=8,
-        stride=4,
-        d_model=32,
-        nhead=4,
-        num_layers=1
+        input_dim=3, output_dim=3, patch_len=8, stride=4, d_model=32, nhead=4, num_layers=1
     )
 
     x = torch.randn(2, 32, 3)
@@ -1184,7 +1131,7 @@ def test_patchtst_model_different_activations():
             stride=4,
             d_model=32,
             nhead=4,
-            activation=activation
+            activation=activation,
         )
         x = torch.randn(2, 32, 5)
         output = model(x)
@@ -1193,13 +1140,7 @@ def test_patchtst_model_different_activations():
 
 def test_patchtst_model_repr():
     """Test PatchTST model string representation."""
-    model = PatchTSTModel(
-        input_dim=5,
-        output_dim=3,
-        patch_len=16,
-        stride=8,
-        d_model=128
-    )
+    model = PatchTSTModel(input_dim=5, output_dim=3, patch_len=16, stride=8, d_model=128)
 
     model_repr = repr(model)
     assert "PatchTSTModel" in model_repr
@@ -1217,12 +1158,7 @@ def test_patchtst_model_repr():
 def test_itransformer_model_forward(batch):
     """Test iTransformer model forward pass."""
     model = iTransformerModel(
-        input_dim=5,
-        output_dim=3,
-        pred_len=1,
-        d_model=64,
-        nhead=4,
-        num_layers=2
+        input_dim=5, output_dim=3, pred_len=1, d_model=64, nhead=4, num_layers=2
     )
 
     output = model(batch)
@@ -1237,12 +1173,7 @@ def test_itransformer_model_forward(batch):
 def test_itransformer_model_variate_embedding():
     """Test that variate embedding works correctly."""
     model = iTransformerModel(
-        input_dim=3,
-        output_dim=3,
-        pred_len=1,
-        d_model=64,
-        nhead=4,
-        num_layers=2
+        input_dim=3, output_dim=3, pred_len=1, d_model=64, nhead=4, num_layers=2
     )
 
     x = torch.randn(2, 32, 3)
@@ -1256,12 +1187,7 @@ def test_itransformer_model_variate_embedding():
 def test_itransformer_model_multi_step_prediction():
     """Test iTransformer with multi-step prediction."""
     model = iTransformerModel(
-        input_dim=5,
-        output_dim=3,
-        pred_len=10,
-        d_model=64,
-        nhead=4,
-        num_layers=2
+        input_dim=5, output_dim=3, pred_len=10, d_model=64, nhead=4, num_layers=2
     )
 
     x = torch.randn(2, 32, 5)
@@ -1272,13 +1198,7 @@ def test_itransformer_model_multi_step_prediction():
 
 def test_itransformer_model_same_input_output_dims():
     """Test iTransformer when input_dim == output_dim."""
-    model = iTransformerModel(
-        input_dim=5,
-        output_dim=5,
-        pred_len=1,
-        d_model=64,
-        nhead=4
-    )
+    model = iTransformerModel(input_dim=5, output_dim=5, pred_len=1, d_model=64, nhead=4)
 
     x = torch.randn(2, 32, 5)
     output = model(x)
@@ -1288,13 +1208,7 @@ def test_itransformer_model_same_input_output_dims():
 
 def test_itransformer_model_different_input_output_dims():
     """Test iTransformer when input_dim != output_dim."""
-    model = iTransformerModel(
-        input_dim=8,
-        output_dim=3,
-        pred_len=1,
-        d_model=64,
-        nhead=4
-    )
+    model = iTransformerModel(input_dim=8, output_dim=3, pred_len=1, d_model=64, nhead=4)
 
     x = torch.randn(2, 32, 8)
     output = model(x)
@@ -1312,13 +1226,7 @@ def test_itransformer_model_variable_seq_len():
     for seq_len in [16, 32, 64]:
         # Create a new model instance for each sequence length
         # LazyLinear materializes on first forward and cannot change after
-        model = iTransformerModel(
-            input_dim=5,
-            output_dim=3,
-            pred_len=1,
-            d_model=64,
-            nhead=4
-        )
+        model = iTransformerModel(input_dim=5, output_dim=3, pred_len=1, d_model=64, nhead=4)
         x = torch.randn(2, seq_len, 5)
         output = model(x)
         assert output["preds"].shape == (2, 1, 3)
@@ -1327,12 +1235,7 @@ def test_itransformer_model_variable_seq_len():
 def test_itransformer_model_gradient_flow():
     """Test that gradients flow through iTransformer model."""
     model = iTransformerModel(
-        input_dim=5,
-        output_dim=3,
-        pred_len=1,
-        d_model=32,
-        nhead=4,
-        num_layers=2
+        input_dim=5, output_dim=3, pred_len=1, d_model=32, nhead=4, num_layers=2
     )
     x = torch.randn(2, 32, 5, requires_grad=True)
 
@@ -1352,12 +1255,7 @@ def test_itransformer_model_gradient_flow():
 def test_itransformer_model_num_params():
     """Test parameter counting for iTransformer."""
     model = iTransformerModel(
-        input_dim=5,
-        output_dim=3,
-        pred_len=1,
-        d_model=128,
-        nhead=8,
-        num_layers=3
+        input_dim=5, output_dim=3, pred_len=1, d_model=128, nhead=8, num_layers=3
     )
 
     num_params = model.get_num_params()
@@ -1369,12 +1267,7 @@ def test_itransformer_model_different_activations():
     """Test iTransformer with different activation functions."""
     for activation in ["relu", "gelu"]:
         model = iTransformerModel(
-            input_dim=5,
-            output_dim=3,
-            pred_len=1,
-            d_model=32,
-            nhead=4,
-            activation=activation
+            input_dim=5, output_dim=3, pred_len=1, d_model=32, nhead=4, activation=activation
         )
         x = torch.randn(2, 32, 5)
         output = model(x)
@@ -1385,12 +1278,7 @@ def test_itransformer_model_with_without_norm():
     """Test iTransformer with and without layer normalization."""
     for use_norm in [True, False]:
         model = iTransformerModel(
-            input_dim=5,
-            output_dim=3,
-            pred_len=1,
-            d_model=32,
-            nhead=4,
-            use_norm=use_norm
+            input_dim=5, output_dim=3, pred_len=1, d_model=32, nhead=4, use_norm=use_norm
         )
         x = torch.randn(2, 32, 5)
         output = model(x)
@@ -1400,12 +1288,7 @@ def test_itransformer_model_with_without_norm():
 def test_itransformer_model_no_nan():
     """Test that iTransformer doesn't produce NaN values."""
     model = iTransformerModel(
-        input_dim=5,
-        output_dim=3,
-        pred_len=1,
-        d_model=32,
-        nhead=4,
-        num_layers=2
+        input_dim=5, output_dim=3, pred_len=1, d_model=32, nhead=4, num_layers=2
     )
     x = torch.randn(2, 32, 5)
 
@@ -1417,13 +1300,7 @@ def test_itransformer_model_no_nan():
 
 def test_itransformer_model_repr():
     """Test iTransformer model string representation."""
-    model = iTransformerModel(
-        input_dim=5,
-        output_dim=3,
-        pred_len=1,
-        d_model=256,
-        num_layers=4
-    )
+    model = iTransformerModel(input_dim=5, output_dim=3, pred_len=1, d_model=256, num_layers=4)
 
     model_repr = repr(model)
     assert "iTransformerModel" in model_repr

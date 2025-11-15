@@ -3,13 +3,20 @@
 These models provide simple baselines to compare more sophisticated models against.
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
 
 from .base import ARBaseModel
 from .registry import register
+
+
+def _batched_eye(size: int, batch: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+    """Create a batched identity matrix."""
+
+    eye = torch.eye(size, device=device, dtype=dtype)
+    return eye.unsqueeze(0).expand(batch, -1, -1)
 
 
 @register("persistence")
@@ -22,12 +29,7 @@ class PersistenceModel(ARBaseModel):
     This is one of the most common baselines for time series prediction.
     """
 
-    def __init__(
-        self,
-        input_dim: int,
-        output_dim: int,
-        **kwargs
-    ):
+    def __init__(self, input_dim: int, output_dim: int, **kwargs):
         """Initialize persistence model.
 
         Args:
@@ -46,10 +48,7 @@ class PersistenceModel(ARBaseModel):
             self.projection = None
 
     def forward(
-        self,
-        x: torch.Tensor,
-        context: Optional[torch.Tensor] = None,
-        **kwargs
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
     ) -> Dict[str, torch.Tensor]:
         """Forward pass - return last value.
 
@@ -71,10 +70,7 @@ class PersistenceModel(ARBaseModel):
         # Reshape to [B, 1, D_out]
         preds = last_value.unsqueeze(1)
 
-        return {
-            "preds": preds,
-            "extras": {}
-        }
+        return {"preds": preds, "extras": {}}
 
 
 @register("moving_average")
@@ -86,11 +82,7 @@ class MovingAverageModel(ARBaseModel):
     """
 
     def __init__(
-        self,
-        input_dim: int,
-        output_dim: int,
-        window_size: Optional[int] = None,
-        **kwargs
+        self, input_dim: int, output_dim: int, window_size: Optional[int] = None, **kwargs
     ):
         """Initialize moving average model.
 
@@ -111,10 +103,7 @@ class MovingAverageModel(ARBaseModel):
             self.projection = None
 
     def forward(
-        self,
-        x: torch.Tensor,
-        context: Optional[torch.Tensor] = None,
-        **kwargs
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
     ) -> Dict[str, torch.Tensor]:
         """Forward pass - return moving average.
 
@@ -128,7 +117,7 @@ class MovingAverageModel(ARBaseModel):
         """
         # Select window
         if self.window_size is not None:
-            window = x[:, -self.window_size:, :]  # [B, k, D_in]
+            window = x[:, -self.window_size :, :]  # [B, k, D_in]
         else:
             window = x  # [B, T_in, D_in]
 
@@ -142,10 +131,7 @@ class MovingAverageModel(ARBaseModel):
         # Reshape to [B, 1, D_out]
         preds = avg_value.unsqueeze(1)
 
-        return {
-            "preds": preds,
-            "extras": {"window_size": window.shape[1]}
-        }
+        return {"preds": preds, "extras": {"window_size": window.shape[1]}}
 
 
 @register("zero")
@@ -158,12 +144,7 @@ class ZeroModel(ARBaseModel):
     - Measuring if a model learns anything at all
     """
 
-    def __init__(
-        self,
-        input_dim: int,
-        output_dim: int,
-        **kwargs
-    ):
+    def __init__(self, input_dim: int, output_dim: int, **kwargs):
         """Initialize zero model.
 
         Args:
@@ -175,10 +156,7 @@ class ZeroModel(ARBaseModel):
         # No parameters needed
 
     def forward(
-        self,
-        x: torch.Tensor,
-        context: Optional[torch.Tensor] = None,
-        **kwargs
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
     ) -> Dict[str, torch.Tensor]:
         """Forward pass - return zeros.
 
@@ -195,10 +173,7 @@ class ZeroModel(ARBaseModel):
         # Create zero tensor
         preds = torch.zeros(B, 1, self.output_dim, device=x.device, dtype=x.dtype)
 
-        return {
-            "preds": preds,
-            "extras": {}
-        }
+        return {"preds": preds, "extras": {}}
 
 
 @register("linear_trend")
@@ -213,12 +188,7 @@ class LinearTrendModel(ARBaseModel):
     where a and b are fitted to the input window.
     """
 
-    def __init__(
-        self,
-        input_dim: int,
-        output_dim: int,
-        **kwargs
-    ):
+    def __init__(self, input_dim: int, output_dim: int, **kwargs):
         """Initialize linear trend model.
 
         Args:
@@ -235,10 +205,7 @@ class LinearTrendModel(ARBaseModel):
             self.projection = None
 
     def forward(
-        self,
-        x: torch.Tensor,
-        context: Optional[torch.Tensor] = None,
-        **kwargs
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
     ) -> Dict[str, torch.Tensor]:
         """Forward pass - fit linear trend and extrapolate.
 
@@ -263,7 +230,7 @@ class LinearTrendModel(ARBaseModel):
 
         t_mean = t.mean()
         t_sum = t.sum()
-        t_sq_sum = (t ** 2).sum()
+        t_sq_sum = (t**2).sum()
 
         # Reshape for broadcasting: [T_in] -> [1, T_in, 1]
         t_bc = t.unsqueeze(0).unsqueeze(2)
@@ -275,13 +242,11 @@ class LinearTrendModel(ARBaseModel):
 
         # Compute slope (b) and intercept (a)
         numerator = T_in * ty_sum - t_sum * y_sum
-        denominator = T_in * t_sq_sum - t_sum ** 2
+        denominator = T_in * t_sq_sum - t_sum**2
 
         # Avoid division by zero (happens with constant time series)
         b = torch.where(
-            denominator.abs() > 1e-8,
-            numerator / denominator,
-            torch.zeros_like(numerator)
+            denominator.abs() > 1e-8, numerator / denominator, torch.zeros_like(numerator)
         )  # [B, D_in]
 
         a = y_mean - b * t_mean  # [B, D_in]
@@ -296,13 +261,7 @@ class LinearTrendModel(ARBaseModel):
         # Reshape to [B, 1, D_out]
         preds = next_value.unsqueeze(1)
 
-        return {
-            "preds": preds,
-            "extras": {
-                "slope": b,
-                "intercept": a
-            }
-        }
+        return {"preds": preds, "extras": {"slope": b, "intercept": a}}
 
 
 @register("mean")
@@ -315,12 +274,7 @@ class MeanModel(ARBaseModel):
     Useful baseline for stationary time series.
     """
 
-    def __init__(
-        self,
-        input_dim: int,
-        output_dim: int,
-        **kwargs
-    ):
+    def __init__(self, input_dim: int, output_dim: int, **kwargs):
         """Initialize mean model.
 
         Args:
@@ -337,10 +291,7 @@ class MeanModel(ARBaseModel):
             self.projection = None
 
     def forward(
-        self,
-        x: torch.Tensor,
-        context: Optional[torch.Tensor] = None,
-        **kwargs
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
     ) -> Dict[str, torch.Tensor]:
         """Forward pass - return historical mean.
 
@@ -362,10 +313,7 @@ class MeanModel(ARBaseModel):
         # Reshape to [B, 1, D_out]
         preds = mean_value.unsqueeze(1)
 
-        return {
-            "preds": preds,
-            "extras": {}
-        }
+        return {"preds": preds, "extras": {}}
 
 
 @register("median")
@@ -378,12 +326,7 @@ class MedianModel(ARBaseModel):
     Useful baseline for time series with outliers or heavy-tailed distributions.
     """
 
-    def __init__(
-        self,
-        input_dim: int,
-        output_dim: int,
-        **kwargs
-    ):
+    def __init__(self, input_dim: int, output_dim: int, **kwargs):
         """Initialize median model.
 
         Args:
@@ -400,10 +343,7 @@ class MedianModel(ARBaseModel):
             self.projection = None
 
     def forward(
-        self,
-        x: torch.Tensor,
-        context: Optional[torch.Tensor] = None,
-        **kwargs
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
     ) -> Dict[str, torch.Tensor]:
         """Forward pass - return historical median.
 
@@ -425,10 +365,7 @@ class MedianModel(ARBaseModel):
         # Reshape to [B, 1, D_out]
         preds = median_value.unsqueeze(1)
 
-        return {
-            "preds": preds,
-            "extras": {}
-        }
+        return {"preds": preds, "extras": {}}
 
 
 @register("drift")
@@ -443,12 +380,7 @@ class DriftModel(ARBaseModel):
     Useful for time series with a trend but no clear pattern.
     """
 
-    def __init__(
-        self,
-        input_dim: int,
-        output_dim: int,
-        **kwargs
-    ):
+    def __init__(self, input_dim: int, output_dim: int, **kwargs):
         """Initialize drift model.
 
         Args:
@@ -465,10 +397,7 @@ class DriftModel(ARBaseModel):
             self.projection = None
 
     def forward(
-        self,
-        x: torch.Tensor,
-        context: Optional[torch.Tensor] = None,
-        **kwargs
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
     ) -> Dict[str, torch.Tensor]:
         """Forward pass - return last value plus average drift.
 
@@ -502,10 +431,7 @@ class DriftModel(ARBaseModel):
         # Reshape to [B, 1, D_out]
         preds = next_value.unsqueeze(1)
 
-        return {
-            "preds": preds,
-            "extras": {"drift": drift}
-        }
+        return {"preds": preds, "extras": {"drift": drift}}
 
 
 @register("exponential_smoothing")
@@ -520,13 +446,7 @@ class ExponentialSmoothingModel(ARBaseModel):
     Common baseline in time series forecasting.
     """
 
-    def __init__(
-        self,
-        input_dim: int,
-        output_dim: int,
-        alpha: float = 0.3,
-        **kwargs
-    ):
+    def __init__(self, input_dim: int, output_dim: int, alpha: float = 0.3, **kwargs):
         """Initialize exponential smoothing model.
 
         Args:
@@ -551,10 +471,7 @@ class ExponentialSmoothingModel(ARBaseModel):
             self.projection = None
 
     def forward(
-        self,
-        x: torch.Tensor,
-        context: Optional[torch.Tensor] = None,
-        **kwargs
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
     ) -> Dict[str, torch.Tensor]:
         """Forward pass - compute EWMA and predict.
 
@@ -586,10 +503,7 @@ class ExponentialSmoothingModel(ARBaseModel):
         # Reshape to [B, 1, D_out]
         preds = next_value.unsqueeze(1)
 
-        return {
-            "preds": preds,
-            "extras": {"alpha": self.alpha}
-        }
+        return {"preds": preds, "extras": {"alpha": self.alpha}}
 
 
 @register("seasonal_naive")
@@ -605,13 +519,7 @@ class SeasonalNaiveModel(ARBaseModel):
     Classic baseline for seasonal time series.
     """
 
-    def __init__(
-        self,
-        input_dim: int,
-        output_dim: int,
-        season_length: int = 24,
-        **kwargs
-    ):
+    def __init__(self, input_dim: int, output_dim: int, season_length: int = 24, **kwargs):
         """Initialize seasonal naive model.
 
         Args:
@@ -634,10 +542,7 @@ class SeasonalNaiveModel(ARBaseModel):
             self.projection = None
 
     def forward(
-        self,
-        x: torch.Tensor,
-        context: Optional[torch.Tensor] = None,
-        **kwargs
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
     ) -> Dict[str, torch.Tensor]:
         """Forward pass - return value from previous season.
 
@@ -670,8 +575,8 @@ class SeasonalNaiveModel(ARBaseModel):
             "preds": preds,
             "extras": {
                 "season_length": self.season_length,
-                "used_seasonal": T_in >= self.season_length
-            }
+                "used_seasonal": T_in >= self.season_length,
+            },
         }
 
 
@@ -689,13 +594,7 @@ class PolynomialTrendModel(ARBaseModel):
     Useful for time series with curved trends.
     """
 
-    def __init__(
-        self,
-        input_dim: int,
-        output_dim: int,
-        degree: int = 2,
-        **kwargs
-    ):
+    def __init__(self, input_dim: int, output_dim: int, degree: int = 2, **kwargs):
         """Initialize polynomial trend model.
 
         Args:
@@ -718,10 +617,7 @@ class PolynomialTrendModel(ARBaseModel):
             self.projection = None
 
     def forward(
-        self,
-        x: torch.Tensor,
-        context: Optional[torch.Tensor] = None,
-        **kwargs
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
     ) -> Dict[str, torch.Tensor]:
         """Forward pass - fit polynomial trend and extrapolate.
 
@@ -741,7 +637,7 @@ class PolynomialTrendModel(ARBaseModel):
         # Create design matrix for polynomial regression
         # X = [1, t, t^2, ..., t^degree]
         # Shape: [T_in, degree+1]
-        X = torch.stack([t ** i for i in range(self.degree + 1)], dim=1)  # [T_in, degree+1]
+        X = torch.stack([t**i for i in range(self.degree + 1)], dim=1)  # [T_in, degree+1]
 
         # Solve least squares for each batch and feature
         # y = X @ coeffs
@@ -762,7 +658,7 @@ class PolynomialTrendModel(ARBaseModel):
 
         # Predict at next timestep (t = T_in)
         t_next = torch.tensor(T_in, device=x.device, dtype=x.dtype)
-        x_next = torch.stack([t_next ** i for i in range(self.degree + 1)], dim=0)  # [degree+1]
+        x_next = torch.stack([t_next**i for i in range(self.degree + 1)], dim=0)  # [degree+1]
 
         # Compute predictions: coeffs @ x_next
         next_value = (coeffs * x_next.unsqueeze(0)).sum(dim=1)  # [B*D_in]
@@ -777,12 +673,7 @@ class PolynomialTrendModel(ARBaseModel):
         # Reshape to [B, 1, D_out]
         preds = next_value.unsqueeze(1)
 
-        return {
-            "preds": preds,
-            "extras": {
-                "degree": self.degree
-            }
-        }
+        return {"preds": preds, "extras": {"degree": self.degree}}
 
 
 @register("holt_linear_trend")
@@ -800,12 +691,7 @@ class HoltLinearTrendModel(ARBaseModel):
     """
 
     def __init__(
-        self,
-        input_dim: int,
-        output_dim: int,
-        alpha: float = 0.3,
-        beta: float = 0.1,
-        **kwargs
+        self, input_dim: int, output_dim: int, alpha: float = 0.3, beta: float = 0.1, **kwargs
     ):
         """Initialize Holt's linear trend model.
 
@@ -833,10 +719,7 @@ class HoltLinearTrendModel(ARBaseModel):
             self.projection = None
 
     def forward(
-        self,
-        x: torch.Tensor,
-        context: Optional[torch.Tensor] = None,
-        **kwargs
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
     ) -> Dict[str, torch.Tensor]:
         """Forward pass - apply Holt's linear trend method.
 
@@ -882,12 +765,7 @@ class HoltLinearTrendModel(ARBaseModel):
 
         return {
             "preds": preds,
-            "extras": {
-                "alpha": self.alpha,
-                "beta": self.beta,
-                "level": level,
-                "trend": trend
-            }
+            "extras": {"alpha": self.alpha, "beta": self.beta, "level": level, "trend": trend},
         }
 
 
@@ -908,12 +786,7 @@ class ThetaModel(ARBaseModel):
     """
 
     def __init__(
-        self,
-        input_dim: int,
-        output_dim: int,
-        theta: float = 2.0,
-        alpha: float = 0.5,
-        **kwargs
+        self, input_dim: int, output_dim: int, theta: float = 2.0, alpha: float = 0.5, **kwargs
     ):
         """Initialize Theta model.
 
@@ -936,10 +809,7 @@ class ThetaModel(ARBaseModel):
             self.projection = None
 
     def forward(
-        self,
-        x: torch.Tensor,
-        context: Optional[torch.Tensor] = None,
-        **kwargs
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
     ) -> Dict[str, torch.Tensor]:
         """Forward pass - apply Theta method.
 
@@ -960,7 +830,7 @@ class ThetaModel(ARBaseModel):
         # This is the same as linear_trend model
         t_mean = t.mean()
         t_sum = t.sum()
-        t_sq_sum = (t ** 2).sum()
+        t_sq_sum = (t**2).sum()
 
         t_bc = t.unsqueeze(0).unsqueeze(2)  # [1, T_in, 1]
 
@@ -969,12 +839,10 @@ class ThetaModel(ARBaseModel):
         y_sum = x.sum(dim=1)  # [B, D_in]
 
         numerator = T_in * ty_sum - t_sum * y_sum
-        denominator = T_in * t_sq_sum - t_sum ** 2
+        denominator = T_in * t_sq_sum - t_sum**2
 
         b = torch.where(
-            denominator.abs() > 1e-8,
-            numerator / denominator,
-            torch.zeros_like(numerator)
+            denominator.abs() > 1e-8, numerator / denominator, torch.zeros_like(numerator)
         )  # [B, D_in]
 
         a = y_mean - b * t_mean  # [B, D_in]
@@ -1019,8 +887,165 @@ class ThetaModel(ARBaseModel):
                 "theta": self.theta,
                 "alpha": self.alpha,
                 "theta0_forecast": theta0_forecast,
-                "theta2_forecast": theta2_forecast
+                "theta2_forecast": theta2_forecast,
+            },
+        }
+
+
+@register("var")
+class VARModel(ARBaseModel):
+    """Vector autoregression (VAR) baseline model.
+
+    Fits a multivariate autoregression on-the-fly using the incoming window and
+    produces a one-step forecast. Unlike per-feature baselines, this captures
+    cross-channel dependencies by solving a small regularised least squares
+    problem for each sample in the batch.
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        output_dim: int,
+        order: int = 1,
+        fit_intercept: bool = True,
+        regularization: float = 1e-4,
+        **kwargs,
+    ) -> None:
+        """Initialise VAR model.
+
+        Args:
+            input_dim: Dimension of input features.
+            output_dim: Dimension of output predictions.
+            order: Number of autoregressive lags (p in VAR(p)). Must be >= 1.
+            fit_intercept: Whether to include an intercept term.
+            regularization: Ridge penalty applied to coefficient matrices. Set to
+                zero for an ordinary least squares fit.
+            **kwargs: Additional arguments (ignored).
+        """
+
+        if order < 1:
+            raise ValueError("VAR order must be at least 1")
+
+        super().__init__(input_dim, output_dim, **kwargs)
+
+        self.order = order
+        self.fit_intercept = fit_intercept
+        self.regularization = regularization
+
+        if input_dim != output_dim:
+            self.projection = nn.Linear(input_dim, output_dim, bias=False)
+        else:
+            self.projection = None
+
+    def _prepare_design(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Construct design and target matrices for batched least squares."""
+
+        B, T_in, D_in = x.shape
+        if T_in <= self.order:
+            raise ValueError("Input sequence must be longer than VAR order")
+
+        targets = x[:, self.order :, :]  # [B, T - order, D]
+
+        lagged = []
+        for lag in range(1, self.order + 1):
+            lagged.append(x[:, self.order - lag : -lag, :])  # [B, T - order, D]
+        design = torch.cat(lagged, dim=2)  # [B, T - order, D * order]
+
+        if self.fit_intercept:
+            ones = torch.ones(
+                B,
+                design.shape[1],
+                1,
+                device=x.device,
+                dtype=x.dtype,
+            )
+            design = torch.cat([design, ones], dim=2)
+
+        return design, targets
+
+    def _solve_coefficients(
+        self, design: torch.Tensor, targets: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Solve regularised least squares for batched VAR coefficients."""
+
+        B, _, num_features = design.shape
+        device = design.device
+        dtype = design.dtype
+
+        design_t = design.transpose(1, 2)  # [B, F, R]
+        xtx = design_t @ design  # [B, F, F]
+
+        if self.regularization > 0:
+            reg_eye = _batched_eye(num_features, B, device=device, dtype=dtype)
+            xtx = xtx + self.regularization * reg_eye
+            if self.fit_intercept:
+                xtx[:, -1, -1] -= self.regularization  # do not regularise intercept
+
+        xty = design_t @ targets  # [B, F, D]
+
+        try:
+            coefs = torch.linalg.solve(xtx, xty)
+        except RuntimeError:
+            pinv = torch.linalg.pinv(xtx)
+            coefs = pinv @ xty
+
+        if self.fit_intercept:
+            intercept = coefs[:, -1, :]
+            weights = coefs[:, :-1, :]
+        else:
+            intercept = torch.zeros(B, targets.shape[2], device=device, dtype=dtype)
+            weights = coefs
+
+        return weights, intercept
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        context: Optional[torch.Tensor] = None,
+        **kwargs,
+    ) -> Dict[str, torch.Tensor]:
+        """Forward pass - fit VAR coefficients and forecast next timestep."""
+
+        B, T_in, D_in = x.shape
+        extras: Dict[str, torch.Tensor] = {}
+
+        if T_in <= self.order:
+            last_value = x[:, -1, :]
+            if self.projection is not None:
+                last_value = self.projection(last_value)
+            preds = last_value.unsqueeze(1)
+            extras["fitted"] = torch.tensor(False, device=x.device)
+            return {"preds": preds, "extras": extras}
+
+        design, targets = self._prepare_design(x)
+        weights, intercept = self._solve_coefficients(design, targets)
+
+        lag_vectors = []
+        for lag in range(1, self.order + 1):
+            lag_vectors.append(x[:, -lag, :].unsqueeze(1))
+        lag_tensor = torch.cat(lag_vectors, dim=1)  # [B, order, D]
+
+        lag_matrices = weights.reshape(B, self.order, D_in, D_in)
+        forecast_core = torch.einsum("bod,bodk->bk", lag_tensor, lag_matrices)
+        next_value = forecast_core + intercept
+
+        if self.projection is not None:
+            next_value = self.projection(next_value)
+
+        preds = next_value.unsqueeze(1)
+
+        extras.update(
+            {
+                "fitted": torch.tensor(True, device=x.device),
+                "lag_matrices": lag_matrices,
+                "intercept": intercept,
+                "order": torch.tensor(self.order, device=x.device),
             }
+        )
+
+        return {
+            "preds": preds,
+            "extras": extras,
         }
 
 
@@ -1037,12 +1062,7 @@ class LinearARModel(ARBaseModel):
     The model uses all available timesteps in the input window as predictors.
     """
 
-    def __init__(
-        self,
-        input_dim: int,
-        output_dim: int,
-        **kwargs
-    ):
+    def __init__(self, input_dim: int, output_dim: int, **kwargs):
         """Initialize linear AR model.
 
         Args:
@@ -1057,10 +1077,7 @@ class LinearARModel(ARBaseModel):
         self.linear = nn.LazyLinear(output_dim)
 
     def forward(
-        self,
-        x: torch.Tensor,
-        context: Optional[torch.Tensor] = None,
-        **kwargs
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
     ) -> Dict[str, torch.Tensor]:
         """Forward pass - apply linear AR model.
 
@@ -1083,10 +1100,7 @@ class LinearARModel(ARBaseModel):
         # Reshape to [B, 1, D_out]
         preds = next_value.unsqueeze(1)
 
-        return {
-            "preds": preds,
-            "extras": {}
-        }
+        return {"preds": preds, "extras": {}}
 
 
 @register("mlp_ar")
@@ -1111,7 +1125,7 @@ class MLPARModel(ARBaseModel):
         hidden_dims: Optional[List[int]] = None,
         dropout: float = 0.1,
         activation: str = "relu",
-        **kwargs
+        **kwargs,
     ):
         """Initialize MLP AR model.
 
@@ -1163,10 +1177,7 @@ class MLPARModel(ARBaseModel):
         self.mlp = nn.Sequential(*layers)
 
     def forward(
-        self,
-        x: torch.Tensor,
-        context: Optional[torch.Tensor] = None,
-        **kwargs
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
     ) -> Dict[str, torch.Tensor]:
         """Forward pass - flatten and pass through MLP.
 
@@ -1189,7 +1200,4 @@ class MLPARModel(ARBaseModel):
         # Reshape to [B, 1, D_out]
         preds = next_value.unsqueeze(1)
 
-        return {
-            "preds": preds,
-            "extras": {}
-        }
+        return {"preds": preds, "extras": {}}
