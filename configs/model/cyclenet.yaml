@@ -1,0 +1,15 @@
+# @package _global_
+
+model:
+  name: cyclenet
+  params:
+    period_len: 32           # Length of learnable recurrent cycles (W)
+                             # CRITICAL: Must match intrinsic period of data
+                             # For aircraft sensors, consider:
+                             # - Engine cycle periods
+                             # - Sampling frequency and oscillation patterns
+                             # Common values: 24, 32, 48, 64, 96
+    backbone: "mlp"          # Backbone type: 'linear' or 'mlp'
+    hidden_dim: 256          # Hidden dimension for MLP backbone (ignored for linear)
+    dropout: 0.1             # Dropout probability
+    activation: "gelu"       # Activation function: 'relu' or 'gelu'
