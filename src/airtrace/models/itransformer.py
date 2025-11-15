@@ -20,6 +20,7 @@ from typing import Dict, Optional
 
 import torch
 import torch.nn as nn
+from torch.nn.parameter import UninitializedParameter
 
 from .base import ARBaseModel
 from .registry import register
@@ -216,8 +217,16 @@ class iTransformerModel(ARBaseModel):
         self._init_weights()
 
     def _init_weights(self):
-        """Initialize weights using Xavier initialization."""
+        """Initialize weights using Xavier initialization.
+
+        Skips UninitializedParameter objects from LazyLinear which are
+        materialized on first forward pass.
+        """
         for name, p in self.named_parameters():
+            # Skip uninitialized parameters (from LazyLinear)
+            if isinstance(p, UninitializedParameter):
+                continue
+            # Skip position embeddings and 1D parameters (biases)
             if p.dim() > 1 and 'position_embeddings' not in name:
                 nn.init.xavier_uniform_(p)
 
