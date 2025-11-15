@@ -1,0 +1,19 @@
+# @package _global_
+
+model:
+  name: moirai
+  params:
+    pred_len: 24           # Prediction horizon length
+    embed_dim: 256         # Token embedding dimension
+    state_dim: 256         # Internal selective SSM state size
+    num_layers: 6          # Number of selective SSM blocks
+    conv_kernel_size: 5    # Depthwise convolution kernel (must be odd)
+    dropout: 0.1           # Dropout applied throughout the backbone
+    ff_expansion: 4        # Expansion factor inside the feed-forward network
+    patch_scales: [4, 16]  # Multi-resolution patch sizes (tokens fused together)
+    max_positions: 4096    # Maximum positional encoding length
+    adapter_rank: 0        # LoRA rank for the readout adapter (0 disables LoRA)
+    adapter_alpha: 8.0     # LoRA scaling factor
+    adapter_dropout: 0.05  # Dropout before LoRA adapters
+    freeze_backbone: false # Freeze pretrained backbone weights
+    train_head: true       # Keep head trainable even when freezing backbone
