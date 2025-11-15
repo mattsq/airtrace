@@ -142,6 +142,72 @@ The generator produces realistic aircraft cruise sensor readings with:
 
 See [Synthetic Data Documentation](docs/synthetic_data.md) for details.
 
+## Model Registry
+
+AirTrace includes 20 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
+
+### Recurrent Neural Networks
+
+| Model Name | Class | Description |
+|------------|-------|-------------|
+| `gru_ar` | `GRUARModel` | GRU-based autoregressive encoder with optional attention mechanism |
+| `lstm_ar` | `LSTMARModel` | LSTM-based autoregressive encoder with cell state for longer-term dependencies |
+
+### Sequence-to-Sequence Models
+
+| Model Name | Class | Description |
+|------------|-------|-------------|
+| `gru_seq2seq` | `GRUSeq2SeqModel` | GRU encoder-decoder with teacher forcing and optional attention |
+| `lstm_seq2seq` | `LSTMSeq2SeqModel` | LSTM encoder-decoder for multi-step forecasting |
+
+### Attention-Based Models
+
+| Model Name | Class | Description |
+|------------|-------|-------------|
+| `transformer` | `TransformerModel` | Transformer with causal self-attention and positional encoding |
+
+### Convolutional Models
+
+| Model Name | Class | Description |
+|------------|-------|-------------|
+| `tcn` | `TCNModel` | Temporal Convolutional Network with dilated causal convolutions |
+
+### Baseline Models
+
+Simple, interpretable baselines for comparison. Most are non-trainable (parameter-free).
+
+| Model Name | Class | Trainable | Description |
+|------------|-------|-----------|-------------|
+| `persistence` | `PersistenceModel` | No | Naive forecast - predicts last observed value |
+| `moving_average` | `MovingAverageModel` | No | Mean of recent k values |
+| `zero` | `ZeroModel` | No | Always predicts zero (useful for normalized data) |
+| `mean` | `MeanModel` | No | Historical mean of input sequence |
+| `median` | `MedianModel` | No | Historical median (robust to outliers) |
+| `linear_trend` | `LinearTrendModel` | No | Linear trend extrapolation via least squares |
+| `polynomial_trend` | `PolynomialTrendModel` | No | Polynomial trend fitting (quadratic, cubic, etc.) |
+| `drift` | `DriftModel` | No | Random walk with drift (last value + average change) |
+| `exponential_smoothing` | `ExponentialSmoothingModel` | No | Exponentially weighted moving average (EWMA) |
+| `holt_linear_trend` | `HoltLinearTrendModel` | No | Holt's double exponential smoothing (level + trend) |
+| `seasonal_naive` | `SeasonalNaiveModel` | No | Predicts value from previous seasonal cycle |
+| `theta` | `ThetaModel` | No | Theta method (M3 competition winner) |
+| `linear_ar` | `LinearARModel` | **Yes** | Simple trainable linear autoregressive model |
+| `mlp_ar` | `MLPARModel` | **Yes** | Multi-layer perceptron treating window as static features |
+
+### Using Models
+
+All models are instantiated via the registry using config files:
+
+```bash
+# Use GRU model
+airtrace train model=gru_ar
+
+# Use baseline for comparison
+airtrace train model=persistence
+
+# Use transformer with custom parameters
+airtrace train model=transformer model.d_model=256 model.nhead=8
+```
+
 ## Adding New Components
 
 ### New Model
@@ -149,6 +215,7 @@ See [Synthetic Data Documentation](docs/synthetic_data.md) for details.
 1. Implement `ARBaseModel` interface in `src/airtrace/models/your_model.py`
 2. Register with `@register("your_model")` decorator
 3. Create config in `configs/model/your_model.yaml`
+4. **Update the Model Registry table in README.md** with model details
 
 ### New Transform
 

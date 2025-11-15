@@ -141,7 +141,8 @@ Example: `exp_001_gru_zscore_onestep`
 3. Add `@register("my_model")` decorator
 4. Create `configs/model/my_model.yaml` with hyperparameters
 5. Add tests in `tests/models/test_my_model.py`
-6. Update `docs/architecture.md` if novel
+6. **Update the Model Registry section in `README.md`** with your model's details (name, class, description)
+7. Update `docs/architecture.md` if novel
 
 **Add a new transform:**
 1. Create `src/airtrace/transforms/my_transform.py`
@@ -222,6 +223,24 @@ model = GRUModel(...)
 # GOOD: Using the registry (allows config-driven instantiation)
 from airtrace.registry import get_model
 model = get_model(cfg.model.name, **cfg.model.params)
+```
+
+### ❌ Adding a model without updating README
+```python
+# BAD: Adding a new model but forgetting to update README.md
+@register("my_new_model")
+class MyNewModel(ARBaseModel):
+    ...
+# (but README.md Model Registry section is not updated)
+```
+
+```markdown
+# GOOD: After adding a model, update README.md Model Registry section
+# Add an entry to the appropriate table with:
+#   - Model name (registry key, e.g., "my_new_model")
+#   - Class name (e.g., "MyNewModel")
+#   - Brief description of what the model does
+#   - Whether it's trainable (for baseline models)
 ```
 
 ## Development Workflow

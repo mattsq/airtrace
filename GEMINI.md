@@ -50,6 +50,7 @@ Think of CLAUDE.md as "Agent Guide" - it just happens to be named after the tool
 - **Use base classes**: Inherit from `ARBaseModel`, `Transform`, or `Task`
 - **Register components**: Use `@register("name")` decorator
 - **Add type hints**: All functions need type annotations
+- **Update README.md**: When adding a new model, update the Model Registry section
 - **Update MEMORY.md**: When you learn something surprising
 
 ## Project Type
