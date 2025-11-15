@@ -231,6 +231,46 @@ else
     echo "  ✓ No model files changed"
 fi
 
+# Rule 9: Run pytest to ensure all tests pass
+echo ""
+echo "📋 Rule 9: Running pytest to validate code changes..."
+
+# Check if there are any Python files being committed
+PYTHON_FILES_CHANGED=false
+for file in $STAGED_FILES; do
+    if [[ "$file" =~ \.py$ ]]; then
+        PYTHON_FILES_CHANGED=true
+        break
+    fi
+done
+
+if [ "$PYTHON_FILES_CHANGED" = true ]; then
+    echo "  Running pytest..."
+
+    # Run pytest with minimal output unless there are failures
+    if pytest --tb=short -q 2>&1 | tee /tmp/pytest_output.txt; then
+        TEST_COUNT=$(grep -oP '\d+(?= passed)' /tmp/pytest_output.txt | head -1)
+        if [ -n "$TEST_COUNT" ]; then
+            echo -e "  ${GREEN}✓ All $TEST_COUNT tests passed${NC}"
+        else
+            echo -e "  ${GREEN}✓ All tests passed${NC}"
+        fi
+    else
+        echo -e "  ${RED}✗ pytest failed${NC}"
+        echo ""
+        echo "Test failures detected:"
+        cat /tmp/pytest_output.txt
+        echo ""
+        echo "Please fix failing tests before committing."
+        ERRORS=$((ERRORS + 1))
+    fi
+
+    # Clean up temp file
+    rm -f /tmp/pytest_output.txt
+else
+    echo "  ✓ No Python files changed, skipping pytest"
+fi
+
 # Summary
 echo ""
 echo "======================================"
