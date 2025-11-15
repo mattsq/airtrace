@@ -140,21 +140,9 @@ class MambaModel(ARBaseModel):
         )
 
         # Layer 4: Projection to output
-        # Map from (T_in, d_model) to (T_out, output_dim)
-        # Two strategies based on whether output_dim == input_dim
-        self.output_dim_equals_input = (output_dim == input_dim)
-
-        if self.output_dim_equals_input:
-            # Strategy 1: Project temporal dimension per channel
-            # Each channel's d_model features → pred_len predictions
-            self.projection = nn.Linear(d_model, pred_len)
-        else:
-            # Strategy 2: Flatten and project to output shape
-            # Uses lazy linear to adapt to any input sequence length
-            self.projection = nn.Sequential(
-                nn.Flatten(start_dim=1),  # [B, T_in, d_model] → [B, T_in * d_model]
-                nn.LazyLinear(output_dim * pred_len),
-            )
+        # Take final timestep representation and project to output
+        # [B, d_model] → [B, pred_len * output_dim]
+        self.projection = nn.Linear(d_model, pred_len * output_dim)
 
         # Initialize parameters
         self._init_weights()
@@ -163,9 +151,16 @@ class MambaModel(ARBaseModel):
         """Initialize weights using Xavier initialization.
 
         Mamba blocks have their own specialized initialization.
+        Skips LazyLinear modules which will be initialized on first forward.
         """
+        from torch.nn.parameter import UninitializedParameter
+
         for name, module in self.named_modules():
             if isinstance(module, nn.Linear) and 'mamba' not in name.lower():
+                # Skip LazyLinear (has UninitializedParameter)
+                if isinstance(module, nn.LazyLinear):
+                    continue
+                # Initialize regular Linear layers
                 if module.weight.requires_grad:
                     nn.init.xavier_uniform_(module.weight)
                 if module.bias is not None and module.bias.requires_grad:
@@ -210,27 +205,22 @@ class MambaModel(ARBaseModel):
         x = x + residual  # [B, T_in, d_model]
 
         # Layer 4: Projection to output
-        if self.output_dim_equals_input:
-            # Project each channel's features to pred_len predictions
-            # [B, T_in, d_model] → [B, T_in, pred_len]
-            x = self.projection(x)
-            # Permute to [B, pred_len, T_in]
-            # But we want [B, pred_len, D_out] where D_out = T_in
-            # Actually, we want to project d_model → pred_len per variate
-            # So the shape is [B, D_in, pred_len] after permute
-            preds = x.permute(0, 2, 1)  # [B, pred_len, D_in]
-        else:
-            # Flatten and project to output shape
-            # [B, T_in, d_model] → [B, T_in * d_model] → [B, output_dim * pred_len]
-            x = self.projection(x)
-            # Reshape to [B, pred_len, output_dim]
-            preds = x.reshape(B, self.pred_len, self.output_dim)
+        # Use final timestep representation for prediction
+        final_hidden = x[:, -1, :]  # [B, d_model]
+
+        # Project to output predictions
+        # [B, d_model] → [B, pred_len * output_dim]
+        x_proj = self.projection(final_hidden)
+
+        # Reshape to [B, pred_len, output_dim]
+        preds = x_proj.reshape(B, self.pred_len, self.output_dim)
 
         return {
             "preds": preds,
             "extras": {
                 "mamba_outputs": mamba_outputs,
                 "final_encoding": x,
+                "final_hidden": final_hidden,
             }
         }
 

@@ -165,7 +165,8 @@ class SelectiveSSM(nn.Module):
         ys = []
 
         for t in range(L):
-            h = deltaA[:, t] * h + deltaB[:, t] * u[:, t:t+1]  # [B, D, N]
+            # u[:, t] is [B, D], unsqueeze to [B, D, 1] for broadcasting with [B, D, N]
+            h = deltaA[:, t] * h + deltaB[:, t] * u[:, t].unsqueeze(-1)  # [B, D, N]
             y = (h @ C[:, t].unsqueeze(-1)).squeeze(-1)  # [B, D]
             ys.append(y)
 
