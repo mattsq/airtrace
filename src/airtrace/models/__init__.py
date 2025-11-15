@@ -20,6 +20,7 @@ from .baselines import (
     VARModel,
     ZeroModel,
 )
+from .chronos_bolt import ChronosBoltModel
 from .cyclenet import CycleNetModel
 from .gru_ar import GRUARModel
 from .itransformer import iTransformerModel
@@ -47,6 +48,7 @@ __all__ = [
     "iTransformerModel",
     "TimeMixerModel",
     "CycleNetModel",
+    "ChronosBoltModel",
     # Baseline models
     "PersistenceModel",
     "MovingAverageModel",
