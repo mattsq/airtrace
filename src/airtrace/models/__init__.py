@@ -25,6 +25,7 @@ from .patchtst import PatchTSTModel
 from .registry import build_model, list_models, register
 from .seq2seq import GRUSeq2SeqModel, LSTMSeq2SeqModel
 from .tcn import TCNModel
+from .timemixer import TimeMixerModel
 from .transformer import TransformerModel
 
 __all__ = [
@@ -41,6 +42,7 @@ __all__ = [
     "TransformerModel",
     "PatchTSTModel",
     "iTransformerModel",
+    "TimeMixerModel",
     # Baseline models
     "PersistenceModel",
     "MovingAverageModel",

@@ -24,6 +24,7 @@ from airtrace.models import (
     SeasonalNaiveModel,
     TCNModel,
     ThetaModel,
+    TimeMixerModel,
     TransformerModel,
     VARModel,
     ZeroModel,
@@ -1308,3 +1309,334 @@ def test_itransformer_model_repr():
     assert "d_model=256" in model_repr
     assert "num_layers=4" in model_repr
     assert "num_params" in model_repr
+
+
+# ============================================================================
+# TimeMixer Model Tests
+# ============================================================================
+
+
+def test_timemixer_model_forward(batch):
+    """Test TimeMixer model forward pass."""
+    model = TimeMixerModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        seq_len=32,
+        d_model=32,
+        num_layers=2,
+        down_sampling_layers=2
+    )
+
+    output = model(batch)
+
+    assert "preds" in output
+    assert "extras" in output
+    assert output["preds"].shape == (4, 1, 3)  # [B, pred_len, D_out]
+    assert "multi_scale_features" in output["extras"]
+    assert "scale_predictions" in output["extras"]
+
+
+def test_timemixer_model_multi_step_prediction():
+    """Test TimeMixer with multi-step prediction."""
+    model = TimeMixerModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=5,
+        seq_len=32,
+        d_model=32,
+        num_layers=2,
+        down_sampling_layers=2
+    )
+
+    x = torch.randn(2, 32, 5)
+    output = model(x)
+
+    assert output["preds"].shape == (2, 5, 3)  # [B, pred_len, D_out]
+
+
+def test_timemixer_model_multiscale_features():
+    """Test that multi-scale features are created."""
+    model = TimeMixerModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        seq_len=32,
+        d_model=32,
+        num_layers=2,
+        down_sampling_layers=3
+    )
+
+    x = torch.randn(2, 32, 5)
+    output = model(x)
+
+    # Should have down_sampling_layers + 1 scales
+    multi_scale_features = output["extras"]["multi_scale_features"]
+    assert len(multi_scale_features) == 4  # 3 downsampling + 1 original
+
+    # Check that scales are progressively smaller
+    assert multi_scale_features[0].shape[1] == 32  # Original
+    assert multi_scale_features[1].shape[1] == 16  # /2
+    assert multi_scale_features[2].shape[1] == 8   # /4
+    assert multi_scale_features[3].shape[1] == 4   # /8
+
+
+def test_timemixer_model_ensemble_predictions():
+    """Test that predictions are ensembled from multiple scales."""
+    model = TimeMixerModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        seq_len=32,
+        d_model=32,
+        num_layers=2,
+        down_sampling_layers=2
+    )
+
+    x = torch.randn(2, 32, 5)
+    output = model(x)
+
+    # Should have predictions from each scale
+    scale_predictions = output["extras"]["scale_predictions"]
+    assert len(scale_predictions) == 3  # 2 downsampling + 1 original
+
+
+def test_timemixer_model_different_seq_lengths():
+    """Test TimeMixer with different sequence lengths."""
+    for seq_len in [16, 32, 64]:
+        model = TimeMixerModel(
+            input_dim=5,
+            output_dim=3,
+            pred_len=1,
+            seq_len=seq_len,
+            d_model=32,
+            num_layers=1,
+            down_sampling_layers=2
+        )
+
+        x = torch.randn(2, seq_len, 5)
+        output = model(x)
+        assert output["preds"].shape == (2, 1, 3)
+
+
+def test_timemixer_model_decomposition():
+    """Test that series decomposition works in PDM blocks."""
+    model = TimeMixerModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        seq_len=32,
+        d_model=32,
+        num_layers=2,
+        down_sampling_layers=2,
+        decomp_kernel=25  # Decomposition kernel size
+    )
+
+    x = torch.randn(2, 32, 5)
+    output = model(x)
+
+    # Should successfully decompose and recombine
+    assert output["preds"].shape == (2, 1, 3)
+    assert not torch.isnan(output["preds"]).any()
+
+
+def test_timemixer_model_different_num_layers():
+    """Test TimeMixer with different numbers of PDM blocks."""
+    for num_layers in [1, 2, 3]:
+        model = TimeMixerModel(
+            input_dim=5,
+            output_dim=3,
+            pred_len=1,
+            seq_len=32,
+            d_model=32,
+            num_layers=num_layers,
+            down_sampling_layers=2
+        )
+
+        x = torch.randn(2, 32, 5)
+        output = model(x)
+        assert output["preds"].shape == (2, 1, 3)
+
+
+def test_timemixer_model_gradient_flow():
+    """Test that gradients flow through TimeMixer model."""
+    model = TimeMixerModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        seq_len=32,
+        d_model=32,
+        num_layers=2,
+        down_sampling_layers=2
+    )
+    x = torch.randn(2, 32, 5, requires_grad=True)
+
+    output = model(x)
+    preds = output["preds"]
+
+    # Compute dummy loss
+    loss = preds.mean()
+    loss.backward()
+
+    # Check that parameters have gradients
+    for param in model.parameters():
+        if param.requires_grad:
+            assert param.grad is not None
+
+
+def test_timemixer_model_num_params():
+    """Test parameter counting for TimeMixer."""
+    model = TimeMixerModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        seq_len=96,
+        d_model=64,
+        num_layers=2,
+        down_sampling_layers=3
+    )
+
+    num_params = model.get_num_params()
+    assert num_params > 0
+    print(f"TimeMixer model has {num_params:,} parameters")
+
+
+def test_timemixer_model_no_nan():
+    """Test that TimeMixer doesn't produce NaN values."""
+    model = TimeMixerModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        seq_len=32,
+        d_model=32,
+        num_layers=2,
+        down_sampling_layers=2
+    )
+    x = torch.randn(2, 32, 5)
+
+    output = model(x)
+
+    assert not torch.isnan(output["preds"]).any()
+    assert not torch.isinf(output["preds"]).any()
+
+
+def test_timemixer_model_same_input_output_dims():
+    """Test TimeMixer when input_dim == output_dim."""
+    model = TimeMixerModel(
+        input_dim=5,
+        output_dim=5,
+        pred_len=1,
+        seq_len=32,
+        d_model=32,
+        num_layers=2,
+        down_sampling_layers=2
+    )
+
+    x = torch.randn(2, 32, 5)
+    output = model(x)
+
+    assert output["preds"].shape == (2, 1, 5)
+
+
+def test_timemixer_model_different_input_output_dims():
+    """Test TimeMixer when input_dim != output_dim."""
+    model = TimeMixerModel(
+        input_dim=8,
+        output_dim=3,
+        pred_len=1,
+        seq_len=32,
+        d_model=32,
+        num_layers=2,
+        down_sampling_layers=2
+    )
+
+    x = torch.randn(2, 32, 8)
+    output = model(x)
+
+    assert output["preds"].shape == (2, 1, 3)
+
+
+def test_timemixer_model_repr():
+    """Test TimeMixer model string representation."""
+    model = TimeMixerModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        seq_len=96,
+        d_model=64,
+        num_layers=2,
+        down_sampling_layers=3
+    )
+
+    model_repr = repr(model)
+    assert "TimeMixerModel" in model_repr
+    assert "pred_len=1" in model_repr
+    assert "seq_len=96" in model_repr
+    assert "d_model=64" in model_repr
+    assert "num_layers=2" in model_repr
+    assert "down_sampling_layers=3" in model_repr
+    assert "num_params" in model_repr
+
+
+def test_timemixer_model_device_transfer():
+    """Test moving TimeMixer model to device."""
+    model = TimeMixerModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        seq_len=32,
+        d_model=32
+    )
+
+    # Test CPU
+    model = model.to("cpu")
+    x = torch.randn(2, 32, 5).to("cpu")
+    output = model(x)
+    assert output["preds"].device.type == "cpu"
+
+    # Test CUDA (if available)
+    if torch.cuda.is_available():
+        model = model.to("cuda")
+        x = torch.randn(2, 32, 5).to("cuda")
+        output = model(x)
+        assert output["preds"].device.type == "cuda"
+
+
+def test_timemixer_pdm_blocks():
+    """Test that PDM blocks process data correctly."""
+    from airtrace.models.timemixer import PastDecomposableMixing
+
+    pdm = PastDecomposableMixing(
+        seq_len=32,
+        d_model=16,
+        down_sampling_layers=2,
+        decomp_kernel=25,
+        dropout=0.1
+    )
+
+    x = torch.randn(2, 32, 16)
+    output = pdm(x)
+
+    # Should maintain shape
+    assert output.shape == (2, 32, 16)
+    # Should not produce NaN
+    assert not torch.isnan(output).any()
+
+
+def test_timemixer_series_decomposition():
+    """Test series decomposition component."""
+    from airtrace.models.timemixer import SeriesDecomposition
+
+    decomp = SeriesDecomposition(kernel_size=25)
+    x = torch.randn(2, 32, 5)
+
+    seasonal, trend = decomp(x)
+
+    # Should maintain shape
+    assert seasonal.shape == (2, 32, 5)
+    assert trend.shape == (2, 32, 5)
+
+    # Seasonal + trend should approximately equal original
+    # (with some edge effects from padding)
+    reconstructed = seasonal + trend
+    torch.testing.assert_close(reconstructed, x, atol=1e-6, rtol=1e-6)

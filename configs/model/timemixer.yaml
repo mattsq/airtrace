@@ -1,0 +1,10 @@
+# @package _global_
+
+model:
+  name: timemixer
+  params:
+    d_model: 64              # Model dimension (embedding size)
+    num_layers: 2            # Number of PDM blocks
+    down_sampling_layers: 3  # Number of scales for multi-scale mixing
+    decomp_kernel: 25        # Kernel size for series decomposition (moving average)
+    dropout: 0.1             # Dropout probability
