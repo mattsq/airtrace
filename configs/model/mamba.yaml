@@ -1,0 +1,15 @@
+# @package _global_
+
+model:
+  name: mamba
+  params:
+    d_model: 512           # Model embedding dimension
+    d_state: 16            # SSM state expansion factor (N in Mamba paper)
+                           # Typical values: 16, 32, 64
+    d_conv: 4              # Local convolution width
+                           # Captures local temporal context
+    expand: 2              # SSM block expansion factor
+    n_layers: 1            # Number of Mamba layers (S-Mamba uses 1)
+    ffn_dim: 2048          # Feed-forward network dimension
+    dropout: 0.1           # Dropout probability
+    norm_type: "layer"     # Normalization type: 'layer' or 'rms'

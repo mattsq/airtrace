@@ -144,7 +144,7 @@ See [Synthetic Data Documentation](docs/synthetic_data.md) for details.
 
 ## Model Registry
 
-AirTrace includes 23 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
+AirTrace includes 24 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
 
 ### Recurrent Neural Networks
 
@@ -173,6 +173,12 @@ AirTrace includes 23 registered models spanning from simple baselines to sophist
 | Model Name | Class | Description |
 |------------|-------|-------------|
 | `tcn` | `TCNModel` | Temporal Convolutional Network with dilated causal convolutions |
+
+### State Space Models
+
+| Model Name | Class | Description |
+|------------|-------|-------------|
+| `mamba` | `MambaModel` | S-Mamba - selective state space model with bidirectional processing for linear-time sequence modeling (2024) |
 
 ### MLP-Based Models
 

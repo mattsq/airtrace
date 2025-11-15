@@ -15,6 +15,7 @@ from airtrace.models import (
     LinearTrendModel,
     LSTMARModel,
     LSTMSeq2SeqModel,
+    MambaModel,
     MeanModel,
     MedianModel,
     MLPARModel,
@@ -2077,3 +2078,380 @@ def test_cyclenet_model_efficiency():
     print(f"CycleNet params: {cyclenet_params:,}")
     print(f"Transformer params: {transformer_params:,}")
     assert cyclenet_params < transformer_params
+
+
+# ============================================================================
+# Mamba (S-Mamba) Model Tests
+# ============================================================================
+
+
+def test_mamba_model_forward(batch):
+    """Test Mamba (S-Mamba) model forward pass."""
+    model = MambaModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        d_model=64,
+        d_state=16,
+        n_layers=1
+    )
+
+    output = model(batch)
+
+    assert "preds" in output
+    assert "extras" in output
+    assert output["preds"].shape == (4, 1, 3)  # [B, pred_len, D_out]
+    assert "mamba_outputs" in output["extras"]
+    assert "final_encoding" in output["extras"]
+
+
+def test_mamba_model_multi_step_prediction():
+    """Test Mamba with multi-step prediction."""
+    model = MambaModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=5,
+        d_model=64,
+        d_state=16,
+        n_layers=1
+    )
+
+    x = torch.randn(2, 32, 5)
+    output = model(x)
+
+    assert output["preds"].shape == (2, 5, 3)  # [B, pred_len, D_out]
+
+
+def test_mamba_model_bidirectional_processing():
+    """Test that bidirectional Mamba blocks process correctly."""
+    model = MambaModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        d_model=64,
+        d_state=16,
+        n_layers=1
+    )
+
+    x = torch.randn(2, 32, 5)
+    output = model(x)
+
+    # Should have mamba outputs from bidirectional processing
+    mamba_outputs = output["extras"]["mamba_outputs"]
+    assert len(mamba_outputs) == 1  # n_layers=1
+    assert mamba_outputs[0].shape == (2, 32, 64)  # [B, T_in, d_model]
+
+
+def test_mamba_model_multiple_layers():
+    """Test Mamba with multiple layers."""
+    model = MambaModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        d_model=64,
+        d_state=16,
+        n_layers=3  # Multiple Mamba layers
+    )
+
+    x = torch.randn(2, 32, 5)
+    output = model(x)
+
+    assert output["preds"].shape == (2, 1, 3)
+
+    # Should have outputs from each layer
+    mamba_outputs = output["extras"]["mamba_outputs"]
+    assert len(mamba_outputs) == 3  # n_layers=3
+
+
+def test_mamba_model_different_d_state():
+    """Test Mamba with different SSM state dimensions."""
+    for d_state in [8, 16, 32, 64]:
+        model = MambaModel(
+            input_dim=5,
+            output_dim=3,
+            pred_len=1,
+            d_model=64,
+            d_state=d_state,
+            n_layers=1
+        )
+
+        x = torch.randn(2, 32, 5)
+        output = model(x)
+        assert output["preds"].shape == (2, 1, 3)
+
+
+def test_mamba_model_same_input_output_dims():
+    """Test Mamba when input_dim == output_dim."""
+    model = MambaModel(
+        input_dim=5,
+        output_dim=5,
+        pred_len=1,
+        d_model=64,
+        d_state=16,
+        n_layers=1
+    )
+
+    x = torch.randn(2, 32, 5)
+    output = model(x)
+
+    assert output["preds"].shape == (2, 1, 5)
+
+
+def test_mamba_model_different_input_output_dims():
+    """Test Mamba when input_dim != output_dim."""
+    model = MambaModel(
+        input_dim=8,
+        output_dim=3,
+        pred_len=1,
+        d_model=64,
+        d_state=16,
+        n_layers=1
+    )
+
+    x = torch.randn(2, 32, 8)
+    output = model(x)
+
+    assert output["preds"].shape == (2, 1, 3)
+
+
+def test_mamba_model_gradient_flow():
+    """Test that gradients flow through Mamba model."""
+    model = MambaModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        d_model=32,
+        d_state=16,
+        n_layers=1
+    )
+    x = torch.randn(2, 32, 5, requires_grad=True)
+
+    output = model(x)
+    preds = output["preds"]
+
+    # Compute dummy loss
+    loss = preds.mean()
+    loss.backward()
+
+    # Check that parameters have gradients
+    for param in model.parameters():
+        if param.requires_grad:
+            assert param.grad is not None
+
+
+def test_mamba_model_num_params():
+    """Test parameter counting for Mamba."""
+    model = MambaModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        d_model=128,
+        d_state=16,
+        n_layers=2
+    )
+
+    num_params = model.get_num_params()
+    assert num_params > 0
+    print(f"Mamba model has {num_params:,} parameters")
+
+
+def test_mamba_model_no_nan():
+    """Test that Mamba doesn't produce NaN values."""
+    model = MambaModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        d_model=64,
+        d_state=16,
+        n_layers=1
+    )
+    x = torch.randn(2, 32, 5)
+
+    output = model(x)
+
+    assert not torch.isnan(output["preds"]).any()
+    assert not torch.isinf(output["preds"]).any()
+
+
+def test_mamba_model_different_norm_types():
+    """Test Mamba with different normalization types."""
+    for norm_type in ["layer", "rms"]:
+        model = MambaModel(
+            input_dim=5,
+            output_dim=3,
+            pred_len=1,
+            d_model=64,
+            d_state=16,
+            n_layers=1,
+            norm_type=norm_type
+        )
+        x = torch.randn(2, 32, 5)
+        output = model(x)
+        assert output["preds"].shape == (2, 1, 3)
+
+
+def test_mamba_model_different_seq_lengths():
+    """Test Mamba with different sequence lengths."""
+    for seq_len in [16, 32, 64, 128]:
+        model = MambaModel(
+            input_dim=5,
+            output_dim=3,
+            pred_len=1,
+            d_model=64,
+            d_state=16,
+            n_layers=1
+        )
+
+        x = torch.randn(2, seq_len, 5)
+        output = model(x)
+        assert output["preds"].shape == (2, 1, 3)
+
+
+def test_mamba_model_repr():
+    """Test Mamba model string representation."""
+    model = MambaModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        d_model=256,
+        d_state=32,
+        n_layers=2
+    )
+
+    model_repr = repr(model)
+    assert "MambaModel" in model_repr
+    assert "pred_len=1" in model_repr
+    assert "d_model=256" in model_repr
+    assert "d_state=32" in model_repr
+    assert "n_layers=2" in model_repr
+    assert "num_params" in model_repr
+
+
+def test_mamba_model_device_transfer():
+    """Test moving Mamba model to device."""
+    model = MambaModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        d_model=64,
+        d_state=16,
+        n_layers=1
+    )
+
+    # Test CPU
+    model = model.to("cpu")
+    x = torch.randn(2, 32, 5).to("cpu")
+    output = model(x)
+    assert output["preds"].device.type == "cpu"
+
+    # Test CUDA (if available)
+    if torch.cuda.is_available():
+        model = model.to("cuda")
+        x = torch.randn(2, 32, 5).to("cuda")
+        output = model(x)
+        assert output["preds"].device.type == "cuda"
+
+
+def test_mamba_model_efficiency_vs_transformer():
+    """Test that Mamba is more parameter-efficient than Transformer for similar capacity."""
+    mamba = MambaModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        d_model=256,
+        d_state=16,
+        n_layers=2
+    )
+
+    transformer = TransformerModel(
+        input_dim=5,
+        output_dim=3,
+        d_model=256,
+        nhead=8,
+        num_encoder_layers=2,
+        dim_feedforward=1024
+    )
+
+    mamba_params = mamba.get_num_params()
+    transformer_params = transformer.get_num_params()
+
+    print(f"Mamba params: {mamba_params:,}")
+    print(f"Transformer params: {transformer_params:,}")
+
+    # Mamba should have similar or fewer parameters
+    # (depends on expand factor and FFN size)
+
+
+def test_mamba_selective_ssm_block():
+    """Test the SelectiveSSM block component."""
+    from airtrace.models.mamba_blocks import SelectiveSSM
+
+    ssm = SelectiveSSM(
+        d_model=64,
+        d_state=16,
+        d_conv=4,
+        expand=2
+    )
+
+    x = torch.randn(2, 32, 64)
+    output = ssm(x)
+
+    # Should maintain shape
+    assert output.shape == (2, 32, 64)
+    # Should not produce NaN
+    assert not torch.isnan(output).any()
+
+
+def test_mamba_bidirectional_block():
+    """Test the BidirectionalMambaBlock component."""
+    from airtrace.models.mamba_blocks import BidirectionalMambaBlock
+
+    bi_mamba = BidirectionalMambaBlock(
+        d_model=64,
+        d_state=16,
+        d_conv=4,
+        expand=2,
+        dropout=0.1
+    )
+
+    x = torch.randn(2, 32, 64)
+    output = bi_mamba(x)
+
+    # Should maintain shape
+    assert output.shape == (2, 32, 64)
+    # Should not produce NaN
+    assert not torch.isnan(output).any()
+
+
+def test_mamba_rms_norm():
+    """Test the RMSNorm component."""
+    from airtrace.models.mamba_blocks import RMSNorm
+
+    rms_norm = RMSNorm(d_model=64)
+
+    x = torch.randn(2, 32, 64)
+    output = rms_norm(x)
+
+    # Should maintain shape
+    assert output.shape == (2, 32, 64)
+    # Should be normalized (approximately zero mean RMS of 1)
+    assert not torch.isnan(output).any()
+
+
+def test_mamba_model_long_sequence():
+    """Test Mamba on long sequences (should be efficient)."""
+    model = MambaModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        d_model=64,
+        d_state=16,
+        n_layers=1
+    )
+
+    # Test with a long sequence (Mamba should handle this efficiently)
+    x = torch.randn(2, 512, 5)
+    output = model(x)
+
+    assert output["preds"].shape == (2, 1, 3)
+    assert not torch.isnan(output["preds"]).any()

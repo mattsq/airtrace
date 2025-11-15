@@ -23,6 +23,7 @@ from .cyclenet import CycleNetModel
 from .gru_ar import GRUARModel
 from .itransformer import iTransformerModel
 from .lstm_ar import LSTMARModel
+from .mamba import MambaModel
 from .patchtst import PatchTSTModel
 from .registry import build_model, list_models, register
 from .seq2seq import GRUSeq2SeqModel, LSTMSeq2SeqModel
@@ -46,6 +47,7 @@ __all__ = [
     "iTransformerModel",
     "TimeMixerModel",
     "CycleNetModel",
+    "MambaModel",
     # Baseline models
     "PersistenceModel",
     "MovingAverageModel",

@@ -1,0 +1,13 @@
+# @package _global_
+
+model:
+  name: mamba
+  params:
+    d_model: 1024          # Large model for maximum capacity
+    d_state: 32            # Larger SSM state
+    d_conv: 4              # Local convolution width
+    expand: 2              # SSM block expansion factor
+    n_layers: 2            # Multiple Mamba layers for deep architecture
+    ffn_dim: 4096          # Large FFN dimension
+    dropout: 0.1           # Dropout probability
+    norm_type: "rms"       # RMS norm for efficiency
