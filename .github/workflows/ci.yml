@@ -14,12 +14,30 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.10", "3.11"]
-        test-slice: ["core", "data"]
         include:
-          - test-slice: core
+          - python-version: "3.9"
+            python-tag: "py39"
+            test-slice: core
             pytest-args: "tests/test_models.py tests/test_transforms.py"
-          - test-slice: data
+          - python-version: "3.9"
+            python-tag: "py39"
+            test-slice: data
+            pytest-args: "tests/data"
+          - python-version: "3.10"
+            python-tag: "py310"
+            test-slice: core
+            pytest-args: "tests/test_models.py tests/test_transforms.py"
+          - python-version: "3.10"
+            python-tag: "py310"
+            test-slice: data
+            pytest-args: "tests/data"
+          - python-version: "3.11"
+            python-tag: "py311"
+            test-slice: core
+            pytest-args: "tests/test_models.py tests/test_transforms.py"
+          - python-version: "3.11"
+            python-tag: "py311"
+            test-slice: data
             pytest-args: "tests/data"
 
     steps:
@@ -74,7 +92,7 @@ jobs:
 
       - name: Run tests with pytest
         env:
-          COVERAGE_FILE: ".coverage.py${{ replace(matrix.python-version, '.', '') }}.${{ matrix.test-slice }}"
+          COVERAGE_FILE: ".coverage.${{ matrix.python-tag }}.${{ matrix.test-slice }}"
         run: |
           pytest -n auto --dist=loadfile ${{ matrix.pytest-args }} --cov=airtrace --cov-report=xml:coverage-${{ matrix.python-version }}-${{ matrix.test-slice }}.xml --cov-report=term
 
@@ -84,7 +102,7 @@ jobs:
           name: coverage-py${{ matrix.python-version }}-${{ matrix.test-slice }}
           path: |
             coverage-${{ matrix.python-version }}-${{ matrix.test-slice }}.xml
-            .coverage.py${{ replace(matrix.python-version, '.', '') }}.${{ matrix.test-slice }}
+            .coverage.${{ matrix.python-tag }}.${{ matrix.test-slice }}
           retention-days: 30
 
   aggregate-test-coverage:
