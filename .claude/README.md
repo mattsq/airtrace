@@ -28,6 +28,8 @@ Runs before each git commit.
 - **Rule 5**: Validates `__init__.py` updates when adding modules
 - **Rule 6**: Checks for test coverage
 - **Rule 7**: Verifies type hints in Python files
+- **Rule 8**: Validates README.md updates when models are added/modified
+- **Rule 9**: Runs pytest to ensure all tests pass before committing
 
 **Exit codes**:
 - `0`: All checks passed (or warnings only)
