@@ -119,6 +119,41 @@ model:
 
 ---
 
+### 6. Holt-Winters Model (`holt_winters`)
+
+**Description:** Triple exponential smoothing with level, trend, and seasonal states. Extends Holt's method by learning a
+seasonal component with configurable cycle length and additive or multiplicative updates.
+
+**Equations (additive form):**
+```
+l_t = α (y_t - s_{t-m}) + (1 - α)(l_{t-1} + b_{t-1})
+b_t = β (l_t - l_{t-1}) + (1 - β)b_{t-1}
+s_t = γ (y_t - l_t) + (1 - γ)s_{t-m}
+ŷ_{t+1} = l_t + b_t + s_{t+1-m}
+```
+
+**When to use:**
+- Strong seasonal cycles that also drift over time
+- Cases where seasonal naive is too noisy but SARIMA is overkill
+- Benchmarking against classical smoothing baselines with seasonality
+
+**Config:**
+```yaml
+model:
+  name: holt_winters
+  params:
+    season_length: 24  # e.g., hourly data with daily seasonality
+    alpha: 0.3         # Level smoothing
+    beta: 0.1          # Trend smoothing
+    gamma: 0.1         # Seasonal smoothing
+    seasonal: additive # or "multiplicative" for ratio-based seasonality
+```
+
+**Typical performance:** Provides smoother and more adaptive seasonal forecasts than `seasonal_naive`, especially when the level
+or trend shifts slowly across seasons.
+
+---
+
 ## Using Baselines in Experiments
 
 ### Quick Comparison

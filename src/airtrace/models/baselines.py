@@ -773,6 +773,182 @@ class HoltLinearTrendModel(ARBaseModel):
         }
 
 
+@register("holt_winters")
+class HoltWintersModel(ARBaseModel):
+    """Holt-Winters (triple exponential smoothing) baseline model.
+
+    Extends Holt's method with a seasonal component controlled by ``gamma`` and ``season_length``.
+    Supports additive and multiplicative seasonality following the classical formulation:
+
+    - Level: ``l_t = alpha * (y_t / s_{t-m}) + (1 - alpha) * (l_{t-1} + b_{t-1})`` (multiplicative)
+      or ``alpha * (y_t - s_{t-m}) + (1 - alpha) * (l_{t-1} + b_{t-1})`` (additive)
+    - Trend: ``b_t = beta * (l_t - l_{t-1}) + (1 - beta) * b_{t-1}``
+    - Seasonality updates differ for additive vs multiplicative
+
+    Forecast is ``(l_T + b_T) * s_{T+1-m}`` or ``l_T + b_T + s_{T+1-m}`` respectively.
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        output_dim: int,
+        season_length: int = 24,
+        alpha: float = 0.3,
+        beta: float = 0.1,
+        gamma: float = 0.1,
+        seasonal: str = "additive",
+        **kwargs,
+    ) -> None:
+        """Initialize Holt-Winters model.
+
+        Args:
+            input_dim: Dimension of input features.
+            output_dim: Dimension of output predictions.
+            season_length: Number of steps in one seasonal cycle (> 1).
+            alpha: Level smoothing parameter (0 < alpha <= 1).
+            beta: Trend smoothing parameter (0 < beta <= 1).
+            gamma: Seasonal smoothing parameter (0 < gamma <= 1).
+            seasonal: Type of seasonality ("additive" or "multiplicative").
+            **kwargs: Additional arguments (ignored).
+        """
+
+        super().__init__(input_dim, output_dim, **kwargs)
+
+        if season_length < 2:
+            raise ValueError(f"season_length must be >= 2, got {season_length}")
+        if not 0 < alpha <= 1:
+            raise ValueError(f"alpha must be in (0, 1], got {alpha}")
+        if not 0 < beta <= 1:
+            raise ValueError(f"beta must be in (0, 1], got {beta}")
+        if not 0 < gamma <= 1:
+            raise ValueError(f"gamma must be in (0, 1], got {gamma}")
+
+        seasonal_lower = seasonal.lower()
+        if seasonal_lower not in {"additive", "multiplicative"}:
+            raise ValueError("seasonal must be 'additive' or 'multiplicative'")
+
+        self.season_length = season_length
+        self.alpha = alpha
+        self.beta = beta
+        self.gamma = gamma
+        self.seasonal = seasonal_lower
+
+        if input_dim != output_dim:
+            self.projection = nn.Linear(input_dim, output_dim, bias=False)
+        else:
+            self.projection = None
+
+    def _initialize_states(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Initialize level, trend, and seasonality states."""
+
+        B, T_in, D_in = x.shape
+        seasonals = torch.zeros(
+            B,
+            self.season_length,
+            D_in,
+            device=x.device,
+            dtype=x.dtype,
+        )
+
+        effective_length = min(T_in, self.season_length)
+        if self.seasonal == "additive":
+            baseline = x[:, :effective_length, :].mean(dim=1, keepdim=True)
+            seasonals[:, :effective_length, :] = x[:, :effective_length, :] - baseline
+        else:
+            baseline = x[:, :effective_length, :].mean(dim=1, keepdim=True).clamp(min=1e-6)
+            seasonals[:, :effective_length, :] = (
+                x[:, :effective_length, :].clamp(min=1e-6) / baseline
+            )
+            seasonals[:, effective_length:, :] = 1.0
+
+        if effective_length < self.season_length:
+            if self.seasonal == "additive":
+                seasonals[:, effective_length:, :] = 0.0
+            else:
+                seasonals[:, effective_length:, :] = 1.0
+
+        if self.seasonal == "additive":
+            level = x[:, 0, :] - seasonals[:, 0, :]
+        else:
+            level = x[:, 0, :].clamp(min=1e-6) / seasonals[:, 0, :].clamp(min=1e-6)
+
+        if T_in > 1:
+            if self.seasonal == "additive":
+                next_level = x[:, 1, :] - seasonals[:, 1 % self.season_length, :]
+                trend = next_level - level
+            else:
+                next_level = (
+                    x[:, 1, :].clamp(min=1e-6)
+                    / seasonals[:, 1 % self.season_length, :].clamp(min=1e-6)
+                )
+                trend = next_level - level
+        else:
+            trend = torch.zeros_like(level)
+
+        return level, trend, seasonals
+
+    def forward(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
+    ) -> Dict[str, torch.Tensor]:
+        """Forward pass applying Holt-Winters smoothing."""
+
+        del context, kwargs
+
+        B, T_in, D_in = x.shape
+        level, trend, seasonals = self._initialize_states(x)
+
+        for t in range(1, T_in):
+            season_idx = t % self.season_length
+            season_component = seasonals[:, season_idx, :]
+            y_t = x[:, t, :]
+
+            if self.seasonal == "additive":
+                deseasonalized = y_t - season_component
+                new_level = self.alpha * deseasonalized + (1 - self.alpha) * (level + trend)
+                new_trend = self.beta * (new_level - level) + (1 - self.beta) * trend
+                seasonals[:, season_idx, :] = (
+                    self.gamma * (y_t - new_level) + (1 - self.gamma) * season_component
+                )
+            else:
+                deseasonalized = y_t / season_component.clamp(min=1e-6)
+                new_level = self.alpha * deseasonalized + (1 - self.alpha) * (level + trend)
+                new_trend = self.beta * (new_level - level) + (1 - self.beta) * trend
+                seasonals[:, season_idx, :] = (
+                    self.gamma * (y_t / new_level.clamp(min=1e-6))
+                    + (1 - self.gamma) * season_component
+                )
+
+            level = new_level
+            trend = new_trend
+
+        next_idx = T_in % self.season_length
+        next_season = seasonals[:, next_idx, :]
+
+        if self.seasonal == "additive":
+            next_value = level + trend + next_season
+        else:
+            next_value = (level + trend) * next_season
+
+        if self.projection is not None:
+            next_value = self.projection(next_value)
+
+        preds = next_value.unsqueeze(1)
+
+        return {
+            "preds": preds,
+            "extras": {
+                "alpha": self.alpha,
+                "beta": self.beta,
+                "gamma": self.gamma,
+                "season_length": self.season_length,
+                "seasonal_type": self.seasonal,
+                "level": level,
+                "trend": trend,
+                "seasonals": seasonals,
+            },
+        }
+
+
 @register("theta")
 class ThetaModel(ARBaseModel):
     """Theta method baseline model.
