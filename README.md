@@ -197,6 +197,7 @@ Simple, interpretable baselines for comparison. Most are non-trainable (paramete
 | `drift` | `DriftModel` | No | Random walk with drift (last value + average change) |
 | `exponential_smoothing` | `ExponentialSmoothingModel` | No | Exponentially weighted moving average (EWMA) |
 | `holt_linear_trend` | `HoltLinearTrendModel` | No | Holt's double exponential smoothing (level + trend) |
+| `holt_winters` | `HoltWintersModel` | No | Holt-Winters triple exponential smoothing with additive/multiplicative seasonality |
 | `seasonal_naive` | `SeasonalNaiveModel` | No | Predicts value from previous seasonal cycle |
 | `theta` | `ThetaModel` | No | Theta method (M3 competition winner) |
 | `sarima` | `SARIMAModel` | No | Seasonal ARIMA leveraging differencing and moving-average residuals via statsmodels |

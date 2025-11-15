@@ -10,6 +10,7 @@ from airtrace.models import (
     GRUARModel,
     GRUSeq2SeqModel,
     HoltLinearTrendModel,
+    HoltWintersModel,
     iTransformerModel,
     LinearARModel,
     LinearTrendModel,
@@ -725,6 +726,79 @@ def test_holt_linear_trend_constant_sequence():
     assert output["preds"].shape == (2, 1, 5)
     # Trend should be small
     assert output["extras"]["trend"].abs().max() < 1.0
+
+
+def test_holt_winters_model_forward(batch):
+    """Test Holt-Winters model forward pass."""
+    model = HoltWintersModel(
+        input_dim=5,
+        output_dim=3,
+        season_length=4,
+        alpha=0.5,
+        beta=0.3,
+        gamma=0.2,
+        seasonal="additive",
+    )
+
+    output = model(batch)
+
+    assert "preds" in output
+    assert output["preds"].shape == (4, 1, 3)
+    extras = output["extras"]
+    assert extras["seasonal_type"] == "additive"
+    assert "seasonals" in extras
+    assert extras["seasonals"].shape[1] == 4
+
+
+def test_holt_winters_parameter_validation():
+    """Test Holt-Winters parameter validation."""
+    with pytest.raises(ValueError):
+        HoltWintersModel(input_dim=5, output_dim=3, season_length=1)
+
+    with pytest.raises(ValueError):
+        HoltWintersModel(input_dim=5, output_dim=3, season_length=4, alpha=0.0)
+
+    with pytest.raises(ValueError):
+        HoltWintersModel(input_dim=5, output_dim=3, season_length=4, beta=0.0)
+
+    with pytest.raises(ValueError):
+        HoltWintersModel(input_dim=5, output_dim=3, season_length=4, gamma=0.0)
+
+    with pytest.raises(ValueError):
+        HoltWintersModel(
+            input_dim=5,
+            output_dim=3,
+            season_length=4,
+            seasonal="invalid",
+        )
+
+
+def test_holt_winters_additive_seasonality():
+    """Ensure Holt-Winters captures additive seasonal structure."""
+
+    season_length = 4
+    model = HoltWintersModel(
+        input_dim=1,
+        output_dim=1,
+        season_length=season_length,
+        alpha=1.0,
+        beta=0.5,
+        gamma=1.0,
+        seasonal="additive",
+    )
+
+    t = torch.arange(12, dtype=torch.float32)
+    seasonal_pattern = torch.tensor([0.0, 1.0, -1.0, 0.5], dtype=torch.float32)
+    level = 10.0
+    trend = 0.0
+    season_indices = (t.to(torch.long)) % season_length
+    series = level + trend * t + seasonal_pattern[season_indices]
+    x = series.reshape(1, -1, 1)
+
+    output = model(x)
+
+    expected_next = level + trend * t.numel() + seasonal_pattern[t.numel() % season_length]
+    torch.testing.assert_close(output["preds"], torch.tensor([[[expected_next]]]), atol=0.2, rtol=1e-3)
 
 
 def test_theta_model_forward(batch):
