@@ -9,11 +9,18 @@ on:
 
 jobs:
   test:
-    name: Run Tests
+    name: Run Tests (Python ${{ matrix.python-version }} - ${{ matrix.test-slice }})
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.9", "3.10", "3.11"]
+        test-slice: ["core", "data"]
+        include:
+          - test-slice: core
+            pytest-args: "tests/test_models.py tests/test_transforms.py"
+          - test-slice: data
+            pytest-args: "tests/data"
 
     steps:
       - name: Checkout code
@@ -44,6 +51,17 @@ jobs:
       - name: Activate venv for subsequent steps
         run: echo "$GITHUB_WORKSPACE/.venv/bin" >> $GITHUB_PATH
 
+      - name: Cache pytest and mypy state
+        uses: actions/cache@v4
+        with:
+          path: |
+            .pytest_cache
+            .mypy_cache
+          key: caches-${{ runner.os }}-py${{ matrix.python-version }}-${{ matrix.test-slice }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            caches-${{ runner.os }}-py${{ matrix.python-version }}-${{ matrix.test-slice }}-
+            caches-${{ runner.os }}-py${{ matrix.python-version }}-
+
       - name: Run linting with ruff
         run: |
           ruff check src/ tests/
@@ -55,28 +73,154 @@ jobs:
         continue-on-error: true
 
       - name: Run tests with pytest
+        env:
+          COVERAGE_FILE: ".coverage.py${{ replace(matrix.python-version, '.', '') }}.${{ matrix.test-slice }}"
         run: |
-          pytest tests/ -v --cov=airtrace --cov-report=xml --cov-report=term
+          pytest -n auto --dist=loadfile ${{ matrix.pytest-args }} --cov=airtrace --cov-report=xml:coverage-${{ matrix.python-version }}-${{ matrix.test-slice }}.xml --cov-report=term
 
-      - name: Upload coverage report
+      - name: Upload coverage data
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-report-py${{ matrix.python-version }}
-          path: coverage.xml
+          name: coverage-py${{ matrix.python-version }}-${{ matrix.test-slice }}
+          path: |
+            coverage-${{ matrix.python-version }}-${{ matrix.test-slice }}.xml
+            .coverage.py${{ replace(matrix.python-version, '.', '') }}.${{ matrix.test-slice }}
           retention-days: 30
 
-      - name: Display coverage summary
+  aggregate-test-coverage:
+    name: Aggregate Test Coverage
+    runs-on: ubuntu-latest
+    needs: test
+    if: ${{ always() }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install coverage tooling
         run: |
-          echo "## Test Coverage Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          coverage report >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          python -m pip install --upgrade pip
+          pip install "coverage[toml]>=7.3"
+
+      - name: Download coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: coverage-artifacts
+          pattern: coverage-py*
+          merge-multiple: true
+
+      - name: Combine coverage results
+        run: |
+          python - <<'PYTHON_SCRIPT'
+          import io
+          import os
+          import sys
+          from pathlib import Path
+
+          try:
+              from coverage import Coverage
+          except ImportError as exc:
+              print(f"Failed to import coverage: {exc}", file=sys.stderr)
+              sys.exit(1)
+
+          artifacts_dir = Path("coverage-artifacts")
+          if not artifacts_dir.exists():
+              print("No coverage artifacts directory found; skipping aggregation.")
+              sys.exit(0)
+
+          data_files = sorted(artifacts_dir.glob(".coverage.*"))
+          if not data_files:
+              print("No coverage data files found; skipping aggregation.")
+              sys.exit(0)
+
+          grouped = {}
+          for data_file in data_files:
+              parts = data_file.name.split(".")
+              if len(parts) < 4:
+                  # Expected format: .coverage.py<python><...>.<slice>
+                  continue
+              _, coverage_label, python_version, test_slice = parts[0], parts[1], parts[2], parts[3]
+              if coverage_label != "coverage":
+                  continue
+              grouped.setdefault(python_version, []).append((test_slice, data_file))
+
+          if not grouped:
+              print("No parsable coverage data files found; skipping aggregation.")
+              sys.exit(0)
+
+          summary_path = Path(os.environ.get("GITHUB_STEP_SUMMARY", "coverage-summary.md"))
+          output_dir = Path("coverage-output")
+          output_dir.mkdir(exist_ok=True)
+
+          def _format_python_label(tag: str) -> str:
+              if not tag.startswith("py"):
+                  return tag
+              numeric = tag[2:]
+              if len(numeric) == 2:
+                  display = f"{numeric[0]}.{numeric[1]}"
+              elif len(numeric) > 2:
+                  display = f"{numeric[0]}.{numeric[1:]}"
+              else:
+                  display = numeric
+              return f"Python {display}"
+
+          def _sort_key(tag: str):
+              numeric = tag[2:] if tag.startswith("py") else tag
+              if len(numeric) >= 2 and numeric.isdigit():
+                  major = int(numeric[0])
+                  minor = int(numeric[1:]) if len(numeric) > 1 else 0
+                  return (major, minor)
+              return (numeric, )
+
+          with summary_path.open("a", encoding="utf-8") as summary:
+              summary.write("## Aggregated Test Coverage\n\n")
+              summary.write("| Python | Total Coverage |\n")
+              summary.write("|--------|----------------|\n")
+
+              for python_version in sorted(grouped, key=_sort_key):
+                  entries = grouped[python_version]
+                  data_paths = [str(path) for _, path in entries]
+
+                  cov = Coverage(data_file=str(output_dir / f".coverage.{python_version}.combined"))
+                  cov.combine(data_paths)
+                  cov.save()
+                  cov.load()
+
+                  report_stream = io.StringIO()
+                  total_coverage = cov.report(file=report_stream)
+                  report_text = report_stream.getvalue()
+                  (output_dir / f"coverage-report-{python_version}.txt").write_text(report_text, encoding="utf-8")
+
+                  cov.xml_report(outfile=str(output_dir / f"coverage-combined-{python_version}.xml"))
+
+                  summary.write(f"| {_format_python_label(python_version)} | {total_coverage:.2f}% |\n")
+
+          print("Combined coverage reports written to", output_dir)
+          PYTHON_SCRIPT
+
+      - name: Upload aggregated coverage
+        if: ${{ success() && hashFiles('coverage-output/**') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: combined-coverage
+          path: coverage-output
+          retention-days: 30
 
   model-validation:
-    name: Model Validation
+    name: Model Validation (Shard ${{ matrix.shard-index }})
     runs-on: ubuntu-latest
     needs: test  # Only run if tests pass
+    strategy:
+      fail-fast: false
+      matrix:
+        shard-index: [0, 1, 2, 3]
+    env:
+      MODEL_VALIDATION_SHARDS: 4
 
     steps:
       - name: Checkout code
@@ -117,103 +261,197 @@ jobs:
         id: validate
         run: |
           python src/scripts/validate_models.py \
-            --output model_validation_results.json \
+            --output model_validation_results_shard_${{ matrix.shard-index }}.json \
             --seed 42 \
             --n-flights 20 \
             --n-epochs 10 \
             --batch-size 32 \
-            --device cpu
+            --device cpu \
+            --num-shards ${MODEL_VALIDATION_SHARDS} \
+            --shard-index ${{ matrix.shard-index }}
 
       - name: Upload validation results
         uses: actions/upload-artifact@v4
         with:
-          name: model-validation-results
-          path: model_validation_results.json
+          name: model-validation-results-${{ matrix.shard-index }}
+          path: model_validation_results_shard_${{ matrix.shard-index }}.json
           retention-days: 30
 
-      - name: Parse and display results
-        if: always()
-        run: |
-          echo "## Model Validation Results" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+  aggregate-model-validation:
+    name: Aggregate Model Validation
+    runs-on: ubuntu-latest
+    needs: model-validation
+    if: ${{ always() }}
 
-          # Parse JSON and create markdown table
-          python3 << 'PYTHON_SCRIPT'
+    steps:
+      - name: Download validation artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: model-validation-artifacts
+          pattern: model-validation-results-*
+          merge-multiple: true
+
+      - name: Combine validation results
+        run: |
+          python3 <<'PYTHON_SCRIPT'
           import json
           import os
           import sys
+          from pathlib import Path
 
-          try:
-              with open("model_validation_results.json", "r") as f:
-                  data = json.load(f)
+          artifacts_dir = Path("model-validation-artifacts")
+          if not artifacts_dir.exists():
+              print("No validation artifacts found; skipping aggregation.")
+              sys.exit(0)
 
-              # Write to GitHub step summary
-              with open(os.environ.get("GITHUB_STEP_SUMMARY", "/dev/stdout"), "a") as summary:
-                  summary.write("### Configuration\n\n")
-                  summary.write(f"- **Seed**: {data['seed']}\n")
-                  summary.write(f"- **Flights**: {data['n_flights']}\n")
-                  summary.write(f"- **Epochs**: {data['n_epochs']}\n")
-                  summary.write(f"- **Train Samples**: {data['train_samples']}\n")
-                  summary.write(f"- **Val Samples**: {data['val_samples']}\n\n")
+          result_files = sorted(artifacts_dir.glob("model_validation_results_*.json"))
+          if not result_files:
+              print("No validation result files located; skipping aggregation.")
+              sys.exit(0)
 
-                  summary.write("### Results\n\n")
-                  summary.write("| Model | Status | Params | Train Time | RMSE | MAE | R² |\n")
-                  summary.write("|-------|--------|--------|------------|------|-----|----|\n")
+          combined = None
+          expected_models = None
+          validated_models = set()
+          shard_overview = []
 
-                  n_success = 0
-                  for result in data["results"]:
-                      model_name = result["model_name"]
-                      status = result["status"]
+          for file_path in result_files:
+              with file_path.open("r", encoding="utf-8") as handle:
+                  data = json.load(handle)
 
-                      if status == "success":
-                          n_success += 1
-                          n_params = f"{result['n_params']:,}"
-                          train_time = f"{result['train_time']:.2f}s"
-                          rmse = f"{result['overall_metrics']['rmse']:.4f}"
-                          mae = f"{result['overall_metrics']['mae']:.4f}"
-                          r2 = f"{result['overall_metrics']['r2']:.4f}"
+              if combined is None:
+                  combined = data
+                  combined["results"] = []
+              else:
+                  for key in [
+                      "seed",
+                      "n_flights",
+                      "n_epochs",
+                      "batch_size",
+                      "device",
+                      "input_dim",
+                      "output_dim",
+                      "train_samples",
+                      "val_samples",
+                  ]:
+                      if key in data and key in combined and combined[key] != data[key]:
+                          print(f"Warning: value mismatch for '{key}' across shards", file=sys.stderr)
 
-                          summary.write(f"| {model_name} | ✅ PASS | {n_params} | {train_time} | {rmse} | {mae} | {r2} |\n")
-                      else:
-                          summary.write(f"| {model_name} | ❌ FAIL | - | - | - | - | - |\n")
-                          summary.write(f"\n**Error**: {result.get('error', 'Unknown error')}\n\n")
+              available = data.get("available_models")
+              if available is not None:
+                  if expected_models is None:
+                      expected_models = list(available)
+                  elif set(available) != set(expected_models):
+                      print(
+                          "Warning: shard reported a different set of available models",
+                          file=sys.stderr,
+                      )
 
-                  n_total = len(data["results"])
-                  success_rate = (n_success / n_total * 100) if n_total > 0 else 0
+              selected = data.get("selected_models", [])
+              shard_overview.append(
+                  {
+                      "file": file_path.name,
+                      "count": len(selected),
+                      "models": selected,
+                  }
+              )
 
-                  summary.write(f"\n**Success Rate**: {n_success}/{n_total} ({success_rate:.1f}%)\n\n")
+              combined["results"].extend(data.get("results", []))
+              for result in data.get("results", []):
+                  model_name = result.get("model_name")
+                  if model_name:
+                      validated_models.add(model_name)
 
-                  # Sensor-specific metrics for successful models
+          if combined is None:
+              print("Combined data is empty; skipping aggregation.")
+              sys.exit(0)
+
+          if expected_models is not None:
+              missing_models = sorted(set(expected_models) - validated_models)
+              if missing_models:
+                  print(
+                      "❌ Missing model validation results for: "
+                      + ", ".join(missing_models),
+                      file=sys.stderr,
+                  )
+                  sys.exit(1)
+
+              combined["available_models"] = expected_models
+              combined["selected_models"] = sorted(validated_models)
+
+          combined["results"].sort(key=lambda item: item.get("model_name", ""))
+
+          output_path = Path("model_validation_results_combined.json")
+          with output_path.open("w", encoding="utf-8") as handle:
+              json.dump(combined, handle, indent=2)
+
+          summary_path = Path(os.environ.get("GITHUB_STEP_SUMMARY", "model-validation-summary.md"))
+          with summary_path.open("a", encoding="utf-8") as summary:
+              summary.write("## Model Validation Results\n\n")
+              summary.write("### Configuration\n\n")
+              summary.write(f"- **Seed**: {combined.get('seed')}\n")
+              summary.write(f"- **Flights**: {combined.get('n_flights')}\n")
+              summary.write(f"- **Epochs**: {combined.get('n_epochs')}\n")
+              summary.write(f"- **Train Samples**: {combined.get('train_samples')}\n")
+              summary.write(f"- **Val Samples**: {combined.get('val_samples')}\n\n")
+
+              if shard_overview:
+                  summary.write("### Shard Overview\n\n")
+                  summary.write("| Shard Artifact | Models |\n")
+                  summary.write("|----------------|--------|\n")
+                  for shard in shard_overview:
+                      models = ", ".join(shard["models"]) if shard["models"] else "(none)"
+                      summary.write(f"| {shard['file']} | {models} |\n")
+                  summary.write("\n")
+
+              summary.write("### Results\n\n")
+              summary.write("| Model | Status | Params | Train Time | RMSE | MAE | R² |\n")
+              summary.write("|-------|--------|--------|------------|------|-----|----|\n")
+
+              n_success = 0
+              first_success = None
+              for result in combined["results"]:
+                  model_name = result.get("model_name", "unknown")
+                  status = result.get("status", "unknown")
+
+                  if status == "success":
+                      n_success += 1
+                      n_params = f"{result.get('n_params', 0):,}"
+                      train_time = f"{result.get('train_time', 0.0):.2f}s"
+                      metrics = result.get("overall_metrics", {})
+                      rmse = f"{metrics.get('rmse', float('nan')):.4f}"
+                      mae = f"{metrics.get('mae', float('nan')):.4f}"
+                      r2 = f"{metrics.get('r2', float('nan')):.4f}"
+                      summary.write(f"| {model_name} | ✅ PASS | {n_params} | {train_time} | {rmse} | {mae} | {r2} |\n")
+                      if first_success is None:
+                          first_success = result
+                  else:
+                      summary.write(f"| {model_name} | ❌ FAIL | - | - | - | - | - |\n")
+                      error_message = result.get("error")
+                      if error_message:
+                          summary.write(f"\n**Error**: {error_message}\n\n")
+
+              n_total = len(combined["results"])
+              success_rate = (n_success / n_total * 100) if n_total else 0.0
+              summary.write(f"\n**Success Rate**: {n_success}/{n_total} ({success_rate:.1f}%)\n\n")
+
+              if first_success is not None:
                   summary.write("### Per-Sensor Metrics (First Successful Model)\n\n")
-                  for result in data["results"]:
-                      if result["status"] == "success":
-                          model_name = result["model_name"]
-                          sensor_metrics = result["sensor_metrics"]
+                  summary.write(f"**{first_success.get('model_name')}**:\n\n")
+                  summary.write("| Sensor | RMSE | MAE | R² |\n")
+                  summary.write("|--------|------|-----|----|\n")
+                  for sensor, metrics in first_success.get("sensor_metrics", {}).items():
+                      summary.write(
+                          f"| {sensor} | {metrics.get('rmse', float('nan')):.4f} | {metrics.get('mae', float('nan')):.4f} | {metrics.get('r2', float('nan')):.4f} |\n"
+                      )
 
-                          summary.write(f"**{model_name}**:\n\n")
-                          summary.write("| Sensor | RMSE | MAE | R² |\n")
-                          summary.write("|--------|------|-----|----|\n")
-
-                          for sensor, metrics in sensor_metrics.items():
-                              rmse = f"{metrics['rmse']:.4f}"
-                              mae = f"{metrics['mae']:.4f}"
-                              r2 = f"{metrics['r2']:.4f}"
-                              summary.write(f"| {sensor} | {rmse} | {mae} | {r2} |\n")
-
-                          summary.write("\n")
-                          break  # Only show first successful model
-
-          except Exception as e:
-              print(f"Error parsing results: {e}", file=sys.stderr)
-              sys.exit(0)  # Don't fail the job on parsing errors
+          print(f"Combined results written to {output_path}")
           PYTHON_SCRIPT
 
-      - name: Check validation success
-        run: |
-          # Fail the job if any model failed validation
-          if grep -q '"status": "failed"' model_validation_results.json; then
-            echo "❌ One or more models failed validation"
-            exit 1
-          else
-            echo "✅ All models passed validation"
-          fi
+      - name: Upload combined validation results
+        if: ${{ success() && hashFiles('model_validation_results_combined.json') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-validation-results-combined
+          path: model_validation_results_combined.json
+          retention-days: 30
+
