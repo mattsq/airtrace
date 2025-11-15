@@ -1303,17 +1303,22 @@ def test_itransformer_model_different_input_output_dims():
 
 
 def test_itransformer_model_variable_seq_len():
-    """Test that iTransformer handles variable sequence lengths."""
-    model = iTransformerModel(
-        input_dim=5,
-        output_dim=3,
-        pred_len=1,
-        d_model=64,
-        nhead=4
-    )
+    """Test that iTransformer handles variable sequence lengths.
 
+    Note: LazyLinear materializes on first forward pass, so each sequence
+    length requires a separate model instance.
+    """
     # Test with different sequence lengths
     for seq_len in [16, 32, 64]:
+        # Create a new model instance for each sequence length
+        # LazyLinear materializes on first forward and cannot change after
+        model = iTransformerModel(
+            input_dim=5,
+            output_dim=3,
+            pred_len=1,
+            d_model=64,
+            nhead=4
+        )
         x = torch.randn(2, seq_len, 5)
         output = model(x)
         assert output["preds"].shape == (2, 1, 3)
