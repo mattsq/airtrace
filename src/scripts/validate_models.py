@@ -10,8 +10,11 @@ Usage:
 
 import argparse
 import json
+import math
+import os
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -381,6 +384,40 @@ def evaluate_model(
     return preds, targets
 
 
+def _validate_model_worker(
+    model_name: str,
+    batch_size: int,
+    n_epochs: int,
+    device: str,
+    input_dim: int,
+    output_dim: int,
+    train_tensors: Tuple[torch.Tensor, torch.Tensor],
+    val_tensors: Tuple[torch.Tensor, torch.Tensor],
+) -> Dict:
+    """Execute ``validate_single_model`` inside a worker process."""
+
+    torch.set_num_threads(1)
+
+    X_train, y_train = train_tensors
+    X_val, y_val = val_tensors
+
+    train_dataset = TensorDataset(X_train, y_train)
+    val_dataset = TensorDataset(X_val, y_val)
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+
+    return validate_single_model(
+        model_name=model_name,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        input_dim=input_dim,
+        output_dim=output_dim,
+        n_epochs=n_epochs,
+        device=device,
+    )
+
+
 def validate_single_model(
     model_name: str,
     train_loader: DataLoader,
@@ -585,6 +622,46 @@ def main():
         default="cpu",
         help="Device to use (cpu or cuda)"
     )
+    parser.add_argument(
+        "--models",
+        type=str,
+        default="",
+        help=(
+            "Comma-separated list of model names to validate. "
+            "If omitted, all registered models are evaluated."
+        ),
+    )
+    parser.add_argument(
+        "--num-shards",
+        type=int,
+        default=1,
+        help="Total number of shards used to split the model list.",
+    )
+    parser.add_argument(
+        "--shard-index",
+        type=int,
+        default=0,
+        help="Zero-based index of the shard to execute.",
+    )
+    parser.add_argument(
+        "--shard-strategy",
+        type=str,
+        choices=("round-robin", "chunk"),
+        default="round-robin",
+        help=(
+            "Strategy for assigning models to shards. "
+            "'round-robin' distributes models evenly, while 'chunk' assigns contiguous blocks."
+        ),
+    )
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=None,
+        help=(
+            "Maximum number of worker processes for parallel validation. "
+            "Defaults to the number of available CPU cores or the number of models, whichever is smaller."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -618,41 +695,159 @@ def main():
         X_train, y_train, X_val, y_val
     )
 
-    # Create data loaders
+    # Share tensors across worker processes to avoid duplication
+    for tensor in (X_train, y_train, X_val, y_val):
+        if tensor.device.type == "cpu":
+            try:
+                tensor.share_memory_()
+            except RuntimeError:
+                # Sharing may fail on some platforms; fall back gracefully.
+                pass
+
+    # Create datasets (loaders will be constructed lazily as needed)
     train_dataset = TensorDataset(X_train, y_train)
     val_dataset = TensorDataset(X_val, y_val)
 
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=args.batch_size,
-        shuffle=True
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=args.batch_size,
-        shuffle=False
-    )
+    # Get all registered models and optionally filter by user selection
+    available_models = list_models()
+    print(f"\n📦 Found {len(available_models)} registered models: {available_models}")
 
-    # Get all registered models
-    model_names = list_models()
-    print(f"\n📦 Found {len(model_names)} registered models: {model_names}")
+    if args.models:
+        requested_models = [name.strip() for name in args.models.split(",") if name.strip()]
+        missing_models = [name for name in requested_models if name not in available_models]
 
-    # Validate each model
+        if missing_models:
+            print(f"❌ Unknown model(s) requested: {missing_models}")
+            sys.exit(1)
+
+        model_names = [name for name in available_models if name in requested_models]
+    else:
+        model_names = available_models
+
+    if args.num_shards < 1:
+        print("❌ --num-shards must be at least 1")
+        sys.exit(1)
+
+    if args.shard_index < 0 or args.shard_index >= args.num_shards:
+        print(
+            f"❌ Invalid shard configuration: shard-index={args.shard_index} "
+            f"is outside the range [0, {args.num_shards - 1}]"
+        )
+        sys.exit(1)
+
+    selected_models: List[str]
+    if args.num_shards == 1:
+        selected_models = list(model_names)
+    else:
+        print(
+            "🔀 Applying sharding: "
+            f"strategy={args.shard_strategy}, shard={args.shard_index + 1}/{args.num_shards}"
+        )
+
+        if args.shard_strategy == "round-robin":
+            selected_models = [
+                name
+                for index, name in enumerate(model_names)
+                if index % args.num_shards == args.shard_index
+            ]
+        else:  # chunk strategy
+            chunk_size = math.ceil(len(model_names) / args.num_shards)
+            start = args.shard_index * chunk_size
+            end = start + chunk_size
+            selected_models = model_names[start:end]
+
+    if not selected_models:
+        print("⚠️ No models selected for this shard. Exiting early.")
+        output_path = Path(args.output)
+        output_data = {
+            "seed": args.seed,
+            "n_flights": args.n_flights,
+            "n_epochs": args.n_epochs,
+            "batch_size": args.batch_size,
+            "device": args.device,
+            "input_dim": X_train.shape[-1],
+            "output_dim": y_train.shape[-1],
+            "train_samples": len(train_dataset),
+            "val_samples": len(val_dataset),
+            "available_models": available_models,
+            "selected_models": selected_models,
+            "shard_index": args.shard_index,
+            "num_shards": args.num_shards,
+            "shard_strategy": args.shard_strategy,
+            "results": [],
+        }
+
+        with output_path.open("w", encoding="utf-8") as handle:
+            json.dump(output_data, handle, indent=2)
+
+        sys.exit(0)
+
+    print(f"🔍 Validating models: {selected_models}")
+
+    # Determine parallelism strategy
     input_dim = X_train.shape[-1]
     output_dim = y_train.shape[-1]
 
-    results = []
-    for model_name in model_names:
-        result = validate_single_model(
-            model_name=model_name,
-            train_loader=train_loader,
-            val_loader=val_loader,
-            input_dim=input_dim,
-            output_dim=output_dim,
-            n_epochs=args.n_epochs,
-            device=args.device
-        )
-        results.append(result)
+    available_cpus = os.cpu_count() or 1
+    max_workers = args.max_workers if args.max_workers is not None else min(len(selected_models), available_cpus)
+
+    if args.device != "cpu":
+        # Parallelising GPU workloads from multiple processes adds unnecessary overhead.
+        max_workers = 1
+
+    max_workers = max(1, max_workers)
+
+    if max_workers == 1:
+        print("🧪 Running validation sequentially")
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
+
+        results = []
+        for model_name in selected_models:
+            result = validate_single_model(
+                model_name=model_name,
+                train_loader=train_loader,
+                val_loader=val_loader,
+                input_dim=input_dim,
+                output_dim=output_dim,
+                n_epochs=args.n_epochs,
+                device=args.device,
+            )
+            results.append(result)
+    else:
+        print(f"⚡ Running validation with {max_workers} parallel workers")
+        train_tensors = (X_train, y_train)
+        val_tensors = (X_val, y_val)
+
+        futures = {}
+        results_buffer: Dict[int, Dict] = {}
+
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            for idx, model_name in enumerate(selected_models):
+                future = executor.submit(
+                    _validate_model_worker,
+                    model_name,
+                    args.batch_size,
+                    args.n_epochs,
+                    args.device,
+                    input_dim,
+                    output_dim,
+                    train_tensors,
+                    val_tensors,
+                )
+                futures[future] = (idx, model_name)
+
+            for future in as_completed(futures):
+                idx, model_name = futures[future]
+                try:
+                    result = future.result()
+                except Exception as exc:  # pragma: no cover - surfaced in CI logs
+                    print(f"❌ Validation failed for model '{model_name}': {exc}")
+                    raise
+
+                results_buffer[idx] = result
+
+        results = [results_buffer[i] for i in range(len(selected_models))]
 
     # Print summary
     print_summary_table(results)
@@ -669,6 +864,11 @@ def main():
         "output_dim": output_dim,
         "train_samples": len(train_dataset),
         "val_samples": len(val_dataset),
+        "available_models": available_models,
+        "selected_models": selected_models,
+        "shard_index": args.shard_index,
+        "num_shards": args.num_shards,
+        "shard_strategy": args.shard_strategy,
         "results": results
     }
 
