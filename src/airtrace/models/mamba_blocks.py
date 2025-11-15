@@ -149,7 +149,7 @@ class SelectiveSSM(nn.Module):
         Returns:
             Output [B, L, D]
         """
-        B_batch, L, D = u.shape
+        batch_size, seq_len, hidden_dim = u.shape
         N = A.shape[1]
 
         # Discretize A and B using zero-order hold (ZOH)
@@ -161,10 +161,10 @@ class SelectiveSSM(nn.Module):
 
         # Compute state h iteratively (recurrent form)
         # h[t] = deltaA[t] * h[t-1] + deltaB[t] * u[t]
-        h = torch.zeros(B_batch, D, N, device=u.device, dtype=u.dtype)
+        h = torch.zeros(batch_size, hidden_dim, N, device=u.device, dtype=u.dtype)
         ys = []
 
-        for t in range(L):
+        for t in range(seq_len):
             # u[:, t] is [B, D], unsqueeze to [B, D, 1] for broadcasting with [B, D, N]
             h = deltaA[:, t] * h + deltaB[:, t] * u[:, t].unsqueeze(-1)  # [B, D, N]
             y = (h @ C[:, t].unsqueeze(-1)).squeeze(-1)  # [B, D]
