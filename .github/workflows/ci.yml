@@ -113,16 +113,47 @@ jobs:
           mkdir -p data/interim
           mkdir -p data/processed
 
+      - name: Determine models to validate
+        id: detect-models
+        run: |
+          # Fetch the base branch for comparison
+          git fetch origin main --depth=50 || true
+
+          # Determine which models need validation based on changes
+          # This script detects changed model configs/implementations and always includes baseline models
+          MODELS=$(python src/scripts/get_models_to_validate.py --base-ref origin/main)
+
+          echo "models=$MODELS" >> $GITHUB_OUTPUT
+
+          if [ -n "$MODELS" ]; then
+            echo "📝 Selective validation: $MODELS"
+          else
+            echo "📝 Full validation (no model filter)"
+          fi
+
       - name: Run model validation
         id: validate
         run: |
-          python src/scripts/validate_models.py \
-            --output model_validation_results.json \
-            --seed 42 \
-            --n-flights 20 \
-            --n-epochs 10 \
-            --batch-size 32 \
-            --device cpu
+          if [ -n "${{ steps.detect-models.outputs.models }}" ]; then
+            echo "Running selective model validation..."
+            python src/scripts/validate_models.py \
+              --output model_validation_results.json \
+              --seed 42 \
+              --n-flights 20 \
+              --n-epochs 10 \
+              --batch-size 32 \
+              --device cpu \
+              --models ${{ steps.detect-models.outputs.models }}
+          else
+            echo "Running full model validation..."
+            python src/scripts/validate_models.py \
+              --output model_validation_results.json \
+              --seed 42 \
+              --n-flights 20 \
+              --n-epochs 10 \
+              --batch-size 32 \
+              --device cpu
+          fi
 
       - name: Upload validation results
         uses: actions/upload-artifact@v4

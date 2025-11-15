@@ -585,6 +585,13 @@ def main():
         default="cpu",
         help="Device to use (cpu or cuda)"
     )
+    parser.add_argument(
+        "--models",
+        type=str,
+        nargs="*",
+        default=None,
+        help="Specific models to validate (if not provided, validates all models)"
+    )
 
     args = parser.parse_args()
 
@@ -634,8 +641,23 @@ def main():
     )
 
     # Get all registered models
-    model_names = list_models()
-    print(f"\n📦 Found {len(model_names)} registered models: {model_names}")
+    all_models = list_models()
+
+    # Filter models if specified
+    if args.models:
+        model_names = [m for m in args.models if m in all_models]
+        invalid_models = [m for m in args.models if m not in all_models]
+        if invalid_models:
+            print(f"⚠️  Warning: Unknown models will be skipped: {invalid_models}")
+        if not model_names:
+            print(f"❌ Error: No valid models specified")
+            print(f"Available models: {all_models}")
+            sys.exit(1)
+        print(f"\n📦 Validating {len(model_names)} specified models: {model_names}")
+        print(f"   (Total registered: {len(all_models)})")
+    else:
+        model_names = all_models
+        print(f"\n📦 Found {len(model_names)} registered models: {model_names}")
 
     # Validate each model
     input_dim = X_train.shape[-1]
