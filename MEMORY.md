@@ -214,11 +214,22 @@ model:
 
 ---
 
+### 2025-11-15 Models/Moirai: Default `pred_len` must stay at 1 for CI
+
+**Discovered by**: gpt-5-codex session
+**Impact**: Model validation script, any user instantiating `MoiraiModel` without overrides
+
+The CI model validation script (`src/scripts/validate_models.py`) builds every registered model with an empty parameter dictionary and feeds single-step targets (`pred_horizon=1`). When `MoiraiModel` defaulted to `pred_len=24`, `nn.MSELoss` silently broadcast the one-step targets during training but the metric computation (`compute_all_metrics(preds.flatten(), targets.flatten())`) crashed with `operands could not be broadcast together with shapes (...)`. Keeping the model's default `pred_len` at 1 prevents this mismatch while configs (e.g., `configs/model/moirai.yaml`) can still set larger horizons explicitly for experiments.
+
+**Example/Code Reference**: `src/airtrace/models/moirai.py`, `src/scripts/validate_models.py`
+
+---
+
 ## Current State
 
-**Total learnings**: 5
-**Last updated**: 2025-11-14
-**Most active areas**: Project structure, configuration system, data pipeline, synthetic data, baseline models
+**Total learnings**: 6
+**Last updated**: 2025-11-15
+**Most active areas**: Project structure, configuration system, data pipeline, synthetic data, baseline models, model validation
 
 ---
 
