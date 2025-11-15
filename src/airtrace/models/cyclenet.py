@@ -275,6 +275,9 @@ class CycleNetModel(ARBaseModel):
             "activation": activation
         }
 
+        # Flag to ensure we only run data-driven cycle initialisation once.
+        self._cycles_initialized: bool = False
+
         # Projection layer if output_dim != input_dim
         if self.needs_projection:
             # Project from input channels to output channels
@@ -309,6 +312,50 @@ class CycleNetModel(ARBaseModel):
             # Move to same device as model
             self.backbone = self.backbone.to(self.learnable_cycles.cycles.device)
 
+    def _maybe_initialize_cycles(self, x: torch.Tensor) -> None:
+        """Warm start the learnable cycles using the current batch.
+
+        CycleNet relies on the learnable recurrent cycles to explain the
+        periodic component of the signal. When these parameters start at zero
+        the residual backbone (especially the MLP variant) can fit the entire
+        signal, leaving the cycles near zero and residuals large. To encourage
+        the intended decomposition we initialise the cycle parameters from the
+        first batch by averaging values that correspond to the same cycle index.
+
+        Args:
+            x: Input tensor of shape ``[B, T_in, D_in]``.
+        """
+
+        if self._cycles_initialized:
+            return
+
+        B, T_in, D_in = x.shape
+        device = x.device
+
+        with torch.no_grad():
+            indices = torch.arange(T_in, device=device) % self.period_len
+            cycle_sums = torch.zeros(
+                self.period_len,
+                D_in,
+                device=device,
+                dtype=x.dtype,
+            )
+            counts = torch.zeros(self.period_len, device=device, dtype=x.dtype)
+
+            expanded_indices = indices.unsqueeze(0).expand(B, -1)
+            ones = torch.ones(T_in, device=device, dtype=x.dtype)
+
+            for batch_idx in range(B):
+                cycle_sums.index_add_(0, expanded_indices[batch_idx], x[batch_idx])
+                counts.index_add_(0, expanded_indices[batch_idx], ones)
+
+            counts = counts.clamp_min(1.0).unsqueeze(-1)
+            init_cycles = cycle_sums / counts
+
+            self.learnable_cycles.cycles.data.copy_(init_cycles)
+
+        self._cycles_initialized = True
+
     def forward(
         self,
         x: torch.Tensor,
@@ -329,6 +376,9 @@ class CycleNetModel(ARBaseModel):
 
         # Initialize backbone on first forward pass
         self._init_backbone_if_needed(T_in)
+
+        # Warm start the cycles so residuals capture non-periodic behaviour.
+        self._maybe_initialize_cycles(x)
 
         # Step 1: Get cycle values for input sequence
         # Offset = 0 for input (starts at position 0 in cycle)
