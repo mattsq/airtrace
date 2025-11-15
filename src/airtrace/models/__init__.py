@@ -18,6 +18,7 @@ from .baselines import (
     ZeroModel,
 )
 from .gru_ar import GRUARModel
+from .itransformer import iTransformerModel
 from .lstm_ar import LSTMARModel
 from .patchtst import PatchTSTModel
 from .registry import build_model, list_models, register
@@ -38,6 +39,7 @@ __all__ = [
     "TCNModel",
     "TransformerModel",
     "PatchTSTModel",
+    "iTransformerModel",
     # Baseline models
     "PersistenceModel",
     "MovingAverageModel",

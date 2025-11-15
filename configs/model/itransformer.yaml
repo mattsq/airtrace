@@ -1,0 +1,12 @@
+# @package _global_
+
+model:
+  name: itransformer
+  params:
+    d_model: 512         # Model dimension (embedding size)
+    nhead: 8             # Number of attention heads (must divide d_model)
+    num_layers: 3        # Number of transformer encoder layers
+    dim_feedforward: 2048 # Dimension of feedforward network
+    dropout: 0.1         # Dropout probability
+    activation: "gelu"   # Activation function (relu, gelu)
+    use_norm: true       # Whether to use layer normalization

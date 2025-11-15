@@ -9,6 +9,7 @@ from airtrace.models import (
     GRUARModel,
     GRUSeq2SeqModel,
     HoltLinearTrendModel,
+    iTransformerModel,
     LinearARModel,
     LinearTrendModel,
     LSTMARModel,
@@ -1205,4 +1206,236 @@ def test_patchtst_model_repr():
     assert "patch_len=16" in model_repr
     assert "stride=8" in model_repr
     assert "d_model=128" in model_repr
+    assert "num_params" in model_repr
+
+
+# ============================================================================
+# iTransformer Model Tests
+# ============================================================================
+
+
+def test_itransformer_model_forward(batch):
+    """Test iTransformer model forward pass."""
+    model = iTransformerModel(
+        input_dim=5,
+        output_dim=3,
+        seq_len=32,
+        pred_len=1,
+        d_model=64,
+        nhead=4,
+        num_layers=2
+    )
+
+    output = model(batch)
+
+    assert "preds" in output
+    assert "extras" in output
+    assert output["preds"].shape == (4, 1, 3)  # [B, pred_len, D_out]
+    assert "encoder_output" in output["extras"]
+    assert "variate_tokens" in output["extras"]
+
+
+def test_itransformer_model_variate_embedding():
+    """Test that variate embedding works correctly."""
+    model = iTransformerModel(
+        input_dim=3,
+        output_dim=3,
+        seq_len=32,
+        pred_len=1,
+        d_model=64,
+        nhead=4,
+        num_layers=2
+    )
+
+    x = torch.randn(2, 32, 3)
+    output = model(x)
+
+    # Check that variate tokens have correct shape
+    variate_tokens = output["extras"]["variate_tokens"]
+    assert variate_tokens.shape == (2, 3, 64)  # [B, D_in, d_model]
+
+
+def test_itransformer_model_multi_step_prediction():
+    """Test iTransformer with multi-step prediction."""
+    model = iTransformerModel(
+        input_dim=5,
+        output_dim=3,
+        seq_len=32,
+        pred_len=10,
+        d_model=64,
+        nhead=4,
+        num_layers=2
+    )
+
+    x = torch.randn(2, 32, 5)
+    output = model(x)
+
+    assert output["preds"].shape == (2, 10, 3)  # [B, pred_len, D_out]
+
+
+def test_itransformer_model_same_input_output_dims():
+    """Test iTransformer when input_dim == output_dim."""
+    model = iTransformerModel(
+        input_dim=5,
+        output_dim=5,
+        seq_len=32,
+        pred_len=1,
+        d_model=64,
+        nhead=4
+    )
+
+    x = torch.randn(2, 32, 5)
+    output = model(x)
+
+    assert output["preds"].shape == (2, 1, 5)
+
+
+def test_itransformer_model_different_input_output_dims():
+    """Test iTransformer when input_dim != output_dim."""
+    model = iTransformerModel(
+        input_dim=8,
+        output_dim=3,
+        seq_len=32,
+        pred_len=1,
+        d_model=64,
+        nhead=4
+    )
+
+    x = torch.randn(2, 32, 8)
+    output = model(x)
+
+    assert output["preds"].shape == (2, 1, 3)
+
+
+def test_itransformer_model_seq_len_validation():
+    """Test that seq_len mismatch raises error."""
+    model = iTransformerModel(
+        input_dim=5,
+        output_dim=3,
+        seq_len=32,
+        pred_len=1,
+        d_model=64,
+        nhead=4
+    )
+
+    # Input with wrong sequence length
+    x = torch.randn(2, 16, 5)  # seq_len=16, but model expects 32
+
+    with pytest.raises(ValueError, match="Input sequence length"):
+        model(x)
+
+
+def test_itransformer_model_gradient_flow():
+    """Test that gradients flow through iTransformer model."""
+    model = iTransformerModel(
+        input_dim=5,
+        output_dim=3,
+        seq_len=32,
+        pred_len=1,
+        d_model=32,
+        nhead=4,
+        num_layers=2
+    )
+    x = torch.randn(2, 32, 5, requires_grad=True)
+
+    output = model(x)
+    preds = output["preds"]
+
+    # Compute dummy loss
+    loss = preds.mean()
+    loss.backward()
+
+    # Check that parameters have gradients
+    for param in model.parameters():
+        if param.requires_grad:
+            assert param.grad is not None
+
+
+def test_itransformer_model_num_params():
+    """Test parameter counting for iTransformer."""
+    model = iTransformerModel(
+        input_dim=5,
+        output_dim=3,
+        seq_len=64,
+        pred_len=1,
+        d_model=128,
+        nhead=8,
+        num_layers=3
+    )
+
+    num_params = model.get_num_params()
+    assert num_params > 0
+    print(f"iTransformer model has {num_params:,} parameters")
+
+
+def test_itransformer_model_different_activations():
+    """Test iTransformer with different activation functions."""
+    for activation in ["relu", "gelu"]:
+        model = iTransformerModel(
+            input_dim=5,
+            output_dim=3,
+            seq_len=32,
+            pred_len=1,
+            d_model=32,
+            nhead=4,
+            activation=activation
+        )
+        x = torch.randn(2, 32, 5)
+        output = model(x)
+        assert output["preds"].shape == (2, 1, 3)
+
+
+def test_itransformer_model_with_without_norm():
+    """Test iTransformer with and without layer normalization."""
+    for use_norm in [True, False]:
+        model = iTransformerModel(
+            input_dim=5,
+            output_dim=3,
+            seq_len=32,
+            pred_len=1,
+            d_model=32,
+            nhead=4,
+            use_norm=use_norm
+        )
+        x = torch.randn(2, 32, 5)
+        output = model(x)
+        assert output["preds"].shape == (2, 1, 3)
+
+
+def test_itransformer_model_no_nan():
+    """Test that iTransformer doesn't produce NaN values."""
+    model = iTransformerModel(
+        input_dim=5,
+        output_dim=3,
+        seq_len=32,
+        pred_len=1,
+        d_model=32,
+        nhead=4,
+        num_layers=2
+    )
+    x = torch.randn(2, 32, 5)
+
+    output = model(x)
+
+    assert not torch.isnan(output["preds"]).any()
+    assert not torch.isinf(output["preds"]).any()
+
+
+def test_itransformer_model_repr():
+    """Test iTransformer model string representation."""
+    model = iTransformerModel(
+        input_dim=5,
+        output_dim=3,
+        seq_len=64,
+        pred_len=1,
+        d_model=256,
+        num_layers=4
+    )
+
+    model_repr = repr(model)
+    assert "iTransformerModel" in model_repr
+    assert "seq_len=64" in model_repr
+    assert "pred_len=1" in model_repr
+    assert "d_model=256" in model_repr
+    assert "num_layers=4" in model_repr
     assert "num_params" in model_repr
