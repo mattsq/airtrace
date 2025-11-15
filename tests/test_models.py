@@ -21,6 +21,7 @@ from airtrace.models import (
     PatchTSTModel,
     PersistenceModel,
     PolynomialTrendModel,
+    SARIMAModel,
     SeasonalNaiveModel,
     TCNModel,
     ThetaModel,
@@ -196,6 +197,51 @@ def test_var_model_projection(batch):
     output = model(batch)
 
     assert output["preds"].shape == (4, 1, 3)
+
+
+def test_sarima_model_forward():
+    """SARIMA baseline should produce forecasts via statsmodels."""
+
+    t = torch.arange(0, 24, dtype=torch.float32)
+    seasonal = torch.sin(t / 3.0)
+    trend = 0.05 * t
+
+    series = torch.stack([seasonal + trend, seasonal * 0.5], dim=1)
+    batch = torch.stack([series, series * 1.1 + 0.2], dim=0)
+
+    model = SARIMAModel(
+        input_dim=2,
+        output_dim=2,
+        order=(1, 0, 1),
+        seasonal_order=(0, 0, 0, 0),
+        maxiter=20,
+    )
+
+    output = model(batch)
+
+    assert output["preds"].shape == (2, 1, 2)
+    assert output["extras"]["success_mask"].all()
+    assert output["extras"]["num_failures"].item() == 0
+
+
+def test_sarima_model_projection():
+    """SARIMA baseline should handle input/output dimension mismatch."""
+
+    t = torch.arange(0, 18, dtype=torch.float32)
+    base_series = torch.stack([torch.sin(t / 4.0), torch.cos(t / 6.0)], dim=1)
+    batch = base_series.unsqueeze(0)
+
+    model = SARIMAModel(
+        input_dim=2,
+        output_dim=1,
+        order=(1, 0, 0),
+        seasonal_order=(0, 0, 0, 0),
+        maxiter=15,
+    )
+
+    output = model(batch)
+
+    assert output["preds"].shape == (1, 1, 1)
 
 
 def test_var_model_insufficient_history():
