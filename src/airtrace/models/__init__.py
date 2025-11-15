@@ -18,6 +18,7 @@ from .baselines import (
     VARModel,
     ZeroModel,
 )
+from .cyclenet import CycleNetModel
 from .gru_ar import GRUARModel
 from .itransformer import iTransformerModel
 from .lstm_ar import LSTMARModel
@@ -43,6 +44,7 @@ __all__ = [
     "PatchTSTModel",
     "iTransformerModel",
     "TimeMixerModel",
+    "CycleNetModel",
     # Baseline models
     "PersistenceModel",
     "MovingAverageModel",

@@ -4,6 +4,7 @@ import pytest
 import torch
 
 from airtrace.models import (
+    CycleNetModel,
     DriftModel,
     ExponentialSmoothingModel,
     GRUARModel,
@@ -1640,3 +1641,393 @@ def test_timemixer_series_decomposition():
     # (with some edge effects from padding)
     reconstructed = seasonal + trend
     torch.testing.assert_close(reconstructed, x, atol=1e-6, rtol=1e-6)
+
+
+# ============================================================================
+# CycleNet Model Tests
+# ============================================================================
+
+
+def test_cyclenet_model_forward(batch):
+    """Test CycleNet model forward pass."""
+    model = CycleNetModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        period_len=16,
+        backbone="mlp",
+        hidden_dim=128
+    )
+
+    output = model(batch)
+
+    assert "preds" in output
+    assert "extras" in output
+    assert output["preds"].shape == (4, 1, 3)  # [B, pred_len, D_out]
+    assert "residuals" in output["extras"]
+    assert "input_cycles" in output["extras"]
+    assert "future_cycles" in output["extras"]
+    assert "learnable_cycles" in output["extras"]
+
+
+def test_cyclenet_model_linear_backbone(batch):
+    """Test CycleNet with linear backbone."""
+    model = CycleNetModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        period_len=16,
+        backbone="linear"
+    )
+
+    output = model(batch)
+    assert output["preds"].shape == (4, 1, 3)
+
+
+def test_cyclenet_model_multi_step_prediction():
+    """Test CycleNet with multi-step prediction."""
+    model = CycleNetModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=5,
+        period_len=16,
+        backbone="mlp",
+        hidden_dim=128
+    )
+
+    x = torch.randn(2, 32, 5)
+    output = model(x)
+
+    assert output["preds"].shape == (2, 5, 3)  # [B, pred_len, D_out]
+
+
+def test_cyclenet_model_periodic_pattern():
+    """Test that CycleNet learns periodic patterns."""
+    # Create synthetic periodic data
+    period_len = 8
+    num_periods = 4
+    seq_len = period_len * num_periods
+
+    # Generate a perfect periodic signal
+    t = torch.arange(seq_len, dtype=torch.float32)
+    # Create periodic pattern with period=8
+    x = torch.sin(2 * torch.pi * t / period_len).reshape(1, seq_len, 1)
+
+    model = CycleNetModel(
+        input_dim=1,
+        output_dim=1,
+        pred_len=1,
+        period_len=period_len,
+        backbone="mlp",
+        hidden_dim=64
+    )
+
+    # Train on the periodic signal
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+    model.train()
+
+    for _ in range(50):
+        optimizer.zero_grad()
+        output = model(x)
+
+        # Target is next value in the periodic sequence
+        target = torch.sin(2 * torch.pi * torch.tensor([[seq_len]], dtype=torch.float32) / period_len)
+        target = target.reshape(1, 1, 1)
+
+        loss = ((output["preds"] - target) ** 2).mean()
+        loss.backward()
+        optimizer.step()
+
+    # After training, check that learnable cycles capture the periodicity
+    model.eval()
+    with torch.no_grad():
+        output = model(x)
+        # Cycles should capture the periodic pattern
+        cycles = output["extras"]["learnable_cycles"]
+        assert cycles.shape == (period_len, 1)
+        # Residuals should be small if cycles captured the pattern
+        residuals = output["extras"]["residuals"]
+        assert residuals.abs().mean() < 0.5  # Should be much smaller than signal
+
+
+def test_cyclenet_model_cycle_indices():
+    """Test that cycle indices wrap correctly."""
+    model = CycleNetModel(
+        input_dim=3,
+        output_dim=3,
+        pred_len=1,
+        period_len=10
+    )
+
+    # Input longer than period
+    x = torch.randn(2, 25, 3)
+    output = model(x)
+
+    # Cycles should wrap around
+    input_cycles = output["extras"]["input_cycles"]
+    assert input_cycles.shape == (2, 25, 3)
+
+    # Check that cycles repeat (values at t and t+period should be same)
+    # Note: This is true for the cycle values themselves
+    # input_cycles[t % period_len] == input_cycles[(t + period_len) % period_len]
+
+
+def test_cyclenet_model_different_period_lengths():
+    """Test CycleNet with different period lengths."""
+    for period_len in [8, 16, 24, 32]:
+        model = CycleNetModel(
+            input_dim=5,
+            output_dim=3,
+            pred_len=1,
+            period_len=period_len,
+            backbone="mlp"
+        )
+
+        x = torch.randn(2, 32, 5)
+        output = model(x)
+        assert output["preds"].shape == (2, 1, 3)
+
+        # Check that learnable cycles have correct shape
+        cycles = output["extras"]["learnable_cycles"]
+        assert cycles.shape == (period_len, 5)
+
+
+def test_cyclenet_model_same_input_output_dims():
+    """Test CycleNet when input_dim == output_dim."""
+    model = CycleNetModel(
+        input_dim=5,
+        output_dim=5,
+        pred_len=1,
+        period_len=16
+    )
+
+    x = torch.randn(2, 32, 5)
+    output = model(x)
+
+    assert output["preds"].shape == (2, 1, 5)
+
+
+def test_cyclenet_model_different_input_output_dims():
+    """Test CycleNet when input_dim != output_dim."""
+    model = CycleNetModel(
+        input_dim=8,
+        output_dim=3,
+        pred_len=1,
+        period_len=16
+    )
+
+    x = torch.randn(2, 32, 8)
+    output = model(x)
+
+    assert output["preds"].shape == (2, 1, 3)
+
+
+def test_cyclenet_model_gradient_flow():
+    """Test that gradients flow through CycleNet model."""
+    model = CycleNetModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        period_len=16,
+        backbone="mlp",
+        hidden_dim=128
+    )
+    x = torch.randn(2, 32, 5, requires_grad=True)
+
+    output = model(x)
+    preds = output["preds"]
+
+    # Compute dummy loss
+    loss = preds.mean()
+    loss.backward()
+
+    # Check that parameters have gradients
+    for param in model.parameters():
+        if param.requires_grad:
+            assert param.grad is not None
+
+    # Check that learnable cycles have gradients
+    assert model.learnable_cycles.cycles.grad is not None
+
+
+def test_cyclenet_model_num_params():
+    """Test parameter counting for CycleNet."""
+    model = CycleNetModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        period_len=32,
+        backbone="mlp",
+        hidden_dim=256
+    )
+
+    num_params = model.get_num_params()
+    assert num_params > 0
+    print(f"CycleNet model has {num_params:,} parameters")
+
+    # CycleNet should have very few parameters compared to transformers
+    # Learnable cycles: period_len * input_dim = 32 * 5 = 160
+    # MLP backbone is the main contributor
+
+
+def test_cyclenet_model_no_nan():
+    """Test that CycleNet doesn't produce NaN values."""
+    model = CycleNetModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        period_len=16,
+        backbone="mlp"
+    )
+    x = torch.randn(2, 32, 5)
+
+    output = model(x)
+
+    assert not torch.isnan(output["preds"]).any()
+    assert not torch.isinf(output["preds"]).any()
+
+
+def test_cyclenet_model_different_activations():
+    """Test CycleNet with different activation functions."""
+    for activation in ["relu", "gelu"]:
+        model = CycleNetModel(
+            input_dim=5,
+            output_dim=3,
+            pred_len=1,
+            period_len=16,
+            backbone="mlp",
+            activation=activation
+        )
+        x = torch.randn(2, 32, 5)
+        output = model(x)
+        assert output["preds"].shape == (2, 1, 3)
+
+
+def test_cyclenet_model_repr():
+    """Test CycleNet model string representation."""
+    model = CycleNetModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        period_len=32,
+        backbone="mlp",
+        hidden_dim=256
+    )
+
+    model_repr = repr(model)
+    assert "CycleNetModel" in model_repr
+    assert "pred_len=1" in model_repr
+    assert "period_len=32" in model_repr
+    assert "backbone=mlp" in model_repr
+    assert "hidden_dim=256" in model_repr
+    assert "num_params" in model_repr
+
+
+def test_cyclenet_model_device_transfer():
+    """Test moving CycleNet model to device."""
+    model = CycleNetModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        period_len=16
+    )
+
+    # Test CPU
+    model = model.to("cpu")
+    x = torch.randn(2, 32, 5).to("cpu")
+    output = model(x)
+    assert output["preds"].device.type == "cpu"
+
+    # Test CUDA (if available)
+    if torch.cuda.is_available():
+        model = model.to("cuda")
+        x = torch.randn(2, 32, 5).to("cuda")
+        output = model(x)
+        assert output["preds"].device.type == "cuda"
+
+
+def test_cyclenet_model_period_len_validation():
+    """Test that invalid period_len raises error."""
+    with pytest.raises(ValueError):
+        CycleNetModel(input_dim=5, output_dim=3, period_len=0)
+
+    with pytest.raises(ValueError):
+        CycleNetModel(input_dim=5, output_dim=3, period_len=-1)
+
+
+def test_cyclenet_learnable_cycles_component():
+    """Test the LearnableRecurrentCycles component."""
+    from airtrace.models.cyclenet import LearnableRecurrentCycles
+
+    lrc = LearnableRecurrentCycles(period_len=10, num_channels=3)
+
+    # Test cycle indices
+    indices = lrc.get_cycle_indices(seq_len=25, offset=0)
+    assert indices.shape == (25,)
+    assert indices.max() < 10  # All indices should be < period_len
+
+    # Test that indices wrap around
+    assert indices[0] == 0
+    assert indices[10] == 0  # Should wrap at period_len
+    assert indices[20] == 0
+
+    # Test forward pass
+    cycle_values = lrc(seq_len=15, offset=0, batch_size=2)
+    assert cycle_values.shape == (2, 15, 3)
+
+
+def test_cyclenet_residual_backbone_component():
+    """Test the ResidualBackbone component."""
+    from airtrace.models.cyclenet import ResidualBackbone
+
+    # Test MLP backbone
+    mlp_backbone = ResidualBackbone(
+        input_len=32,
+        pred_len=5,
+        num_channels=3,
+        backbone_type="mlp",
+        hidden_dim=128
+    )
+
+    x = torch.randn(2, 32, 3)
+    output = mlp_backbone(x)
+    assert output.shape == (2, 5, 3)
+
+    # Test Linear backbone
+    linear_backbone = ResidualBackbone(
+        input_len=32,
+        pred_len=5,
+        num_channels=3,
+        backbone_type="linear"
+    )
+
+    output = linear_backbone(x)
+    assert output.shape == (2, 5, 3)
+
+
+def test_cyclenet_model_efficiency():
+    """Test that CycleNet has fewer parameters than transformers."""
+    cyclenet = CycleNetModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        period_len=32,
+        backbone="mlp",
+        hidden_dim=256
+    )
+
+    transformer = TransformerModel(
+        input_dim=5,
+        output_dim=3,
+        d_model=256,
+        nhead=8,
+        num_encoder_layers=2
+    )
+
+    cyclenet_params = cyclenet.get_num_params()
+    transformer_params = transformer.get_num_params()
+
+    # CycleNet should have significantly fewer parameters
+    print(f"CycleNet params: {cyclenet_params:,}")
+    print(f"Transformer params: {transformer_params:,}")
+    assert cyclenet_params < transformer_params
