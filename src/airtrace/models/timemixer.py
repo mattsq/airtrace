@@ -150,27 +150,27 @@ class MultiScaleSeasonMixing(nn.Module):
 
         # Bottom-up mixing: fine to coarse
         # Start from finest scale, progressively mix upward
-        out = seasonal_scales[0]  # [B, D, T_finest]
-
         for i in range(self.down_sampling_layers):
             # Mix current scale information
             # Permute to [B, T_i, D] for linear layer
             curr_scale = seasonal_scales[i].permute(0, 2, 1)
             mixed = self.mixing_layers[i](curr_scale)  # [B, T_i, D]
 
-            # Add to next (coarser) scale via upsampling
+            # Add to next (coarser) scale via downsampling
             if i < self.down_sampling_layers - 1:
                 next_scale = seasonal_scales[i + 1].permute(0, 2, 1)  # [B, T_next, D]
-                # Upsample mixed to match next scale
-                mixed_up = F.interpolate(
+                # Downsample mixed to match next scale
+                mixed_down = F.interpolate(
                     mixed.permute(0, 2, 1),
                     size=next_scale.shape[1],
                     mode='linear',
                     align_corners=False
                 ).permute(0, 2, 1)
-                out = next_scale + mixed_up
-                out = out.permute(0, 2, 1)  # Back to [B, D, T]
-                seasonal_scales[i + 1] = out
+                # Update next scale with residual
+                seasonal_scales[i + 1] = (next_scale + mixed_down).permute(0, 2, 1)
+            else:
+                # Last scale - update with mixed output
+                seasonal_scales[i] = mixed.permute(0, 2, 1)
 
         # Return finest scale with mixed information
         # Upsample final coarsest scale back to original resolution
@@ -252,28 +252,28 @@ class MultiScaleTrendMixing(nn.Module):
 
         # Top-down mixing: coarse to fine
         # Start from coarsest scale, progressively refine downward
-        out = trend_scales[-1]  # [B, D, T_coarsest]
-
         for i in range(self.down_sampling_layers - 1, -1, -1):
             # Mix current scale
             curr_scale = trend_scales[i].permute(0, 2, 1)  # [B, T_i, D]
             mixed = self.mixing_layers[i](curr_scale)  # [B, T_i, D]
 
             if i > 0:
-                # Downsample to next (coarser) scale
-                mixed_down = F.interpolate(
+                # Upsample to next (finer) scale and add as residual
+                prev_scale = trend_scales[i - 1].permute(0, 2, 1)  # [B, T_prev, D]
+                mixed_up = F.interpolate(
                     mixed.permute(0, 2, 1),
-                    size=trend_scales[i - 1].shape[2],
+                    size=prev_scale.shape[1],
                     mode='linear',
                     align_corners=False
-                )
-                # Add residual
-                out = trend_scales[i - 1] + mixed_down
+                ).permute(0, 2, 1)
+                # Update previous (finer) scale with residual
+                trend_scales[i - 1] = (prev_scale + mixed_up).permute(0, 2, 1)
             else:
-                # Finest scale - this is our output
-                out = mixed.permute(0, 2, 1)
+                # Finest scale - update with mixed output
+                trend_scales[i] = mixed.permute(0, 2, 1)
 
-        return out.permute(0, 2, 1)  # [B, T, D]
+        # Return finest scale with all trend information
+        return trend_scales[0].permute(0, 2, 1)  # [B, T, D]
 
 
 class PastDecomposableMixing(nn.Module):
