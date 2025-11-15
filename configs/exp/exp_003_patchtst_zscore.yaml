@@ -1,0 +1,9 @@
+defaults:
+  - override /data: qantas_737
+  - override /model: patchtst
+  - override /transforms: zscore_diff
+  - override /task: one_step
+  - override /train: default
+
+exp_name: "patchtst_zscore_one_step"
+seed: 123

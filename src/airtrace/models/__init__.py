@@ -19,6 +19,7 @@ from .baselines import (
 )
 from .gru_ar import GRUARModel
 from .lstm_ar import LSTMARModel
+from .patchtst import PatchTSTModel
 from .registry import build_model, list_models, register
 from .seq2seq import GRUSeq2SeqModel, LSTMSeq2SeqModel
 from .tcn import TCNModel
@@ -36,6 +37,7 @@ __all__ = [
     "LSTMSeq2SeqModel",
     "TCNModel",
     "TransformerModel",
+    "PatchTSTModel",
     # Baseline models
     "PersistenceModel",
     "MovingAverageModel",
