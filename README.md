@@ -165,6 +165,7 @@ AirTrace includes 20 registered models spanning from simple baselines to sophist
 | Model Name | Class | Description |
 |------------|-------|-------------|
 | `transformer` | `TransformerModel` | Transformer with causal self-attention and positional encoding |
+| `patchtst` | `PatchTSTModel` | PatchTST - channel-independent patch time series transformer with efficient patching mechanism (ICLR 2023) |
 
 ### Convolutional Models
 

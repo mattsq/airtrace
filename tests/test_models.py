@@ -17,6 +17,7 @@ from airtrace.models import (
     MedianModel,
     MLPARModel,
     MovingAverageModel,
+    PatchTSTModel,
     PersistenceModel,
     PolynomialTrendModel,
     SeasonalNaiveModel,
@@ -136,6 +137,7 @@ def test_model_gradient_flow():
     (GRUARModel, {"hidden_size": 32, "num_layers": 1}),
     (TCNModel, {"num_channels": [32, 32], "kernel_size": 3}),
     (TransformerModel, {"d_model": 32, "nhead": 4, "num_encoder_layers": 1}),
+    (PatchTSTModel, {"patch_len": 8, "stride": 4, "d_model": 32, "nhead": 4, "num_layers": 2}),
 ])
 def test_model_output_shape(model_class, kwargs):
     """Test output shapes for different models."""
@@ -1029,3 +1031,178 @@ def test_new_models_no_nan(model_class, kwargs):
 
     assert not torch.isnan(output["preds"]).any()
     assert not torch.isinf(output["preds"]).any()
+
+
+# ============================================================================
+# PatchTST Model Tests
+# ============================================================================
+
+
+def test_patchtst_model_forward(batch):
+    """Test PatchTST model forward pass."""
+    model = PatchTSTModel(
+        input_dim=5,
+        output_dim=3,
+        patch_len=8,
+        stride=4,
+        d_model=64,
+        nhead=4,
+        num_layers=2
+    )
+
+    output = model(batch)
+
+    assert "preds" in output
+    assert "extras" in output
+    assert output["preds"].shape == (4, 1, 3)  # [B, 1, D_out]
+    assert "num_patches" in output["extras"]
+    assert "channel_representations" in output["extras"]
+
+
+def test_patchtst_model_patching():
+    """Test that patching works correctly."""
+    model = PatchTSTModel(
+        input_dim=3,
+        output_dim=2,
+        patch_len=8,
+        stride=4,
+        d_model=32,
+        nhead=4
+    )
+
+    # Input of length 32 with patch_len=8, stride=4
+    # Should produce (32 - 8) // 4 + 1 = 7 patches
+    x = torch.randn(2, 32, 3)
+    output = model(x)
+
+    assert output["preds"].shape == (2, 1, 2)
+    assert output["extras"]["num_patches"] == 7
+    assert output["extras"]["patch_len"] == 8
+
+
+def test_patchtst_model_different_patch_configs():
+    """Test PatchTST with different patch configurations."""
+    # Non-overlapping patches (stride = patch_len)
+    model1 = PatchTSTModel(
+        input_dim=5,
+        output_dim=3,
+        patch_len=16,
+        stride=16,
+        d_model=32,
+        nhead=4
+    )
+    x = torch.randn(2, 64, 5)
+    output1 = model1(x)
+    # (64 - 16) // 16 + 1 = 4 patches
+    assert output1["extras"]["num_patches"] == 4
+
+    # Overlapping patches
+    model2 = PatchTSTModel(
+        input_dim=5,
+        output_dim=3,
+        patch_len=16,
+        stride=8,
+        d_model=32,
+        nhead=4
+    )
+    output2 = model2(x)
+    # (64 - 16) // 8 + 1 = 7 patches
+    assert output2["extras"]["num_patches"] == 7
+
+
+def test_patchtst_model_gradient_flow():
+    """Test that gradients flow through PatchTST model."""
+    model = PatchTSTModel(
+        input_dim=5,
+        output_dim=3,
+        patch_len=8,
+        stride=4,
+        d_model=32,
+        nhead=4,
+        num_layers=2
+    )
+    x = torch.randn(2, 32, 5, requires_grad=True)
+
+    output = model(x)
+    preds = output["preds"]
+
+    # Compute dummy loss
+    loss = preds.mean()
+    loss.backward()
+
+    # Check that parameters have gradients
+    for param in model.parameters():
+        if param.requires_grad:
+            assert param.grad is not None
+
+
+def test_patchtst_model_num_params():
+    """Test parameter counting for PatchTST."""
+    model = PatchTSTModel(
+        input_dim=5,
+        output_dim=3,
+        patch_len=16,
+        stride=8,
+        d_model=64,
+        nhead=4,
+        num_layers=2
+    )
+
+    num_params = model.get_num_params()
+    assert num_params > 0
+    print(f"PatchTST model has {num_params:,} parameters")
+
+
+def test_patchtst_model_channel_independence():
+    """Test that channels are processed independently."""
+    model = PatchTSTModel(
+        input_dim=3,
+        output_dim=3,
+        patch_len=8,
+        stride=4,
+        d_model=32,
+        nhead=4,
+        num_layers=1
+    )
+
+    x = torch.randn(2, 32, 3)
+    output = model(x)
+
+    # Check that channel representations are extracted
+    channel_repr = output["extras"]["channel_representations"]
+    assert channel_repr.shape == (2, 3, 32)  # [B, D_in, d_model]
+
+
+def test_patchtst_model_different_activations():
+    """Test PatchTST with different activation functions."""
+    for activation in ["relu", "gelu"]:
+        model = PatchTSTModel(
+            input_dim=5,
+            output_dim=3,
+            patch_len=8,
+            stride=4,
+            d_model=32,
+            nhead=4,
+            activation=activation
+        )
+        x = torch.randn(2, 32, 5)
+        output = model(x)
+        assert output["preds"].shape == (2, 1, 3)
+
+
+def test_patchtst_model_repr():
+    """Test PatchTST model string representation."""
+    model = PatchTSTModel(
+        input_dim=5,
+        output_dim=3,
+        patch_len=16,
+        stride=8,
+        d_model=128
+    )
+
+    model_repr = repr(model)
+    assert "PatchTSTModel" in model_repr
+    assert "patch_len=16" in model_repr
+    assert "stride=8" in model_repr
+    assert "d_model=128" in model_repr
+    assert "num_params" in model_repr
