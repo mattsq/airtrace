@@ -122,13 +122,13 @@ class MultiScaleSeasonMixing(nn.Module):
         ])
 
         # Mixing layers for each scale (bottom-up)
-        # Each layer takes info from current scale and mixes with coarser scale
+        # Need down_sampling_layers + 1 layers for all scales including coarsest
         self.mixing_layers = nn.ModuleList([
             nn.Sequential(
                 nn.Linear(d_model, d_model),
                 nn.GELU(),
                 nn.Dropout(dropout)
-            ) for _ in range(down_sampling_layers)
+            ) for _ in range(down_sampling_layers + 1)
         ])
 
     def forward(self, seasonal_init: torch.Tensor) -> torch.Tensor:
@@ -149,15 +149,15 @@ class MultiScaleSeasonMixing(nn.Module):
             seasonal_scales.append(down_conv(seasonal_scales[-1]))
 
         # Bottom-up mixing: fine to coarse
-        # Start from finest scale, progressively mix upward
-        for i in range(self.down_sampling_layers):
+        # Mix all scales, with finer scales contributing to coarser ones
+        for i in range(self.down_sampling_layers + 1):
             # Mix current scale information
             # Permute to [B, T_i, D] for linear layer
             curr_scale = seasonal_scales[i].permute(0, 2, 1)
             mixed = self.mixing_layers[i](curr_scale)  # [B, T_i, D]
 
-            # Add to next (coarser) scale via downsampling
-            if i < self.down_sampling_layers - 1:
+            # Add to next (coarser) scale via downsampling (if not at coarsest)
+            if i < self.down_sampling_layers:
                 next_scale = seasonal_scales[i + 1].permute(0, 2, 1)  # [B, T_next, D]
                 # Downsample mixed to match next scale
                 mixed_down = F.interpolate(
@@ -169,10 +169,10 @@ class MultiScaleSeasonMixing(nn.Module):
                 # Update next scale with residual
                 seasonal_scales[i + 1] = (next_scale + mixed_down).permute(0, 2, 1)
             else:
-                # Last scale - update with mixed output
+                # Coarsest scale - update with mixed output
                 seasonal_scales[i] = mixed.permute(0, 2, 1)
 
-        # Return finest scale with mixed information
+        # Return coarsest scale with all aggregated information
         # Upsample final coarsest scale back to original resolution
         out = F.interpolate(
             seasonal_scales[-1],
@@ -225,12 +225,13 @@ class MultiScaleTrendMixing(nn.Module):
         ])
 
         # Mixing layers for each scale (top-down)
+        # Need down_sampling_layers + 1 layers for all scales including finest
         self.mixing_layers = nn.ModuleList([
             nn.Sequential(
                 nn.Linear(d_model, d_model),
                 nn.GELU(),
                 nn.Dropout(dropout)
-            ) for _ in range(down_sampling_layers)
+            ) for _ in range(down_sampling_layers + 1)
         ])
 
     def forward(self, trend_init: torch.Tensor) -> torch.Tensor:
@@ -251,8 +252,8 @@ class MultiScaleTrendMixing(nn.Module):
             trend_scales.append(down_conv(trend_scales[-1]))
 
         # Top-down mixing: coarse to fine
-        # Start from coarsest scale, progressively refine downward
-        for i in range(self.down_sampling_layers - 1, -1, -1):
+        # Mix all scales, with coarser scales contributing to finer ones
+        for i in range(self.down_sampling_layers, -1, -1):
             # Mix current scale
             curr_scale = trend_scales[i].permute(0, 2, 1)  # [B, T_i, D]
             mixed = self.mixing_layers[i](curr_scale)  # [B, T_i, D]
