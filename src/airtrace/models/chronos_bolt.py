@@ -214,7 +214,7 @@ class ChronosBoltModel(ARBaseModel):
         self,
         input_dim: int,
         output_dim: int,
-        pred_len: int = 32,
+        pred_len: int = 1,
         embed_dim: int = 256,
         patch_size: int = 16,
         patch_stride: Optional[int] = None,
