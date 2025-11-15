@@ -1,0 +1,23 @@
+# @package _global_
+
+model:
+  name: chronos_bolt
+  params:
+    pred_len: 64                 # Forecast horizon
+    embed_dim: 512               # Token dimension used by Chronos-Bolt base
+    patch_size: 32               # Patch length along time axis
+    patch_stride: 16             # Patch stride (controls context overlap)
+    num_blocks: 8                # Number of gated conv-attention blocks
+    num_heads: 8                 # Attention heads
+    dilation_growth: 2           # Growth factor for dilated depth-wise convs
+    conv_kernel_size: 5          # Kernel for local mixing
+    dropout: 0.1                 # Dropout applied throughout the backbone
+    ff_expansion: 4              # Expansion factor inside feed-forward MLP
+    max_positions: 4096          # Maximum number of positional embeddings
+    lora_rank: 8                 # Rank for optional LoRA adapters (0 disables)
+    lora_alpha: 16.0             # Scaling factor for LoRA updates
+    lora_dropout: 0.05           # Dropout applied before LoRA adapters
+    freeze_backbone: false       # Freeze pretrained backbone when fine-tuning
+    train_head: true             # Keep forecast head trainable when freezing
+    pretrained_checkpoint: null  # Path to downloaded Chronos-Bolt weights
+    strict_checkpoint: false     # Require checkpoint to match exactly

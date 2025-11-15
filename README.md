@@ -168,6 +168,12 @@ AirTrace includes 23 registered models spanning from simple baselines to sophist
 | `patchtst` | `PatchTSTModel` | PatchTST - channel-independent patch time series transformer with efficient patching mechanism (ICLR 2023) |
 | `itransformer` | `iTransformerModel` | iTransformer - inverted transformer treating variates as tokens for superior multivariate correlation modeling (ICLR 2024 Spotlight) |
 
+### Foundation Models
+
+| Model Name | Class | Description |
+|------------|-------|-------------|
+| `chronos_bolt` | `ChronosBoltModel` | Chronos-Bolt inspired pretrained foundation model with gated conv-attention blocks, tokenizer-free patching, and optional LoRA adapters for efficient fine-tuning |
+
 ### Convolutional Models
 
 | Model Name | Class | Description |
