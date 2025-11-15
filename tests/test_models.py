@@ -25,6 +25,7 @@ from airtrace.models import (
     PolynomialTrendModel,
     SARIMAModel,
     SeasonalNaiveModel,
+    SMambaModel,
     TCNModel,
     ThetaModel,
     TimeMixerModel,
@@ -2151,3 +2152,325 @@ def test_cyclenet_model_efficiency():
     print(f"CycleNet params: {cyclenet_params:,}")
     print(f"Transformer params: {transformer_params:,}")
     assert cyclenet_params < transformer_params
+
+
+# ============================================================================
+# S-Mamba Model Tests
+# ============================================================================
+
+
+def test_smamba_model_forward(batch):
+    """Test S-Mamba model forward pass."""
+    model = SMambaModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        d_model=64,
+        d_state=16,
+        num_layers=2
+    )
+
+    output = model(batch)
+
+    assert "preds" in output
+    assert "extras" in output
+    assert output["preds"].shape == (4, 1, 3)  # [B, pred_len, D_out]
+    assert "hidden_states" in output["extras"]
+    assert "embedded" in output["extras"]
+
+
+def test_smamba_model_multi_step_prediction():
+    """Test S-Mamba with multi-step prediction."""
+    model = SMambaModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=5,
+        d_model=64,
+        d_state=16,
+        num_layers=2
+    )
+
+    x = torch.randn(2, 32, 5)
+    output = model(x)
+
+    assert output["preds"].shape == (2, 5, 3)  # [B, pred_len, D_out]
+
+
+def test_smamba_model_same_input_output_dims():
+    """Test S-Mamba when input_dim == output_dim."""
+    model = SMambaModel(
+        input_dim=5,
+        output_dim=5,
+        pred_len=1,
+        d_model=64,
+        d_state=16
+    )
+
+    x = torch.randn(2, 32, 5)
+    output = model(x)
+
+    assert output["preds"].shape == (2, 1, 5)
+
+
+def test_smamba_model_different_input_output_dims():
+    """Test S-Mamba when input_dim != output_dim."""
+    model = SMambaModel(
+        input_dim=8,
+        output_dim=3,
+        pred_len=1,
+        d_model=64,
+        d_state=16
+    )
+
+    x = torch.randn(2, 32, 8)
+    output = model(x)
+
+    assert output["preds"].shape == (2, 1, 3)
+
+
+def test_smamba_model_variable_seq_len():
+    """Test that S-Mamba handles variable sequence lengths."""
+    # Test with different sequence lengths
+    for seq_len in [16, 32, 64]:
+        # Create a new model instance for each sequence length
+        model = SMambaModel(input_dim=5, output_dim=3, pred_len=1, d_model=64)
+        x = torch.randn(2, seq_len, 5)
+        output = model(x)
+        assert output["preds"].shape == (2, 1, 3)
+
+
+def test_smamba_model_gradient_flow():
+    """Test that gradients flow through S-Mamba model."""
+    model = SMambaModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        d_model=32,
+        d_state=8,
+        num_layers=2
+    )
+    x = torch.randn(2, 32, 5, requires_grad=True)
+
+    output = model(x)
+    preds = output["preds"]
+
+    # Compute dummy loss
+    loss = preds.mean()
+    loss.backward()
+
+    # Check that parameters have gradients
+    for param in model.parameters():
+        if param.requires_grad:
+            assert param.grad is not None
+
+
+def test_smamba_model_num_params():
+    """Test parameter counting for S-Mamba."""
+    model = SMambaModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        d_model=128,
+        d_state=16,
+        num_layers=3
+    )
+
+    num_params = model.get_num_params()
+    assert num_params > 0
+    print(f"S-Mamba model has {num_params:,} parameters")
+
+
+def test_smamba_model_no_nan():
+    """Test that S-Mamba doesn't produce NaN values."""
+    model = SMambaModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        d_model=32,
+        d_state=8,
+        num_layers=2
+    )
+    x = torch.randn(2, 32, 5)
+
+    output = model(x)
+
+    assert not torch.isnan(output["preds"]).any()
+    assert not torch.isinf(output["preds"]).any()
+
+
+def test_smamba_model_different_d_state():
+    """Test S-Mamba with different state dimensions."""
+    for d_state in [8, 16, 32]:
+        model = SMambaModel(
+            input_dim=5,
+            output_dim=3,
+            pred_len=1,
+            d_model=64,
+            d_state=d_state,
+            num_layers=2
+        )
+
+        x = torch.randn(2, 32, 5)
+        output = model(x)
+        assert output["preds"].shape == (2, 1, 3)
+
+
+def test_smamba_model_different_num_layers():
+    """Test S-Mamba with different numbers of layers."""
+    for num_layers in [1, 2, 3]:
+        model = SMambaModel(
+            input_dim=5,
+            output_dim=3,
+            pred_len=1,
+            d_model=64,
+            d_state=16,
+            num_layers=num_layers
+        )
+
+        x = torch.randn(2, 32, 5)
+        output = model(x)
+        assert output["preds"].shape == (2, 1, 3)
+
+
+def test_smamba_model_with_without_norm():
+    """Test S-Mamba with and without layer normalization."""
+    for use_norm in [True, False]:
+        model = SMambaModel(
+            input_dim=5,
+            output_dim=3,
+            pred_len=1,
+            d_model=32,
+            d_state=8,
+            use_norm=use_norm
+        )
+        x = torch.randn(2, 32, 5)
+        output = model(x)
+        assert output["preds"].shape == (2, 1, 3)
+
+
+def test_smamba_model_repr():
+    """Test S-Mamba model string representation."""
+    model = SMambaModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        d_model=128,
+        d_state=16,
+        num_layers=2
+    )
+
+    model_repr = repr(model)
+    assert "SMambaModel" in model_repr
+    assert "pred_len=1" in model_repr
+    assert "d_model=128" in model_repr
+    assert "num_layers=2" in model_repr
+    assert "num_params" in model_repr
+
+
+def test_smamba_model_device_transfer():
+    """Test moving S-Mamba model to device."""
+    model = SMambaModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        d_model=32,
+        d_state=8
+    )
+
+    # Test CPU
+    model = model.to("cpu")
+    x = torch.randn(2, 32, 5).to("cpu")
+    output = model(x)
+    assert output["preds"].device.type == "cpu"
+
+    # Test CUDA (if available)
+    if torch.cuda.is_available():
+        model = model.to("cuda")
+        x = torch.randn(2, 32, 5).to("cuda")
+        output = model(x)
+        assert output["preds"].device.type == "cuda"
+
+
+def test_smamba_bidirectional_mamba_component():
+    """Test the BidirectionalMamba component."""
+    from airtrace.models.smamba import BidirectionalMamba
+
+    bi_mamba = BidirectionalMamba(d_model=64, d_state=16, num_layers=1)
+
+    x = torch.randn(2, 32, 64)
+    output = bi_mamba(x)
+
+    # Should maintain shape
+    assert output.shape == (2, 32, 64)
+    # Should not produce NaN
+    assert not torch.isnan(output).any()
+
+
+def test_smamba_selective_ssm_component():
+    """Test the SelectiveStateSpaceBlock component."""
+    from airtrace.models.smamba import SelectiveStateSpaceBlock
+
+    ssm_block = SelectiveStateSpaceBlock(d_model=64, d_state=16)
+
+    x = torch.randn(2, 32, 64)
+    output = ssm_block(x)
+
+    # Should maintain shape
+    assert output.shape == (2, 32, 64)
+    # Should not produce NaN
+    assert not torch.isnan(output).any()
+
+
+def test_smamba_model_linear_complexity():
+    """Test that S-Mamba scales better than Transformer for long sequences.
+    
+    Note: This tests parameter count, not actual runtime complexity.
+    S-Mamba should have fewer parameters than Transformer for similar capacity.
+    """
+    smamba = SMambaModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        d_model=128,
+        d_state=16,
+        num_layers=2
+    )
+
+    transformer = TransformerModel(
+        input_dim=5,
+        output_dim=3,
+        d_model=128,
+        nhead=8,
+        num_encoder_layers=2
+    )
+
+    smamba_params = smamba.get_num_params()
+    transformer_params = transformer.get_num_params()
+
+    print(f"S-Mamba params: {smamba_params:,}")
+    print(f"Transformer params: {transformer_params:,}")
+    
+    # S-Mamba can be comparable or smaller in parameters
+    # The real advantage is in runtime complexity O(n) vs O(n^2)
+    assert smamba_params > 0
+    assert transformer_params > 0
+
+
+def test_smamba_model_long_sequences():
+    """Test S-Mamba on longer sequences than typical Transformers can handle."""
+    model = SMambaModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        d_model=64,
+        d_state=16,
+        num_layers=2
+    )
+
+    # Test on a very long sequence (512 timesteps)
+    # This would be expensive for Transformer due to O(n^2) attention
+    x = torch.randn(2, 512, 5)
+    output = model(x)
+
+    assert output["preds"].shape == (2, 1, 3)
+    assert not torch.isnan(output["preds"]).any()

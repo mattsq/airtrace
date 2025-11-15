@@ -144,7 +144,7 @@ See [Synthetic Data Documentation](docs/synthetic_data.md) for details.
 
 ## Model Registry
 
-AirTrace includes 23 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
+AirTrace includes 24 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
 
 ### Recurrent Neural Networks
 
@@ -167,6 +167,12 @@ AirTrace includes 23 registered models spanning from simple baselines to sophist
 | `transformer` | `TransformerModel` | Transformer with causal self-attention and positional encoding |
 | `patchtst` | `PatchTSTModel` | PatchTST - channel-independent patch time series transformer with efficient patching mechanism (ICLR 2023) |
 | `itransformer` | `iTransformerModel` | iTransformer - inverted transformer treating variates as tokens for superior multivariate correlation modeling (ICLR 2024 Spotlight) |
+
+### State Space Models
+
+| Model Name | Class | Description |
+|------------|-------|-------------|
+| `smamba` | `SMambaModel` | S-Mamba - selective state space model with linear O(n) complexity for efficient long-sequence modeling (arXiv 2024) |
 
 ### Convolutional Models
 

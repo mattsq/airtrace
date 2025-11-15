@@ -1,0 +1,12 @@
+# @package _global_
+
+model:
+  name: smamba
+  params:
+    d_model: 128         # Model dimension (hidden size)
+    d_state: 16          # State space dimension (N in SSM literature)
+    d_conv: 4            # Convolution kernel size for local context
+    expand_factor: 2     # Expansion factor for SSM inner dimension
+    num_layers: 2        # Number of bidirectional Mamba layers
+    dropout: 0.1         # Dropout probability
+    use_norm: true       # Whether to use layer normalization

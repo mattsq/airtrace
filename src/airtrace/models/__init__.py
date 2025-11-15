@@ -27,6 +27,7 @@ from .lstm_ar import LSTMARModel
 from .patchtst import PatchTSTModel
 from .registry import build_model, list_models, register
 from .seq2seq import GRUSeq2SeqModel, LSTMSeq2SeqModel
+from .smamba import SMambaModel
 from .tcn import TCNModel
 from .timemixer import TimeMixerModel
 from .transformer import TransformerModel
@@ -47,6 +48,7 @@ __all__ = [
     "iTransformerModel",
     "TimeMixerModel",
     "CycleNetModel",
+    "SMambaModel",
     # Baseline models
     "PersistenceModel",
     "MovingAverageModel",
