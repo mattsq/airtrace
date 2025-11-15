@@ -1,0 +1,8 @@
+# @package _global_
+
+model:
+  name: var
+  params:
+    order: 2
+    fit_intercept: true
+    regularization: 0.001

@@ -15,6 +15,7 @@ from .baselines import (
     PolynomialTrendModel,
     SeasonalNaiveModel,
     ThetaModel,
+    VARModel,
     ZeroModel,
 )
 from .gru_ar import GRUARModel
@@ -53,6 +54,7 @@ __all__ = [
     "PolynomialTrendModel",
     "HoltLinearTrendModel",
     "ThetaModel",
+    "VARModel",
     "LinearARModel",
     "MLPARModel",
 ]

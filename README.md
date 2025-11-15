@@ -192,6 +192,7 @@ Simple, interpretable baselines for comparison. Most are non-trainable (paramete
 | `holt_linear_trend` | `HoltLinearTrendModel` | No | Holt's double exponential smoothing (level + trend) |
 | `seasonal_naive` | `SeasonalNaiveModel` | No | Predicts value from previous seasonal cycle |
 | `theta` | `ThetaModel` | No | Theta method (M3 competition winner) |
+| `var` | `VARModel` | No | Vector autoregression capturing cross-sensor dynamics with ridge-stabilised fit |
 | `linear_ar` | `LinearARModel` | **Yes** | Simple trainable linear autoregressive model |
 | `mlp_ar` | `MLPARModel` | **Yes** | Multi-layer perceptron treating window as static features |
 
