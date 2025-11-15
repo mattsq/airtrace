@@ -144,7 +144,7 @@ See [Synthetic Data Documentation](docs/synthetic_data.md) for details.
 
 ## Model Registry
 
-AirTrace includes 22 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
+AirTrace includes 23 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
 
 ### Recurrent Neural Networks
 
@@ -199,6 +199,7 @@ Simple, interpretable baselines for comparison. Most are non-trainable (paramete
 | `holt_linear_trend` | `HoltLinearTrendModel` | No | Holt's double exponential smoothing (level + trend) |
 | `seasonal_naive` | `SeasonalNaiveModel` | No | Predicts value from previous seasonal cycle |
 | `theta` | `ThetaModel` | No | Theta method (M3 competition winner) |
+| `sarima` | `SARIMAModel` | No | Seasonal ARIMA leveraging differencing and moving-average residuals via statsmodels |
 | `var` | `VARModel` | No | Vector autoregression capturing cross-sensor dynamics with ridge-stabilised fit |
 | `linear_ar` | `LinearARModel` | **Yes** | Simple trainable linear autoregressive model |
 | `mlp_ar` | `MLPARModel` | **Yes** | Multi-layer perceptron treating window as static features |

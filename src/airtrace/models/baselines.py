@@ -3,10 +3,14 @@
 These models provide simple baselines to compare more sophisticated models against.
 """
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
+import warnings
+
+import numpy as np
 import torch
 import torch.nn as nn
+from statsmodels.tsa.statespace.sarimax import SARIMAX
 
 from .base import ARBaseModel
 from .registry import register
@@ -890,6 +894,124 @@ class ThetaModel(ARBaseModel):
                 "theta2_forecast": theta2_forecast,
             },
         }
+
+
+@register("sarima")
+class SARIMAModel(ARBaseModel):
+    """Seasonal ARIMA baseline model using statsmodels."""
+
+    def __init__(
+        self,
+        input_dim: int,
+        output_dim: int,
+        order: Tuple[int, int, int] = (1, 1, 0),
+        seasonal_order: Tuple[int, int, int, int] = (0, 0, 0, 0),
+        trend: Optional[str] = None,
+        enforce_stationarity: bool = True,
+        enforce_invertibility: bool = True,
+        maxiter: int = 50,
+        measurement_error: bool = False,
+        **kwargs,
+    ) -> None:
+        """Initialise SARIMA model."""
+
+        if len(order) != 3:
+            raise ValueError("order must be a tuple of length 3")
+        if len(seasonal_order) != 4:
+            raise ValueError("seasonal_order must be a tuple of length 4")
+
+        super().__init__(input_dim, output_dim, **kwargs)
+
+        self.order = tuple(int(v) for v in order)
+        self.seasonal_order = tuple(int(v) for v in seasonal_order)
+        self.trend = trend
+        self.enforce_stationarity = enforce_stationarity
+        self.enforce_invertibility = enforce_invertibility
+        self.maxiter = maxiter
+        self.measurement_error = measurement_error
+
+        if input_dim != output_dim:
+            self.projection = nn.Linear(input_dim, output_dim, bias=False)
+        else:
+            self.projection = None
+
+    def _fit_and_forecast(self, series: np.ndarray) -> float:
+        """Fit SARIMAX to a 1D series and return one-step forecast."""
+
+        numeric_series = np.asarray(series, dtype=float)
+
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore")
+            model = SARIMAX(
+                numeric_series,
+                order=self.order,
+                seasonal_order=self.seasonal_order,
+                trend=self.trend,
+                enforce_stationarity=self.enforce_stationarity,
+                enforce_invertibility=self.enforce_invertibility,
+                measurement_error=self.measurement_error,
+            )
+            result = model.fit(disp=False, maxiter=self.maxiter)
+        forecast = result.forecast(steps=1)
+        return float(forecast[0])
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        context: Optional[torch.Tensor] = None,
+        **kwargs,
+    ) -> Dict[str, torch.Tensor]:
+        """Forward pass - fit SARIMA per feature and forecast next timestep."""
+
+        B, _, D_in = x.shape
+        preds = torch.zeros(B, D_in, dtype=torch.double)
+        success_mask = torch.zeros(B, D_in, dtype=torch.bool)
+        failure_mask = torch.zeros(B, D_in, dtype=torch.bool)
+        last_error: Optional[str] = None
+
+        series_np = x.detach().cpu().numpy()
+
+        for b in range(B):
+            for d in range(D_in):
+                target_series = series_np[b, :, d]
+                fallback = float(target_series[-1])
+
+                if np.isnan(target_series).all():
+                    preds[b, d] = fallback
+                    failure_mask[b, d] = True
+                    last_error = "all_nan_series"
+                    continue
+
+                try:
+                    preds[b, d] = self._fit_and_forecast(target_series)
+                    success_mask[b, d] = True
+                except Exception as exc:  # noqa: BLE001 - fallback to persistence
+                    preds[b, d] = fallback
+                    failure_mask[b, d] = True
+                    last_error = str(exc)
+
+        preds_tensor = preds.to(device=x.device, dtype=x.dtype)
+
+        if self.projection is not None:
+            preds_tensor = self.projection(preds_tensor)
+
+        preds_tensor = preds_tensor.unsqueeze(1)
+
+        extras: Dict[str, Union[torch.Tensor, str]] = {
+            "success_mask": success_mask.to(device=x.device),
+            "failure_mask": failure_mask.to(device=x.device),
+        }
+
+        extras["num_failures"] = torch.tensor(
+            failure_mask.sum().item(),
+            device=x.device,
+            dtype=torch.int64,
+        )
+
+        if last_error is not None:
+            extras["last_error"] = last_error
+
+        return {"preds": preds_tensor, "extras": extras}
 
 
 @register("var")

@@ -13,7 +13,7 @@ import json
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -218,12 +218,29 @@ def normalize_data(
     return X_train_norm, y_train_norm, X_val_norm, y_val_norm, mean, std
 
 
+def _iterate_batches(
+    loader: DataLoader,
+    max_batches: Optional[int] = None,
+):
+    """Yield batches from a data loader with an optional upper bound."""
+
+    if max_batches is None:
+        yield from loader
+        return
+
+    for batch_idx, batch in enumerate(loader):
+        if batch_idx >= max_batches:
+            break
+        yield batch
+
+
 def train_model(
     model: nn.Module,
     train_loader: DataLoader,
     n_epochs: int = 10,
     lr: float = 1e-3,
-    device: str = "cpu"
+    device: str = "cpu",
+    max_batches: Optional[int] = None,
 ) -> List[float]:
     """Train a model for a few epochs.
 
@@ -233,6 +250,7 @@ def train_model(
         n_epochs: Number of training epochs
         lr: Learning rate
         device: Device to train on
+        max_batches: Optional upper bound on number of batches to process
 
     Returns:
         List of training losses per epoch
@@ -246,35 +264,35 @@ def train_model(
 
     if n_trainable == 0:
         # Model has no trainable parameters (e.g., baseline models)
-        # Just compute and return losses without training
+        # Just compute and return losses without optimisation.
         print(f"  ⚠️  Model has no trainable parameters - skipping optimization")
         model.eval()
         criterion = nn.MSELoss()
-        losses = []
 
         with torch.no_grad():
-            for epoch in range(n_epochs):
-                epoch_loss = 0.0
-                n_batches = 0
+            epoch_loss = 0.0
+            n_batches = 0
 
-                for X_batch, y_batch in train_loader:
-                    X_batch = X_batch.to(device)
-                    y_batch = y_batch.to(device)
+            for X_batch, y_batch in _iterate_batches(train_loader, max_batches):
+                X_batch = X_batch.to(device)
+                y_batch = y_batch.to(device)
 
-                    output = model(X_batch)
-                    preds = output["preds"]
-                    loss = criterion(preds, y_batch)
+                output = model(X_batch)
+                preds = output["preds"]
+                loss = criterion(preds, y_batch)
 
-                    epoch_loss += loss.item()
-                    n_batches += 1
+                epoch_loss += loss.item()
+                n_batches += 1
 
-                avg_loss = epoch_loss / n_batches
-                losses.append(avg_loss)
+        if n_batches == 0:
+            return []
 
-                if (epoch + 1) % 5 == 0:
-                    print(f"  Epoch {epoch + 1}/{n_epochs}, Loss: {avg_loss:.6f}")
+        avg_loss = epoch_loss / n_batches
 
-        return losses
+        if n_epochs <= 0:
+            return []
+
+        return [avg_loss] * n_epochs
 
     # Normal training for models with parameters
     model.train()
@@ -288,7 +306,7 @@ def train_model(
         epoch_loss = 0.0
         n_batches = 0
 
-        for X_batch, y_batch in train_loader:
+        for X_batch, y_batch in _iterate_batches(train_loader, max_batches):
             X_batch = X_batch.to(device)
             y_batch = y_batch.to(device)
 
@@ -308,6 +326,9 @@ def train_model(
             epoch_loss += loss.item()
             n_batches += 1
 
+        if n_batches == 0:
+            break
+
         avg_loss = epoch_loss / n_batches
         losses.append(avg_loss)
 
@@ -320,7 +341,8 @@ def train_model(
 def evaluate_model(
     model: nn.Module,
     val_loader: DataLoader,
-    device: str = "cpu"
+    device: str = "cpu",
+    max_batches: Optional[int] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Evaluate model on validation data.
 
@@ -328,6 +350,7 @@ def evaluate_model(
         model: Trained model
         val_loader: Validation data loader
         device: Device to evaluate on
+        max_batches: Optional upper bound on number of batches to process
 
     Returns:
         Tuple of (predictions, targets) as numpy arrays
@@ -339,14 +362,18 @@ def evaluate_model(
     all_targets = []
 
     with torch.no_grad():
-        for X_batch, y_batch in val_loader:
+        for X_batch, y_batch in _iterate_batches(val_loader, max_batches):
             X_batch = X_batch.to(device)
+            y_batch = y_batch.to(device)
 
             output = model(X_batch)
             preds = output["preds"]
 
             all_preds.append(preds.cpu().numpy())
-            all_targets.append(y_batch.numpy())
+            all_targets.append(y_batch.cpu().numpy())
+
+    if not all_preds:
+        return np.empty((0, 0, 0)), np.empty((0, 0, 0))
 
     preds = np.concatenate(all_preds, axis=0)
     targets = np.concatenate(all_targets, axis=0)
@@ -417,12 +444,16 @@ def validate_single_model(
             print(f"🏋️  Training for {n_epochs} epochs...")
         else:
             print(f"📐 Baseline model (no training) - computing loss...")
+        max_batches = 1 if n_trainable == 0 else None
+        if max_batches is not None:
+            print(f"  ⏩ Using first {max_batches} batch for baseline evaluation")
         start_time = time.time()
         train_losses = train_model(
             model=model,
             train_loader=train_loader,
             n_epochs=n_epochs,
-            device=device
+            device=device,
+            max_batches=max_batches,
         )
         train_time = time.time() - start_time
 
@@ -431,7 +462,8 @@ def validate_single_model(
         preds, targets = evaluate_model(
             model=model,
             val_loader=val_loader,
-            device=device
+            device=device,
+            max_batches=max_batches,
         )
 
         # Compute metrics
@@ -451,7 +483,7 @@ def validate_single_model(
             "status": "success",
             "n_params": n_params,
             "train_time": train_time,
-            "final_train_loss": float(train_losses[-1]),
+            "final_train_loss": float(train_losses[-1]) if train_losses else float("nan"),
             "overall_metrics": {k: float(v) for k, v in overall_metrics.items()},
             "sensor_metrics": {
                 sensor: {k: float(v) for k, v in metrics.items()}
