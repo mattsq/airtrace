@@ -1,0 +1,14 @@
+model:
+  name: mamba2_ar
+  params:
+    pred_len: 24             # Prediction horizon (default stays 1 in class for CI safety)
+    embed_dim: 256           # Token embedding dimension
+    state_dim: 256           # Internal selective SSM state size
+    num_layers: 8            # Number of selective scan blocks
+    conv_kernel_size: 5      # Depthwise convolution kernel (must be odd)
+    chunk_size: 64           # Chunk length for selective scans
+    gating_temperature: 1.0  # Temperature applied to the sigmoid gate
+    dropout: 0.1             # Dropout rate for residual and feed-forward paths
+    ff_expansion: 2          # Expansion factor in the feed-forward network
+    bidirectional: true      # Enable bidirectional selective scans
+    adapter_kernel_size: 5   # Kernel size for the input adapter conv (must be odd)

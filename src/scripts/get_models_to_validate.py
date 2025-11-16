@@ -12,7 +12,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Set
+from typing import List, Sequence, Set
 
 
 # Baseline models that always run (fast, non-trainable models)
@@ -33,6 +33,19 @@ ALWAYS_RUN_BASELINES = {
 }
 
 
+def _git_stdout_lines(command: Sequence[str]) -> List[str]:
+    """Run a git command and split the stdout into individual lines."""
+
+    result = subprocess.run(
+        list(command),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    output = result.stdout.strip()
+    return [] if not output else output.split("\n")
+
+
 def get_changed_files(base_ref: str = "origin/main") -> Set[str]:
     """Get list of changed files compared to base branch.
 
@@ -42,42 +55,43 @@ def get_changed_files(base_ref: str = "origin/main") -> Set[str]:
     Returns:
         Set of changed file paths relative to repo root
     """
-    try:
-        # Get the merge base (common ancestor)
-        result = subprocess.run(
-            ["git", "merge-base", base_ref, "HEAD"],
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        merge_base = result.stdout.strip()
+    changed_files: Set[str] = set()
 
-        # Get changed files since merge base
-        result = subprocess.run(
-            ["git", "diff", "--name-only", merge_base, "HEAD"],
-            capture_output=True,
-            text=True,
-            check=True
+    try:
+        merge_base_lines = _git_stdout_lines(["git", "merge-base", base_ref, "HEAD"])
+        merge_base = merge_base_lines[0] if merge_base_lines else ""
+    except subprocess.CalledProcessError as exc:
+        print(
+            f"Warning: Unable to determine merge base against {base_ref}: {exc}",
+            file=sys.stderr,
         )
-        changed_files = set(result.stdout.strip().split("\n"))
+        print(
+            "Falling back to local diffs (working tree/index vs HEAD)",
+            file=sys.stderr,
+        )
+        merge_base = ""
+
+    try:
+        if merge_base:
+            diff_command = ["git", "diff", "--name-only", merge_base, "HEAD"]
+            changed_files.update(_git_stdout_lines(diff_command))
+        else:
+            # Fallback: include unstaged and staged changes
+            changed_files.update(_git_stdout_lines(["git", "diff", "--name-only"]))
+            changed_files.update(
+                _git_stdout_lines(["git", "diff", "--name-only", "--cached"])
+            )
 
         # Also include untracked files (new models)
-        result = subprocess.run(
-            ["git", "ls-files", "--others", "--exclude-standard"],
-            capture_output=True,
-            text=True,
-            check=True
+        changed_files.update(
+            _git_stdout_lines(["git", "ls-files", "--others", "--exclude-standard"])
         )
-        untracked = result.stdout.strip()
-        if untracked:
-            changed_files.update(untracked.split("\n"))
-
-        return {f for f in changed_files if f}
-
-    except subprocess.CalledProcessError as e:
-        print(f"Error getting changed files: {e}", file=sys.stderr)
-        print(f"Falling back to validating all models", file=sys.stderr)
+    except subprocess.CalledProcessError as exc:
+        print(f"Error getting changed files: {exc}", file=sys.stderr)
+        print("Falling back to validating all models", file=sys.stderr)
         return set()
+
+    return {f for f in changed_files if f}
 
 
 def extract_model_name_from_config(config_path: Path) -> str:
