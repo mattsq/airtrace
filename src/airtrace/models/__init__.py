@@ -29,6 +29,7 @@ from .lag_llama import LagLlamaModel
 from .lstm_ar import LSTMARModel
 from .mamba2 import Mamba2Model
 from .moderntcn import ModernTCNModel
+from .nonstationary_transformer import NonStationaryTransformerModel
 from .moirai import MoiraiModel
 from .patchtst import PatchTSTModel
 from .registry import build_model, list_models, register
@@ -53,6 +54,7 @@ __all__ = [
     "TransformerModel",
     "PatchTSTModel",
     "iTransformerModel",
+    "NonStationaryTransformerModel",
     "TimeMixerModel",
     "AutoformerModel",
     "CycleNetModel",
