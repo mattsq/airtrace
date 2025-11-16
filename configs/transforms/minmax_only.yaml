@@ -1,0 +1,8 @@
+# @package _global_
+
+transforms:
+  pipeline:
+    - name: minmax
+      feature_range: [0.0, 1.0]
+      per_sensor: true
+      clip: false

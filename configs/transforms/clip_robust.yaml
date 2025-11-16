@@ -1,0 +1,14 @@
+# @package _global_
+
+transforms:
+  pipeline:
+    - name: clip
+      method: percentile
+      lower: 1.0
+      upper: 99.0
+      per_sensor: true
+    - name: robust_scaler
+      per_sensor: true
+      quantile_range: [25.0, 75.0]
+      with_centering: true
+      with_scaling: true

@@ -1,0 +1,13 @@
+# @package _global_
+
+transforms:
+  pipeline:
+    # Log transform for flow/consumption sensors
+    - name: log
+      base: natural
+      per_sensor: true
+    # MinMax scaling to [0, 1]
+    - name: minmax
+      feature_range: [0.0, 1.0]
+      per_sensor: true
+      clip: false
