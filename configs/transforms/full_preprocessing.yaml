@@ -1,0 +1,33 @@
+# @package _global_
+
+transforms:
+  pipeline:
+    # 1. Handle missing values
+    - name: impute
+      method: forward
+      limit: 5
+    # 2. Remove extreme outliers
+    - name: clip
+      method: percentile
+      lower: 0.5
+      upper: 99.5
+      per_sensor: true
+    # 3. Smooth noise
+    - name: smooth
+      window_size: 3
+      method: uniform
+      mode: nearest
+    # 4. Remove trends
+    - name: detrend
+      method: linear
+      per_sensor: true
+    # 5. Standardize
+    - name: zscore
+      per_sensor: true
+      center: true
+      scale: true
+    # 6. Add temporal features
+    - name: temporal_features
+      use_time_idx: true
+      use_cyclic_time: true
+      use_flight_phase: false

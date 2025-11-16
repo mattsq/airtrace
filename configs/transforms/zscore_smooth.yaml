@@ -1,0 +1,12 @@
+# @package _global_
+
+transforms:
+  pipeline:
+    - name: smooth
+      window_size: 5
+      method: uniform
+      mode: nearest
+    - name: zscore
+      per_sensor: true
+      center: true
+      scale: true
