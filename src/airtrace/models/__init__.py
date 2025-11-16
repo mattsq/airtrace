@@ -1,5 +1,6 @@
 """Model implementations."""
 
+from .autoformer import AutoformerModel
 from .base import ARBaseModel
 from .baselines import (
     DriftModel,
@@ -21,13 +22,14 @@ from .baselines import (
     ZeroModel,
 )
 from .chronos_bolt import ChronosBoltModel
-from .dlinear import DLinearModel, NLinearModel
 from .cyclenet import CycleNetModel
+from .dlinear import DLinearModel, NLinearModel
 from .gru_ar import GRUARModel
 from .itransformer import iTransformerModel
 from .lag_llama import LagLlamaModel
 from .lstm_ar import LSTMARModel
 from .mamba2 import Mamba2Model
+from .moderntcn import ModernTCNModel
 from .moirai import MoiraiModel
 from .patchtst import PatchTSTModel
 from .registry import build_model, list_models, register
@@ -35,6 +37,7 @@ from .seq2seq import GRUSeq2SeqModel, LSTMSeq2SeqModel
 from .tcn import TCNModel
 from .timemixer import TimeMixerModel
 from .transformer import TransformerModel
+from .tft import TemporalFusionTransformer
 
 __all__ = [
     "ARBaseModel",
@@ -47,10 +50,12 @@ __all__ = [
     "GRUSeq2SeqModel",
     "LSTMSeq2SeqModel",
     "TCNModel",
+    "ModernTCNModel",
     "TransformerModel",
     "PatchTSTModel",
     "iTransformerModel",
     "TimeMixerModel",
+    "AutoformerModel",
     "CycleNetModel",
     "ChronosBoltModel",
     "MoiraiModel",
@@ -58,6 +63,7 @@ __all__ = [
     "LagLlamaModel",
     "DLinearModel",
     "NLinearModel",
+    "TemporalFusionTransformer",
     # Baseline models
     "PersistenceModel",
     "MovingAverageModel",
