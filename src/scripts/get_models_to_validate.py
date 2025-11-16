@@ -12,7 +12,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Set
+from typing import List, Optional, Set
 
 
 # Baseline models that always run (fast, non-trainable models)
@@ -33,50 +33,94 @@ ALWAYS_RUN_BASELINES = {
 }
 
 
+def _run_git_command(args: List[str]) -> subprocess.CompletedProcess:
+    """Execute a git command and return the completed process."""
+
+    return subprocess.run(
+        args,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+
+def _git_diff_names(base: str, head: str) -> Set[str]:
+    """Return the set of files changed between two git refs."""
+
+    result = _run_git_command(["git", "diff", "--name-only", base, head])
+    return {line for line in result.stdout.strip().split("\n") if line}
+
+
+def _get_commit_hash(ref: str) -> Optional[str]:
+    """Return the commit hash for a ref, if it exists."""
+
+    try:
+        result = _run_git_command(["git", "rev-parse", ref])
+    except subprocess.CalledProcessError:
+        return None
+    return result.stdout.strip() or None
+
+
+def _list_all_tracked_files() -> Set[str]:
+    """List every tracked file in the repository."""
+
+    try:
+        result = _run_git_command(["git", "ls-tree", "-r", "--name-only", "HEAD"])
+    except subprocess.CalledProcessError:
+        return set()
+    return {line for line in result.stdout.strip().split("\n") if line}
+
+
+def _get_untracked_files() -> Set[str]:
+    """Return untracked files that are not ignored."""
+
+    try:
+        result = _run_git_command(["git", "ls-files", "--others", "--exclude-standard"])
+    except subprocess.CalledProcessError:
+        return set()
+    untracked = result.stdout.strip()
+    if not untracked:
+        return set()
+    return {line for line in untracked.split("\n") if line}
+
+
 def get_changed_files(base_ref: str = "origin/main") -> Set[str]:
     """Get list of changed files compared to base branch.
 
-    Args:
-        base_ref: Base reference to compare against (e.g., 'origin/main')
-
-    Returns:
-        Set of changed file paths relative to repo root
+    When the base reference already points at ``HEAD`` (which happens on push
+    builds where the workflow compares the branch to itself), the direct diff
+    will be empty. In that case we fall back to comparing against the previous
+    commit so new files still trigger validation.
     """
+
     try:
-        # Get the merge base (common ancestor)
-        result = subprocess.run(
-            ["git", "merge-base", base_ref, "HEAD"],
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        merge_base = result.stdout.strip()
+        merge_base = _run_git_command(["git", "merge-base", base_ref, "HEAD"]).stdout.strip()
+        changed_files = _git_diff_names(merge_base, "HEAD")
 
-        # Get changed files since merge base
-        result = subprocess.run(
-            ["git", "diff", "--name-only", merge_base, "HEAD"],
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        changed_files = set(result.stdout.strip().split("\n"))
+        if not changed_files:
+            head_hash = _get_commit_hash("HEAD")
+            base_hash = _get_commit_hash(base_ref)
+            if head_hash and base_hash and head_hash == base_hash:
+                print(
+                    "Base ref matches HEAD; falling back to previous commit for diff",
+                    file=sys.stderr,
+                )
+                previous_commit = _get_commit_hash("HEAD^")
+                if previous_commit:
+                    changed_files = _git_diff_names(previous_commit, "HEAD")
+                else:
+                    print(
+                        "Repository has no parent commit; treating all tracked files as changed",
+                        file=sys.stderr,
+                    )
+                    changed_files = _list_all_tracked_files()
 
-        # Also include untracked files (new models)
-        result = subprocess.run(
-            ["git", "ls-files", "--others", "--exclude-standard"],
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        untracked = result.stdout.strip()
-        if untracked:
-            changed_files.update(untracked.split("\n"))
-
-        return {f for f in changed_files if f}
+        changed_files.update(_get_untracked_files())
+        return changed_files
 
     except subprocess.CalledProcessError as e:
         print(f"Error getting changed files: {e}", file=sys.stderr)
-        print(f"Falling back to validating all models", file=sys.stderr)
+        print("Falling back to validating all models", file=sys.stderr)
         return set()
 
 
