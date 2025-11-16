@@ -11,13 +11,31 @@ import torch.nn as nn
 
 from .base import ARBaseModel
 from .chronos_bolt import LoRALinear
-from .registry import register
+from airtrace.models.registry import register
 
 LOGGER = logging.getLogger(__name__)
 
 
 class ChunkedSelectiveScan(nn.Module):
-    """Simplified chunked selective state-space scan with bidirectional option."""
+    """Simplified chunked selective state-space scan with bidirectional option.
+
+    Processes sequences in chunks to improve memory efficiency for long contexts
+    (e.g., 100k+ tokens). Each chunk maintains a hidden state that carries forward
+    information across timesteps with learned decay rates.
+
+    The chunked approach allows:
+    - Linear memory scaling with sequence length
+    - Hardware-friendly parallelization within chunks
+    - Optional bidirectional fusion for better stability
+
+    Args:
+        state_dim: Dimension of the internal hidden state
+        chunk_length: Number of timesteps to process per chunk (larger = more memory,
+                     potentially better parallelization)
+        bidirectional: If True, run scan forward and backward, averaging outputs
+        dropout: Dropout probability applied to scan outputs
+        decay_init: Initial value for decay parameters before sigmoid (default 0.0 → 0.5 decay)
+    """
 
     def __init__(
         self,
@@ -25,6 +43,7 @@ class ChunkedSelectiveScan(nn.Module):
         chunk_length: int,
         bidirectional: bool,
         dropout: float,
+        decay_init: float = 0.0,
     ) -> None:
         super().__init__()
         if chunk_length <= 0:
@@ -33,8 +52,10 @@ class ChunkedSelectiveScan(nn.Module):
         self.chunk_length = chunk_length
         self.bidirectional = bidirectional
         self.dropout = nn.Dropout(dropout)
-        # Diagonal decay term parameterised to stay in (0, 1)
-        self.decay = nn.Parameter(torch.zeros(state_dim))
+        # Diagonal decay term parameterised to stay in (0, 1) via sigmoid
+        # Initialized to decay_init (default 0.0 gives decay=0.5 after sigmoid)
+        # Can add small random noise for diversity across dimensions
+        self.decay = nn.Parameter(torch.full((state_dim,), decay_init))
 
     def forward(self, inputs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """Run chunked selective scan.
@@ -57,9 +78,7 @@ class ChunkedSelectiveScan(nn.Module):
         bidir_states = 0.5 * (forward_states + backward_states)
         return self.dropout(bidir_states), final_state
 
-    def _scan_one_direction(
-        self, inputs: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    def _scan_one_direction(self, inputs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         B, T, S = inputs.shape
         states: List[torch.Tensor] = []
         state = torch.zeros(B, S, device=inputs.device, dtype=inputs.dtype)
@@ -75,7 +94,27 @@ class ChunkedSelectiveScan(nn.Module):
 
 
 class TemporalMamba2Block(nn.Module):
-    """Single Temporal Mamba-2 block mixing convolutions and selective scans."""
+    """Single Temporal Mamba-2 block mixing convolutions and selective scans.
+
+    Architecture:
+        1. Layer norm → depthwise conv (local mixing)
+        2. Gated projection + selective scan (global context)
+        3. Residual connection
+        4. Feed-forward network with residual
+
+    This combines local temporal patterns (conv) with long-range dependencies
+    (selective scan) in a parameter-efficient manner.
+
+    Args:
+        embed_dim: Token embedding dimension
+        state_dim: Internal state dimension for selective scan
+        conv_kernel_size: Kernel size for depthwise conv (must be odd)
+        chunk_length: Timesteps per scan chunk
+        bidirectional: Enable bidirectional scanning
+        dropout: Dropout probability
+        ff_expansion: Feed-forward hidden dimension multiplier
+        decay_init: Initial value for state decay parameters (default 0.0)
+    """
 
     def __init__(
         self,
@@ -86,6 +125,7 @@ class TemporalMamba2Block(nn.Module):
         bidirectional: bool,
         dropout: float,
         ff_expansion: int,
+        decay_init: float = 0.0,
     ) -> None:
         super().__init__()
         if conv_kernel_size % 2 == 0:
@@ -107,6 +147,7 @@ class TemporalMamba2Block(nn.Module):
             chunk_length=chunk_length,
             bidirectional=bidirectional,
             dropout=dropout,
+            decay_init=decay_init,
         )
         self.dropout = nn.Dropout(dropout)
         self.ff_norm = nn.LayerNorm(embed_dim)
@@ -118,6 +159,14 @@ class TemporalMamba2Block(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Forward pass through Mamba-2 block.
+
+        Args:
+            x: Input tokens [B, T, embed_dim]
+
+        Returns:
+            Tuple of (output tokens [B, T, embed_dim], final state [B, state_dim])
+        """
         residual = x
         y = self.pre_norm(x)
         conv_out = self.depthwise_conv(y.transpose(1, 2)).transpose(1, 2)
@@ -133,7 +182,40 @@ class TemporalMamba2Block(nn.Module):
 
 @register("mamba2")
 class Mamba2Model(ARBaseModel):
-    """Temporal Mamba-2 inspired model with chunked selective scan blocks."""
+    """Temporal Mamba-2 inspired model with chunked selective scan blocks.
+
+    A state-space model designed for long-context aircraft timeseries forecasting.
+    Combines selective state-space scans (Mamba-2 style) with local convolutions
+    for efficient processing of sequences up to 100k+ tokens.
+
+    Key features:
+    - Chunked selective scan for linear memory scaling
+    - Optional bidirectional scanning for stability
+    - LoRA adapters for parameter-efficient fine-tuning
+    - Pretrained checkpoint loading support
+
+    Args:
+        input_dim: Number of input sensor channels
+        output_dim: Number of output prediction channels
+        pred_len: Forecast horizon (number of timesteps to predict)
+        embed_dim: Token embedding dimension for the backbone
+        state_dim: Internal state dimension for selective scan
+        num_layers: Number of stacked Mamba-2 blocks
+        conv_kernel_size: Kernel size for local depthwise convolution (must be odd)
+        chunk_length: Timesteps per selective scan chunk (larger = more memory usage)
+        bidirectional_scan: If True, use bidirectional scan fusion
+        dropout: Dropout probability applied throughout the model
+        ff_expansion: Feed-forward network hidden dimension multiplier
+        decay_init: Initial value for state decay parameters before sigmoid (default 0.0 → 0.5)
+        adapter_rank: LoRA rank for lightweight fine-tuning (0 = disabled, typical: 4-16)
+        adapter_alpha: LoRA scaling factor (higher = stronger adaptation, typical: 8-32)
+        adapter_dropout: Dropout applied to LoRA adapters
+        freeze_backbone: If True, freeze all parameters except LoRA and optionally head
+        train_head: Keep prediction head trainable when freeze_backbone=True
+        pretrained_checkpoint: Optional path to pretrained .pt or .ckpt file
+        strict_checkpoint: If True, require exact parameter name match when loading checkpoint
+        **kwargs: Additional arguments passed to ARBaseModel
+    """
 
     def __init__(
         self,
@@ -148,6 +230,7 @@ class Mamba2Model(ARBaseModel):
         bidirectional_scan: bool = True,
         dropout: float = 0.1,
         ff_expansion: int = 4,
+        decay_init: float = 0.0,
         adapter_rank: int = 0,
         adapter_alpha: float = 16.0,
         adapter_dropout: float = 0.0,
@@ -158,12 +241,27 @@ class Mamba2Model(ARBaseModel):
         **kwargs: Dict,
     ) -> None:
         super().__init__(input_dim, output_dim, **kwargs)
+        # Comprehensive parameter validation
         if pred_len <= 0:
             raise ValueError("pred_len must be positive")
         if num_layers <= 0:
             raise ValueError("num_layers must be positive")
         if embed_dim <= 0 or state_dim <= 0:
             raise ValueError("embed_dim and state_dim must be positive")
+        if ff_expansion <= 0:
+            raise ValueError("ff_expansion must be positive")
+        if not 0.0 <= dropout <= 1.0:
+            raise ValueError(f"dropout must be in [0, 1], got {dropout}")
+        if not 0.0 <= adapter_dropout <= 1.0:
+            raise ValueError(f"adapter_dropout must be in [0, 1], got {adapter_dropout}")
+        if adapter_rank < 0:
+            raise ValueError(f"adapter_rank must be non-negative, got {adapter_rank}")
+        if adapter_alpha <= 0:
+            raise ValueError(f"adapter_alpha must be positive, got {adapter_alpha}")
+        if conv_kernel_size <= 0:
+            raise ValueError(f"conv_kernel_size must be positive, got {conv_kernel_size}")
+        if chunk_length <= 0:
+            raise ValueError(f"chunk_length must be positive, got {chunk_length}")
 
         self.pred_len = pred_len
         self.embed_dim = embed_dim
@@ -181,6 +279,7 @@ class Mamba2Model(ARBaseModel):
                     bidirectional=bidirectional_scan,
                     dropout=dropout,
                     ff_expansion=ff_expansion,
+                    decay_init=decay_init,
                 )
                 for _ in range(num_layers)
             ]
@@ -207,9 +306,7 @@ class Mamba2Model(ARBaseModel):
         state_dict = checkpoint.get("state_dict", checkpoint)
         missing, unexpected = self.load_state_dict(state_dict, strict=strict)
         if missing or unexpected:
-            LOGGER.warning(
-                "Loaded checkpoint with missing=%s unexpected=%s", missing, unexpected
-            )
+            LOGGER.warning("Loaded checkpoint with missing=%s unexpected=%s", missing, unexpected)
 
     def _apply_parameter_freeze(self) -> None:
         if not self.freeze_backbone:
@@ -229,14 +326,31 @@ class Mamba2Model(ARBaseModel):
         context: Optional[torch.Tensor] = None,
         **kwargs: Dict,
     ) -> Dict[str, torch.Tensor]:
-        del context, kwargs
+        """Forward pass through the Temporal Mamba-2 model.
+
+        Args:
+            x: Input tensor [B, T, D_in] where B is batch size, T is sequence length,
+               D_in is input dimension
+            context: Optional context tensor (currently unused - Mamba-2's selective scan
+                    inherently captures relevant context through its state mechanism)
+            **kwargs: Additional arguments (unused, for interface compatibility)
+
+        Returns:
+            Dictionary containing:
+                - preds: Predictions [B, pred_len, D_out]
+                - extras: Dict with 'selective_states' (list of final states per layer)
+                         and 'embeddings' (final token representations)
+        """
+        del context, kwargs  # Context unused: selective scan captures temporal dependencies
         tokens = self.input_proj(x)
         selective_states: List[torch.Tensor] = []
         for layer in self.layers:
             tokens, state = layer(tokens)
             selective_states.append(state)
         tokens = self.final_norm(tokens)
-        pooled = tokens.mean(dim=1)
+        # Use final selective state from last layer for prediction (better than mean pooling)
+        # This preserves the recency-weighted information captured by the state-space model
+        pooled = selective_states[-1]
         preds = self.head(pooled).view(-1, self.pred_len, self.output_dim)
         extras = {
             "selective_states": selective_states,

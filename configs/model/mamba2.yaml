@@ -3,19 +3,43 @@
 model:
   name: mamba2
   params:
-    pred_len: 64                 # Forecast horizon (override per experiment)
-    embed_dim: 512               # Token dimension for the selective scan backbone
-    state_dim: 256               # Internal state size of selective scan
-    num_layers: 8                # Number of stacked Mamba-2 blocks
-    conv_kernel_size: 5          # Local mixing kernel (must be odd)
-    chunk_length: 1024           # Steps processed per selective scan chunk
-    bidirectional_scan: true     # Use bidirectional scan fusion for better stability
-    dropout: 0.1                 # Dropout applied throughout the backbone
-    ff_expansion: 4              # Feed-forward expansion factor
-    adapter_rank: 8              # LoRA rank for lightweight fine-tuning (0 disables)
-    adapter_alpha: 16.0          # Scaling factor for LoRA adapters
-    adapter_dropout: 0.05        # Dropout applied before LoRA adapters
-    freeze_backbone: false       # Freeze backbone parameters when using adapters
-    train_head: true             # Keep prediction head trainable when freezing
-    pretrained_checkpoint: null  # Optional path to pretrained Mamba-2 weights
-    strict_checkpoint: false     # Require checkpoint exactness when loading
+    # Prediction configuration
+    pred_len: 64                 # Multi-step forecast horizon
+                                 # - Use 1 for anomaly detection / one-step-ahead
+                                 # - Use 16-64 for trajectory forecasting
+                                 # - Override per experiment based on task requirements
+
+    # Architecture dimensions
+    embed_dim: 512               # Token embedding dimension (larger = more capacity, more memory)
+    state_dim: 256               # Selective scan internal state dimension (typically 0.5x embed_dim)
+    num_layers: 8                # Number of stacked Mamba-2 blocks (more = deeper but slower)
+
+    # Local mixing (convolution)
+    conv_kernel_size: 5          # Depthwise conv kernel for local patterns (must be odd, typical: 3-7)
+
+    # Selective scan configuration
+    chunk_length: 1024           # Timesteps per scan chunk (larger = more memory but better parallelization)
+                                 # - Adjust based on available GPU memory
+                                 # - For 100k+ contexts, use 512-2048
+    bidirectional_scan: true     # Bidirectional fusion (forward + backward average) for stability
+                                 # - Disable for real-time/causal forecasting
+    decay_init: 0.0              # Initial decay parameter value (sigmoid applied, 0.0 → 0.5 decay rate)
+                                 # - Negative values → slower decay (longer memory)
+                                 # - Positive values → faster decay (shorter memory)
+
+    # Regularization
+    dropout: 0.1                 # Dropout probability throughout model (0.0-0.2 typical)
+
+    # Feed-forward network
+    ff_expansion: 4              # FFN hidden dimension multiplier (standard: 4)
+
+    # LoRA fine-tuning (parameter-efficient adaptation)
+    adapter_rank: 8              # LoRA rank (0 = disabled, 4-32 typical for fine-tuning)
+    adapter_alpha: 16.0          # LoRA scaling (typically 1-2x rank, higher = stronger adaptation)
+    adapter_dropout: 0.05        # Dropout applied to LoRA adapters
+    freeze_backbone: false       # If true, freeze all params except LoRA/head (for transfer learning)
+    train_head: true             # Keep prediction head trainable when freeze_backbone=true
+
+    # Checkpoint loading
+    pretrained_checkpoint: null  # Path to pretrained .pt/.ckpt file (null = train from scratch)
+    strict_checkpoint: false     # Require exact parameter name match (use false for transfer learning)
