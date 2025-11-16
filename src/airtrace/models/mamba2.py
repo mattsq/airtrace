@@ -348,9 +348,11 @@ class Mamba2Model(ARBaseModel):
             tokens, state = layer(tokens)
             selective_states.append(state)
         tokens = self.final_norm(tokens)
-        # Use final selective state from last layer for prediction (better than mean pooling)
-        # This preserves the recency-weighted information captured by the state-space model
-        pooled = selective_states[-1]
+        # Pool the last token embedding, which already resides in ``embed_dim`` space.
+        # Using the selective state directly would require an extra projection because it
+        # lives in ``state_dim``. Pooling the normalized tokens keeps the prediction head
+        # dimensions consistent and avoids shape mismatches during inference/tests.
+        pooled = tokens[:, -1, :]
         preds = self.head(pooled).view(-1, self.pred_len, self.output_dim)
         extras = {
             "selective_states": selective_states,
