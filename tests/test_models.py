@@ -20,7 +20,9 @@ from airtrace.models import (
     MeanModel,
     MedianModel,
     MLPARModel,
+    ModernTCNModel,
     MovingAverageModel,
+    NonStationaryTransformerModel,
     PatchTSTModel,
     PersistenceModel,
     PolynomialTrendModel,
@@ -33,6 +35,7 @@ from airtrace.models import (
     VARModel,
     ZeroModel,
     iTransformerModel,
+    AutoformerModel,
 )
 
 
@@ -92,6 +95,46 @@ def test_informer_model_forward(batch):
 
     assert output["preds"].shape == (4, 2, 3)
     assert output["extras"]["sparse_attention"] is not None
+
+
+def test_nonstationary_transformer_forward(batch):
+    """Non-stationary Transformer should honor pred_len and expose attention maps."""
+    model = NonStationaryTransformerModel(
+        input_dim=5,
+        output_dim=3,
+        d_model=64,
+        nhead=4,
+        num_layers=2,
+        dim_feedforward=128,
+        pred_len=2,
+    )
+
+    output = model(batch)
+
+    assert output["preds"].shape == (4, 2, 3)
+    attn_maps = output["extras"]["attention_maps"]
+    assert len(attn_maps) == 2
+    assert attn_maps[0].shape == (4, batch.shape[1], batch.shape[1])
+
+
+def test_autoformer_model_forward(batch):
+    """Autoformer should produce multi-step forecasts with correct shape."""
+    model = AutoformerModel(
+        input_dim=5,
+        output_dim=3,
+        d_model=64,
+        n_heads=4,
+        e_layers=1,
+        d_layers=1,
+        pred_len=2,
+        label_len=8,
+        moving_avg=5,
+    )
+
+    output = model(batch)
+
+    assert "preds" in output
+    assert output["preds"].shape == (4, 2, 3)
 
 
 def test_lag_llama_model_forward(batch):
