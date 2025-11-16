@@ -21,6 +21,7 @@ from .baselines import (
     ZeroModel,
 )
 from .chronos_bolt import ChronosBoltModel
+from .dlinear import DLinearModel, NLinearModel
 from .cyclenet import CycleNetModel
 from .gru_ar import GRUARModel
 from .itransformer import iTransformerModel
@@ -55,6 +56,8 @@ __all__ = [
     "MoiraiModel",
     "Mamba2Model",
     "LagLlamaModel",
+    "DLinearModel",
+    "NLinearModel",
     # Baseline models
     "PersistenceModel",
     "MovingAverageModel",

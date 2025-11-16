@@ -1,0 +1,8 @@
+# @package _global_
+
+model:
+  name: dlinear
+  params:
+    seq_len: ${data.window.input_len}
+    pred_len: ${data.window.pred_len}
+    kernel_size: 25

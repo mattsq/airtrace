@@ -7,6 +7,7 @@ from airtrace.models import (
     CycleNetModel,
     DriftModel,
     ExponentialSmoothingModel,
+    DLinearModel,
     GRUARModel,
     GRUSeq2SeqModel,
     HoltLinearTrendModel,
@@ -20,6 +21,7 @@ from airtrace.models import (
     MedianModel,
     MLPARModel,
     MovingAverageModel,
+    NLinearModel,
     PatchTSTModel,
     PersistenceModel,
     PolynomialTrendModel,
@@ -72,6 +74,24 @@ def test_transformer_model_forward(batch):
 
     assert "preds" in output
     assert output["preds"].shape == (4, 1, 3)
+
+
+def test_dlinear_model_forward(batch):
+    """DLinear should produce decomposed linear forecasts."""
+
+    model = DLinearModel(
+        input_dim=5,
+        output_dim=3,
+        seq_len=batch.shape[1],
+        pred_len=2,
+        kernel_size=7,
+    )
+
+    output = model(batch)
+
+    assert output["preds"].shape == (4, 2, 3)
+    assert "seasonal_component" in output["extras"]
+    assert "trend_component" in output["extras"]
 
 
 def test_lag_llama_model_forward(batch):
@@ -337,6 +357,22 @@ def test_var_model_recovers_known_system():
 
     expected_next = c + window[-1] @ A
     torch.testing.assert_close(preds, expected_next, atol=1e-4, rtol=1e-4)
+
+
+def test_nlinear_mean_restoration():
+    """NLinear should add back the temporal mean when weights are zeroed."""
+
+    x = torch.full((2, 4, 3), 2.5)
+    model = NLinearModel(input_dim=3, output_dim=3, seq_len=4, pred_len=1, center_data=True)
+
+    model.linear.weight.data.zero_()
+    model.linear.bias.data.zero_()
+
+    output = model(x)
+
+    expected = torch.full((2, 1, 3), 2.5)
+    torch.testing.assert_close(output["preds"], expected)
+    assert output["extras"]["mean_offset"].shape == (2, 1, 3)
 
 
 def test_mean_model_forward(batch):
