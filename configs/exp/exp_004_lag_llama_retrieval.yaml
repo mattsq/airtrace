@@ -1,0 +1,9 @@
+defaults:
+  - override /data: qantas_737
+  - override /model: lag_llama
+  - override /transforms: zscore_diff
+  - override /task: one_step
+  - override /train: default
+
+exp_name: "lag_llama_retrieval_diffusion"
+seed: 2025
