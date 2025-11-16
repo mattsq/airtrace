@@ -35,6 +35,7 @@ from .seq2seq import GRUSeq2SeqModel, LSTMSeq2SeqModel
 from .tcn import TCNModel
 from .timemixer import TimeMixerModel
 from .transformer import TransformerModel
+from .tft import TemporalFusionTransformer
 
 __all__ = [
     "ARBaseModel",
@@ -56,6 +57,7 @@ __all__ = [
     "MoiraiModel",
     "Mamba2Model",
     "LagLlamaModel",
+    "TemporalFusionTransformer",
     "InformerModel",
     # Baseline models
     "PersistenceModel",
