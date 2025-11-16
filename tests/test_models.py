@@ -21,6 +21,7 @@ from airtrace.models import (
     MLPARModel,
     ModernTCNModel,
     MovingAverageModel,
+    NonStationaryTransformerModel,
     PatchTSTModel,
     PersistenceModel,
     PolynomialTrendModel,
@@ -74,6 +75,26 @@ def test_transformer_model_forward(batch):
 
     assert "preds" in output
     assert output["preds"].shape == (4, 1, 3)
+
+
+def test_nonstationary_transformer_forward(batch):
+    """Non-stationary Transformer should honor pred_len and expose attention maps."""
+    model = NonStationaryTransformerModel(
+        input_dim=5,
+        output_dim=3,
+        d_model=64,
+        nhead=4,
+        num_layers=2,
+        dim_feedforward=128,
+        pred_len=2,
+    )
+
+    output = model(batch)
+
+    assert output["preds"].shape == (4, 2, 3)
+    attn_maps = output["extras"]["attention_maps"]
+    assert len(attn_maps) == 2
+    assert attn_maps[0].shape == (4, batch.shape[1], batch.shape[1])
 
 
 def test_autoformer_model_forward(batch):
