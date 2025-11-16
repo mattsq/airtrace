@@ -22,6 +22,7 @@ from .baselines import (
     ZeroModel,
 )
 from .chronos_bolt import ChronosBoltModel
+from .crossformer import CrossformerModel
 from .cyclenet import CycleNetModel
 from .dlinear import DLinearModel, NLinearModel
 from .gru_ar import GRUARModel
@@ -31,6 +32,7 @@ from .lstm_ar import LSTMARModel
 from .mamba2 import Mamba2Model
 from .moderntcn import ModernTCNModel
 from .moirai import MoiraiModel
+from .nonstationary_transformer import NonStationaryTransformerModel
 from .patchtst import PatchTSTModel
 from .registry import build_model, list_models, register
 from .seq2seq import GRUSeq2SeqModel, LSTMSeq2SeqModel
@@ -54,9 +56,11 @@ __all__ = [
     "TransformerModel",
     "PatchTSTModel",
     "iTransformerModel",
+    "NonStationaryTransformerModel",
     "TimeMixerModel",
     "AutoformerModel",
     "CycleNetModel",
+    "CrossformerModel",
     "ChronosBoltModel",
     "MoiraiModel",
     "Mamba2Model",
