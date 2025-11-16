@@ -183,6 +183,7 @@ AirTrace includes 26 registered models spanning from simple baselines to sophist
 | Model Name | Class | Description |
 |------------|-------|-------------|
 | `tcn` | `TCNModel` | Temporal Convolutional Network with dilated causal convolutions |
+| `moderntcn` | `ModernTCNModel` | ModernTCN - modern pure convolution architecture with depthwise separable convolutions, large receptive fields, and improved efficiency over classic TCN (ICLR 2024 Spotlight) |
 
 ### MLP-Based Models
 

@@ -27,6 +27,7 @@ from .itransformer import iTransformerModel
 from .lag_llama import LagLlamaModel
 from .lstm_ar import LSTMARModel
 from .mamba2 import Mamba2Model
+from .moderntcn import ModernTCNModel
 from .moirai import MoiraiModel
 from .patchtst import PatchTSTModel
 from .registry import build_model, list_models, register
@@ -47,6 +48,7 @@ __all__ = [
     "GRUSeq2SeqModel",
     "LSTMSeq2SeqModel",
     "TCNModel",
+    "ModernTCNModel",
     "TransformerModel",
     "PatchTSTModel",
     "iTransformerModel",

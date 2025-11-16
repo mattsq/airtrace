@@ -19,6 +19,7 @@ from airtrace.models import (
     MeanModel,
     MedianModel,
     MLPARModel,
+    ModernTCNModel,
     MovingAverageModel,
     PatchTSTModel,
     PersistenceModel,
