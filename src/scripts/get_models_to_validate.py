@@ -1,18 +1,11 @@
-"""Detect which models need validation in CI based on git changes.
-
-This script identifies models that have been added or modified, plus baseline
-models that should always run (they are fast and serve as sanity checks).
-
-Usage:
-    python src/scripts/get_models_to_validate.py [--base-ref BRANCH]
-"""
+"""Detect which models need validation in CI based on git changes."""
 
 import argparse
 import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Set
+from typing import List, Optional, Sequence, Set
 
 
 # Baseline models that always run (fast, non-trainable models)
@@ -33,31 +26,39 @@ ALWAYS_RUN_BASELINES = {
 }
 
 
-def get_changed_files(base_ref: str = "origin/main") -> Set[str]:
-    """Get list of changed files compared to base branch.
+def get_changed_files(
+    base_ref: str = "origin/main",
+    diff_range: Optional[Sequence[str]] = None,
+) -> Set[str]:
+    """Get list of changed files based on the provided git comparison.
 
     Args:
-        base_ref: Base reference to compare against (e.g., 'origin/main')
+        base_ref: Base reference to compare against (ignored when ``diff_range`` is provided).
+        diff_range: Optional explicit git diff range (e.g., ("sha1", "sha2") or ("main...HEAD",)).
 
     Returns:
         Set of changed file paths relative to repo root
     """
     try:
-        # Get the merge base (common ancestor)
-        result = subprocess.run(
-            ["git", "merge-base", base_ref, "HEAD"],
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        merge_base = result.stdout.strip()
+        if diff_range:
+            diff_args: List[str] = ["git", "diff", "--name-only", *diff_range]
+        else:
+            # Get the merge base (common ancestor)
+            result = subprocess.run(
+                ["git", "merge-base", base_ref, "HEAD"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            merge_base = result.stdout.strip()
+            diff_args = ["git", "diff", "--name-only", merge_base, "HEAD"]
 
-        # Get changed files since merge base
+        # Get changed files since merge base or explicit range
         result = subprocess.run(
-            ["git", "diff", "--name-only", merge_base, "HEAD"],
+            diff_args,
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         )
         changed_files = set(result.stdout.strip().split("\n"))
 
@@ -118,7 +119,10 @@ def extract_model_names_from_python(py_path: Path) -> Set[str]:
     return model_names
 
 
-def get_models_to_validate(base_ref: str = "origin/main") -> Set[str]:
+def get_models_to_validate(
+    base_ref: str = "origin/main",
+    diff_range: Optional[Sequence[str]] = None,
+) -> Set[str]:
     """Determine which models need to be validated.
 
     Args:
@@ -133,7 +137,7 @@ def get_models_to_validate(base_ref: str = "origin/main") -> Set[str]:
     models.update(ALWAYS_RUN_BASELINES)
 
     # Get changed files
-    changed_files = get_changed_files(base_ref)
+    changed_files = get_changed_files(base_ref=base_ref, diff_range=diff_range)
 
     if not changed_files:
         print("No changed files detected, running baselines only", file=sys.stderr)
@@ -167,21 +171,26 @@ def get_models_to_validate(base_ref: str = "origin/main") -> Set[str]:
     return models
 
 
-def main():
+def main() -> None:
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Determine which models to validate based on git changes"
+        description="Determine which models to validate based on git changes",
     )
     parser.add_argument(
         "--base-ref",
         type=str,
         default="origin/main",
-        help="Base git reference to compare against (default: origin/main)"
+        help="Base git reference to compare against (default: origin/main)",
+    )
+    parser.add_argument(
+        "--diff-range",
+        nargs="+",
+        help="Explicit git diff range (e.g., SHA1 SHA2 or main...HEAD)",
     )
     parser.add_argument(
         "--all",
         action="store_true",
-        help="Validate all models (ignores changes)"
+        help="Validate all models (ignores changes)",
     )
 
     args = parser.parse_args()
@@ -191,7 +200,10 @@ def main():
         print("", end="")
         return
 
-    models = get_models_to_validate(args.base_ref)
+    models = get_models_to_validate(
+        base_ref=args.base_ref,
+        diff_range=args.diff_range,
+    )
 
     # Sort for consistency
     models_sorted = sorted(models)

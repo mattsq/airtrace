@@ -18,6 +18,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -81,6 +83,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
@@ -115,15 +119,31 @@ jobs:
 
       - name: Determine models to validate
         id: detect-models
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.event.after }}
         run: |
-          # Fetch the base branch for comparison
-          git fetch origin main --depth=50 || true
+          set -euo pipefail
 
-          # Determine which models need validation based on changes
-          # This script detects changed model configs/implementations and always includes baseline models
-          MODELS=$(python src/scripts/get_models_to_validate.py --base-ref origin/main)
+          git fetch --all --prune --unshallow || true
 
-          echo "models=$MODELS" >> $GITHUB_OUTPUT
+          declare -a DIFF_ARGS
+          if [ "$EVENT_NAME" = "pull_request" ] && [ -n "${BASE_REF:-}" ]; then
+            git fetch origin "$BASE_REF"
+            DIFF_ARGS=(--diff-range "origin/$BASE_REF...HEAD")
+          elif [ -n "${BEFORE_SHA:-}" ] && [ -n "${AFTER_SHA:-}" ]; then
+            DIFF_ARGS=(--diff-range "$BEFORE_SHA" "$AFTER_SHA")
+          else
+            DIFF_ARGS=(--diff-range "HEAD^" "HEAD")
+          fi
+
+          echo "Using diff args: ${DIFF_ARGS[*]}"
+
+          MODELS=$(python src/scripts/get_models_to_validate.py "${DIFF_ARGS[@]}" | xargs)
+
+          echo "models=$MODELS" >> "$GITHUB_OUTPUT"
 
           if [ -n "$MODELS" ]; then
             echo "📝 Selective validation: $MODELS"
