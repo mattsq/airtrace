@@ -168,6 +168,7 @@ AirTrace includes 26 registered models spanning from simple baselines to sophist
 | `informer` | `InformerModel` | Informer with ProbSparse attention, distilling encoder, and lightweight decoder for efficient long-horizon forecasting |
 | `patchtst` | `PatchTSTModel` | PatchTST - channel-independent patch time series transformer with efficient patching mechanism (ICLR 2023) |
 | `itransformer` | `iTransformerModel` | iTransformer - inverted transformer treating variates as tokens for superior multivariate correlation modeling (ICLR 2024 Spotlight) |
+| `tft` | `TemporalFusionTransformer` | Temporal Fusion Transformer combining variable selection, LSTM encoders/decoders, and interpretable attention for multi-horizon forecasting |
 
 ### Foundation Models
 
