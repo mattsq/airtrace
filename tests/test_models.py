@@ -21,6 +21,7 @@ from airtrace.models import (
     MLPARModel,
     ModernTCNModel,
     MovingAverageModel,
+    NBeatsModel,
     PatchTSTModel,
     PersistenceModel,
     PolynomialTrendModel,
@@ -94,6 +95,27 @@ def test_autoformer_model_forward(batch):
 
     assert "preds" in output
     assert output["preds"].shape == (4, 2, 3)
+
+
+def test_nbeats_model_forward(batch):
+    """N-BEATS should produce the correct forecast shape and stack outputs."""
+    model = NBeatsModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=2,
+        stack_types=["trend", "seasonality"],
+        num_blocks_per_stack=1,
+        hidden_size=64,
+        num_layers=3,
+        degree=2,
+        harmonics=3,
+    )
+
+    output = model(batch)
+
+    assert "preds" in output
+    assert output["preds"].shape == (4, 2, 3)
+    assert output["extras"]["stack_forecasts"].shape == (4, 2, 2, 3)
 
 
 def test_lag_llama_model_forward(batch):

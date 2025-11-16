@@ -1,0 +1,13 @@
+# @package _global_
+
+model:
+  name: nbeats
+  params:
+    stack_types: ["trend", "seasonality"]
+    num_blocks_per_stack: 2
+    hidden_size: 256
+    num_layers: 4
+    pred_len: 1
+    degree: 2
+    harmonics: null
+    dropout: 0.0

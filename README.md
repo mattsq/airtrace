@@ -144,7 +144,7 @@ See [Synthetic Data Documentation](docs/synthetic_data.md) for details.
 
 ## Model Registry
 
-AirTrace includes 26 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
+AirTrace includes 27 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
 
 ### Recurrent Neural Networks
 
@@ -191,6 +191,7 @@ AirTrace includes 26 registered models spanning from simple baselines to sophist
 | Model Name | Class | Description |
 |------------|-------|-------------|
 | `timemixer` | `TimeMixerModel` | TimeMixer - decomposable multiscale mixing for time series forecasting with MLP architecture (ICLR 2024) |
+| `nbeats` | `NBeatsModel` | N-BEATS - residual stack of basis expansion blocks with interpretable trend/seasonality components (ICLR 2020) |
 | `cyclenet` | `CycleNetModel` | CycleNet - residual cycle forecasting with learnable periodic patterns for extreme efficiency (NeurIPS 2024 Spotlight) |
 
 ### Baseline Models
