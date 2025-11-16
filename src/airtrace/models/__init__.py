@@ -28,6 +28,7 @@ from .lag_llama import LagLlamaModel
 from .lstm_ar import LSTMARModel
 from .mamba2 import Mamba2Model
 from .moirai import MoiraiModel
+from .informer import InformerModel
 from .patchtst import PatchTSTModel
 from .registry import build_model, list_models, register
 from .seq2seq import GRUSeq2SeqModel, LSTMSeq2SeqModel
@@ -55,6 +56,7 @@ __all__ = [
     "MoiraiModel",
     "Mamba2Model",
     "LagLlamaModel",
+    "InformerModel",
     # Baseline models
     "PersistenceModel",
     "MovingAverageModel",

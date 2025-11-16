@@ -16,6 +16,7 @@ from airtrace.models import (
     LinearTrendModel,
     LSTMARModel,
     LSTMSeq2SeqModel,
+    InformerModel,
     MeanModel,
     MedianModel,
     MLPARModel,
@@ -72,6 +73,25 @@ def test_transformer_model_forward(batch):
 
     assert "preds" in output
     assert output["preds"].shape == (4, 1, 3)
+
+
+def test_informer_model_forward(batch):
+    """Informer should generate multi-step forecasts with sparse attention outputs."""
+    model = InformerModel(
+        input_dim=5,
+        output_dim=3,
+        d_model=64,
+        nhead=4,
+        e_layers=2,
+        d_layers=1,
+        pred_len=2,
+        ff_dim=128,
+    )
+
+    output = model(batch)
+
+    assert output["preds"].shape == (4, 2, 3)
+    assert output["extras"]["sparse_attention"] is not None
 
 
 def test_lag_llama_model_forward(batch):
@@ -182,6 +202,7 @@ def test_model_gradient_flow():
         (TCNModel, {"num_channels": [32, 32], "kernel_size": 3}),
         (TransformerModel, {"d_model": 32, "nhead": 4, "num_encoder_layers": 1}),
         (PatchTSTModel, {"patch_len": 8, "stride": 4, "d_model": 32, "nhead": 4, "num_layers": 2}),
+        (InformerModel, {"d_model": 48, "nhead": 4, "e_layers": 1, "d_layers": 1, "pred_len": 2}),
     ],
 )
 def test_model_output_shape(model_class, kwargs):
