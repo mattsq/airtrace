@@ -165,6 +165,7 @@ AirTrace includes 26 registered models spanning from simple baselines to sophist
 | Model Name | Class | Description |
 |------------|-------|-------------|
 | `transformer` | `TransformerModel` | Transformer with causal self-attention and positional encoding |
+| `autoformer` | `AutoformerModel` | Autoformer with series decomposition and auto-correlation attention for long-range dependencies |
 | `patchtst` | `PatchTSTModel` | PatchTST - channel-independent patch time series transformer with efficient patching mechanism (ICLR 2023) |
 | `itransformer` | `iTransformerModel` | iTransformer - inverted transformer treating variates as tokens for superior multivariate correlation modeling (ICLR 2024 Spotlight) |
 | `tft` | `TemporalFusionTransformer` | Temporal Fusion Transformer combining variable selection, LSTM encoders/decoders, and interpretable attention for multi-horizon forecasting |

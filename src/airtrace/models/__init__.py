@@ -21,6 +21,7 @@ from .baselines import (
     ZeroModel,
 )
 from .chronos_bolt import ChronosBoltModel
+from .autoformer import AutoformerModel
 from .cyclenet import CycleNetModel
 from .gru_ar import GRUARModel
 from .itransformer import iTransformerModel
@@ -53,6 +54,7 @@ __all__ = [
     "PatchTSTModel",
     "iTransformerModel",
     "TimeMixerModel",
+    "AutoformerModel",
     "CycleNetModel",
     "ChronosBoltModel",
     "MoiraiModel",
