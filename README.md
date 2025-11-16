@@ -144,7 +144,7 @@ See [Synthetic Data Documentation](docs/synthetic_data.md) for details.
 
 ## Model Registry
 
-AirTrace includes 26 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
+AirTrace includes 37 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
 
 ### Recurrent Neural Networks
 
@@ -166,8 +166,11 @@ AirTrace includes 26 registered models spanning from simple baselines to sophist
 |------------|-------|-------------|
 | `transformer` | `TransformerModel` | Transformer with causal self-attention and positional encoding |
 | `informer` | `InformerModel` | Informer with ProbSparse attention, distilling encoder, and lightweight decoder for efficient long-horizon forecasting |
+| `nonstationary_transformer` | `NonStationaryTransformerModel` | Non-stationary Transformer with de-stationary attention blocks and learnable stationarization to handle distribution shifts |
+| `autoformer` | `AutoformerModel` | Autoformer with series decomposition and auto-correlation attention for long-range dependencies |
 | `patchtst` | `PatchTSTModel` | PatchTST - channel-independent patch time series transformer with efficient patching mechanism (ICLR 2023) |
 | `itransformer` | `iTransformerModel` | iTransformer - inverted transformer treating variates as tokens for superior multivariate correlation modeling (ICLR 2024 Spotlight) |
+| `crossformer` | `CrossformerModel` | Crossformer - two-stage temporal then cross-dimension attention with DSW embeddings for explicit cross-sensor dependency modeling (ICLR 2023) |
 | `tft` | `TemporalFusionTransformer` | Temporal Fusion Transformer combining variable selection, LSTM encoders/decoders, and interpretable attention for multi-horizon forecasting |
 
 ### Foundation Models
@@ -184,6 +187,7 @@ AirTrace includes 26 registered models spanning from simple baselines to sophist
 | Model Name | Class | Description |
 |------------|-------|-------------|
 | `tcn` | `TCNModel` | Temporal Convolutional Network with dilated causal convolutions |
+| `moderntcn` | `ModernTCNModel` | ModernTCN - modern pure convolution architecture with depthwise separable convolutions, large receptive fields, and improved efficiency over classic TCN (ICLR 2024 Spotlight) |
 
 ### MLP-Based Models
 
