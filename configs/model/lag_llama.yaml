@@ -1,0 +1,20 @@
+# @package _global_
+
+model:
+  name: lag_llama
+  params:
+    pred_len: 24              # Forecast horizon in steps
+    embed_dim: 256            # Token/latent embedding size
+    patch_size: 32            # Patch length (timesteps per token)
+    patch_stride: 16          # Stride between overlapping patches
+    add_sensor_embeddings: true  # Learnable per-sensor embeddings fused with patches
+    max_positions: 4096       # Maximum positional encoding length
+    retrieval_mode: in_memory # Retrieval backend (none | in_memory)
+    max_neighbors: 4          # Number of nearest neighbors to condition on
+    diffusion_layers: 3       # Depth of the diffusion noise network
+    diffusion_heads: 4        # Attention heads inside diffusion blocks
+    diffusion_steps: 8        # Iterations when sampling probabilistic trajectories
+    diffusion_dropout: 0.1    # Dropout inside diffusion network
+    diffusion_ff_expansion: 4 # Feed-forward expansion in diffusion blocks
+    init_noise_scale: 0.2     # Std of initial Gaussian noise for diffusion sampling
+    guidance_scale: 1.2       # Step scale that trades-off diversity and fidelity

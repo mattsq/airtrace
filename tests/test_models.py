@@ -11,7 +11,7 @@ from airtrace.models import (
     GRUSeq2SeqModel,
     HoltLinearTrendModel,
     HoltWintersModel,
-    iTransformerModel,
+    LagLlamaModel,
     LinearARModel,
     LinearTrendModel,
     LSTMARModel,
@@ -31,6 +31,7 @@ from airtrace.models import (
     TransformerModel,
     VARModel,
     ZeroModel,
+    iTransformerModel,
 )
 
 
@@ -71,6 +72,62 @@ def test_transformer_model_forward(batch):
 
     assert "preds" in output
     assert output["preds"].shape == (4, 1, 3)
+
+
+def test_lag_llama_model_forward(batch):
+    """Lag-Llama should produce the correct output shape."""
+    model = LagLlamaModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=2,
+        embed_dim=64,
+        patch_size=8,
+        patch_stride=4,
+        diffusion_steps=0,
+    )
+
+    output = model(batch)
+
+    assert output["preds"].shape == (4, 2, 3)
+    assert output["extras"]["samples"].shape == (4, 1, 2, 3)
+
+
+def test_lag_llama_retrieval_fallback(batch):
+    """Model should gracefully skip retrieval when the bank is empty."""
+    model = LagLlamaModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        embed_dim=32,
+        patch_size=4,
+        patch_stride=2,
+        diffusion_steps=0,
+        retrieval_mode="in_memory",
+        max_neighbors=2,
+    )
+
+    output = model(batch)
+
+    assert output["extras"]["retrieved_neighbors"] is None
+
+
+def test_lag_llama_deterministic_single_sample(batch):
+    """When requesting a single sample the output should be deterministic."""
+    model = LagLlamaModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=1,
+        embed_dim=32,
+        patch_size=4,
+        patch_stride=2,
+        diffusion_steps=2,
+        diffusion_dropout=0.0,
+    )
+    model.eval()
+
+    first = model(batch, num_samples=1)["preds"]
+    second = model(batch, num_samples=1)["preds"]
+    torch.testing.assert_close(first, second)
 
 
 def test_model_num_params():
@@ -798,7 +855,9 @@ def test_holt_winters_additive_seasonality():
     output = model(x)
 
     expected_next = level + trend * t.numel() + seasonal_pattern[t.numel() % season_length]
-    torch.testing.assert_close(output["preds"], torch.tensor([[[expected_next]]]), atol=0.2, rtol=1e-3)
+    torch.testing.assert_close(
+        output["preds"], torch.tensor([[[expected_next]]]), atol=0.2, rtol=1e-3
+    )
 
 
 def test_theta_model_forward(batch):
@@ -854,7 +913,7 @@ def test_linear_ar_model_trainable():
     assert len(params_before) > 0, "LazyLinear should register parameters immediately"
 
     # First forward pass materializes the lazy parameters
-    output1 = model(x)
+    _ = model(x)
 
     # Check that model has parameters with correct shape
     num_params = model.get_num_params()
@@ -918,7 +977,7 @@ def test_mlp_ar_model_trainable():
     assert len(params_before) > 0, "LazyLinear should register parameters immediately"
 
     # First forward pass materializes the lazy parameters
-    output = model(x)
+    _ = model(x)
 
     # Check that model has parameters
     num_params = model.get_num_params()
@@ -1446,7 +1505,7 @@ def test_timemixer_model_forward(batch):
         seq_len=32,
         d_model=32,
         num_layers=2,
-        down_sampling_layers=2
+        down_sampling_layers=2,
     )
 
     output = model(batch)
@@ -1467,7 +1526,7 @@ def test_timemixer_model_multi_step_prediction():
         seq_len=32,
         d_model=32,
         num_layers=2,
-        down_sampling_layers=2
+        down_sampling_layers=2,
     )
 
     x = torch.randn(2, 32, 5)
@@ -1485,7 +1544,7 @@ def test_timemixer_model_multiscale_features():
         seq_len=32,
         d_model=32,
         num_layers=2,
-        down_sampling_layers=3
+        down_sampling_layers=3,
     )
 
     x = torch.randn(2, 32, 5)
@@ -1498,8 +1557,8 @@ def test_timemixer_model_multiscale_features():
     # Check that scales are progressively smaller
     assert multi_scale_features[0].shape[1] == 32  # Original
     assert multi_scale_features[1].shape[1] == 16  # /2
-    assert multi_scale_features[2].shape[1] == 8   # /4
-    assert multi_scale_features[3].shape[1] == 4   # /8
+    assert multi_scale_features[2].shape[1] == 8  # /4
+    assert multi_scale_features[3].shape[1] == 4  # /8
 
 
 def test_timemixer_model_ensemble_predictions():
@@ -1511,7 +1570,7 @@ def test_timemixer_model_ensemble_predictions():
         seq_len=32,
         d_model=32,
         num_layers=2,
-        down_sampling_layers=2
+        down_sampling_layers=2,
     )
 
     x = torch.randn(2, 32, 5)
@@ -1532,7 +1591,7 @@ def test_timemixer_model_different_seq_lengths():
             seq_len=seq_len,
             d_model=32,
             num_layers=1,
-            down_sampling_layers=2
+            down_sampling_layers=2,
         )
 
         x = torch.randn(2, seq_len, 5)
@@ -1550,7 +1609,7 @@ def test_timemixer_model_decomposition():
         d_model=32,
         num_layers=2,
         down_sampling_layers=2,
-        decomp_kernel=25  # Decomposition kernel size
+        decomp_kernel=25,  # Decomposition kernel size
     )
 
     x = torch.randn(2, 32, 5)
@@ -1571,7 +1630,7 @@ def test_timemixer_model_different_num_layers():
             seq_len=32,
             d_model=32,
             num_layers=num_layers,
-            down_sampling_layers=2
+            down_sampling_layers=2,
         )
 
         x = torch.randn(2, 32, 5)
@@ -1588,7 +1647,7 @@ def test_timemixer_model_gradient_flow():
         seq_len=32,
         d_model=32,
         num_layers=2,
-        down_sampling_layers=2
+        down_sampling_layers=2,
     )
     x = torch.randn(2, 32, 5, requires_grad=True)
 
@@ -1614,7 +1673,7 @@ def test_timemixer_model_num_params():
         seq_len=96,
         d_model=64,
         num_layers=2,
-        down_sampling_layers=3
+        down_sampling_layers=3,
     )
 
     num_params = model.get_num_params()
@@ -1631,7 +1690,7 @@ def test_timemixer_model_no_nan():
         seq_len=32,
         d_model=32,
         num_layers=2,
-        down_sampling_layers=2
+        down_sampling_layers=2,
     )
     x = torch.randn(2, 32, 5)
 
@@ -1650,7 +1709,7 @@ def test_timemixer_model_same_input_output_dims():
         seq_len=32,
         d_model=32,
         num_layers=2,
-        down_sampling_layers=2
+        down_sampling_layers=2,
     )
 
     x = torch.randn(2, 32, 5)
@@ -1668,7 +1727,7 @@ def test_timemixer_model_different_input_output_dims():
         seq_len=32,
         d_model=32,
         num_layers=2,
-        down_sampling_layers=2
+        down_sampling_layers=2,
     )
 
     x = torch.randn(2, 32, 8)
@@ -1686,7 +1745,7 @@ def test_timemixer_model_repr():
         seq_len=96,
         d_model=64,
         num_layers=2,
-        down_sampling_layers=3
+        down_sampling_layers=3,
     )
 
     model_repr = repr(model)
@@ -1701,13 +1760,7 @@ def test_timemixer_model_repr():
 
 def test_timemixer_model_device_transfer():
     """Test moving TimeMixer model to device."""
-    model = TimeMixerModel(
-        input_dim=5,
-        output_dim=3,
-        pred_len=1,
-        seq_len=32,
-        d_model=32
-    )
+    model = TimeMixerModel(input_dim=5, output_dim=3, pred_len=1, seq_len=32, d_model=32)
 
     # Test CPU
     model = model.to("cpu")
@@ -1728,11 +1781,7 @@ def test_timemixer_pdm_blocks():
     from airtrace.models.timemixer import PastDecomposableMixing
 
     pdm = PastDecomposableMixing(
-        seq_len=32,
-        d_model=16,
-        down_sampling_layers=2,
-        decomp_kernel=25,
-        dropout=0.1
+        seq_len=32, d_model=16, down_sampling_layers=2, decomp_kernel=25, dropout=0.1
     )
 
     x = torch.randn(2, 32, 16)
@@ -1771,12 +1820,7 @@ def test_timemixer_series_decomposition():
 def test_cyclenet_model_forward(batch):
     """Test CycleNet model forward pass."""
     model = CycleNetModel(
-        input_dim=5,
-        output_dim=3,
-        pred_len=1,
-        period_len=16,
-        backbone="mlp",
-        hidden_dim=128
+        input_dim=5, output_dim=3, pred_len=1, period_len=16, backbone="mlp", hidden_dim=128
     )
 
     output = model(batch)
@@ -1792,13 +1836,7 @@ def test_cyclenet_model_forward(batch):
 
 def test_cyclenet_model_linear_backbone(batch):
     """Test CycleNet with linear backbone."""
-    model = CycleNetModel(
-        input_dim=5,
-        output_dim=3,
-        pred_len=1,
-        period_len=16,
-        backbone="linear"
-    )
+    model = CycleNetModel(input_dim=5, output_dim=3, pred_len=1, period_len=16, backbone="linear")
 
     output = model(batch)
     assert output["preds"].shape == (4, 1, 3)
@@ -1807,12 +1845,7 @@ def test_cyclenet_model_linear_backbone(batch):
 def test_cyclenet_model_multi_step_prediction():
     """Test CycleNet with multi-step prediction."""
     model = CycleNetModel(
-        input_dim=5,
-        output_dim=3,
-        pred_len=5,
-        period_len=16,
-        backbone="mlp",
-        hidden_dim=128
+        input_dim=5, output_dim=3, pred_len=5, period_len=16, backbone="mlp", hidden_dim=128
     )
 
     x = torch.randn(2, 32, 5)
@@ -1834,12 +1867,7 @@ def test_cyclenet_model_periodic_pattern():
     x = torch.sin(2 * torch.pi * t / period_len).reshape(1, seq_len, 1)
 
     model = CycleNetModel(
-        input_dim=1,
-        output_dim=1,
-        pred_len=1,
-        period_len=period_len,
-        backbone="mlp",
-        hidden_dim=64
+        input_dim=1, output_dim=1, pred_len=1, period_len=period_len, backbone="mlp", hidden_dim=64
     )
 
     # Train on the periodic signal
@@ -1851,7 +1879,9 @@ def test_cyclenet_model_periodic_pattern():
         output = model(x)
 
         # Target is next value in the periodic sequence
-        target = torch.sin(2 * torch.pi * torch.tensor([[seq_len]], dtype=torch.float32) / period_len)
+        target = torch.sin(
+            2 * torch.pi * torch.tensor([[seq_len]], dtype=torch.float32) / period_len
+        )
         target = target.reshape(1, 1, 1)
 
         loss = ((output["preds"] - target) ** 2).mean()
@@ -1872,12 +1902,7 @@ def test_cyclenet_model_periodic_pattern():
 
 def test_cyclenet_model_cycle_indices():
     """Test that cycle indices wrap correctly."""
-    model = CycleNetModel(
-        input_dim=3,
-        output_dim=3,
-        pred_len=1,
-        period_len=10
-    )
+    model = CycleNetModel(input_dim=3, output_dim=3, pred_len=1, period_len=10)
 
     # Input longer than period
     x = torch.randn(2, 25, 3)
@@ -1896,11 +1921,7 @@ def test_cyclenet_model_different_period_lengths():
     """Test CycleNet with different period lengths."""
     for period_len in [8, 16, 24, 32]:
         model = CycleNetModel(
-            input_dim=5,
-            output_dim=3,
-            pred_len=1,
-            period_len=period_len,
-            backbone="mlp"
+            input_dim=5, output_dim=3, pred_len=1, period_len=period_len, backbone="mlp"
         )
 
         x = torch.randn(2, 32, 5)
@@ -1914,12 +1935,7 @@ def test_cyclenet_model_different_period_lengths():
 
 def test_cyclenet_model_same_input_output_dims():
     """Test CycleNet when input_dim == output_dim."""
-    model = CycleNetModel(
-        input_dim=5,
-        output_dim=5,
-        pred_len=1,
-        period_len=16
-    )
+    model = CycleNetModel(input_dim=5, output_dim=5, pred_len=1, period_len=16)
 
     x = torch.randn(2, 32, 5)
     output = model(x)
@@ -1929,12 +1945,7 @@ def test_cyclenet_model_same_input_output_dims():
 
 def test_cyclenet_model_different_input_output_dims():
     """Test CycleNet when input_dim != output_dim."""
-    model = CycleNetModel(
-        input_dim=8,
-        output_dim=3,
-        pred_len=1,
-        period_len=16
-    )
+    model = CycleNetModel(input_dim=8, output_dim=3, pred_len=1, period_len=16)
 
     x = torch.randn(2, 32, 8)
     output = model(x)
@@ -1945,12 +1956,7 @@ def test_cyclenet_model_different_input_output_dims():
 def test_cyclenet_model_gradient_flow():
     """Test that gradients flow through CycleNet model."""
     model = CycleNetModel(
-        input_dim=5,
-        output_dim=3,
-        pred_len=1,
-        period_len=16,
-        backbone="mlp",
-        hidden_dim=128
+        input_dim=5, output_dim=3, pred_len=1, period_len=16, backbone="mlp", hidden_dim=128
     )
     x = torch.randn(2, 32, 5, requires_grad=True)
 
@@ -1973,12 +1979,7 @@ def test_cyclenet_model_gradient_flow():
 def test_cyclenet_model_num_params():
     """Test parameter counting for CycleNet."""
     model = CycleNetModel(
-        input_dim=5,
-        output_dim=3,
-        pred_len=1,
-        period_len=32,
-        backbone="mlp",
-        hidden_dim=256
+        input_dim=5, output_dim=3, pred_len=1, period_len=32, backbone="mlp", hidden_dim=256
     )
 
     num_params = model.get_num_params()
@@ -1992,13 +1993,7 @@ def test_cyclenet_model_num_params():
 
 def test_cyclenet_model_no_nan():
     """Test that CycleNet doesn't produce NaN values."""
-    model = CycleNetModel(
-        input_dim=5,
-        output_dim=3,
-        pred_len=1,
-        period_len=16,
-        backbone="mlp"
-    )
+    model = CycleNetModel(input_dim=5, output_dim=3, pred_len=1, period_len=16, backbone="mlp")
     x = torch.randn(2, 32, 5)
 
     output = model(x)
@@ -2016,7 +2011,7 @@ def test_cyclenet_model_different_activations():
             pred_len=1,
             period_len=16,
             backbone="mlp",
-            activation=activation
+            activation=activation,
         )
         x = torch.randn(2, 32, 5)
         output = model(x)
@@ -2026,12 +2021,7 @@ def test_cyclenet_model_different_activations():
 def test_cyclenet_model_repr():
     """Test CycleNet model string representation."""
     model = CycleNetModel(
-        input_dim=5,
-        output_dim=3,
-        pred_len=1,
-        period_len=32,
-        backbone="mlp",
-        hidden_dim=256
+        input_dim=5, output_dim=3, pred_len=1, period_len=32, backbone="mlp", hidden_dim=256
     )
 
     model_repr = repr(model)
@@ -2045,12 +2035,7 @@ def test_cyclenet_model_repr():
 
 def test_cyclenet_model_device_transfer():
     """Test moving CycleNet model to device."""
-    model = CycleNetModel(
-        input_dim=5,
-        output_dim=3,
-        pred_len=1,
-        period_len=16
-    )
+    model = CycleNetModel(input_dim=5, output_dim=3, pred_len=1, period_len=16)
 
     # Test CPU
     model = model.to("cpu")
@@ -2102,11 +2087,7 @@ def test_cyclenet_residual_backbone_component():
 
     # Test MLP backbone
     mlp_backbone = ResidualBackbone(
-        input_len=32,
-        pred_len=5,
-        num_channels=3,
-        backbone_type="mlp",
-        hidden_dim=128
+        input_len=32, pred_len=5, num_channels=3, backbone_type="mlp", hidden_dim=128
     )
 
     x = torch.randn(2, 32, 3)
@@ -2115,10 +2096,7 @@ def test_cyclenet_residual_backbone_component():
 
     # Test Linear backbone
     linear_backbone = ResidualBackbone(
-        input_len=32,
-        pred_len=5,
-        num_channels=3,
-        backbone_type="linear"
+        input_len=32, pred_len=5, num_channels=3, backbone_type="linear"
     )
 
     output = linear_backbone(x)
@@ -2128,20 +2106,11 @@ def test_cyclenet_residual_backbone_component():
 def test_cyclenet_model_efficiency():
     """Test that CycleNet has fewer parameters than transformers."""
     cyclenet = CycleNetModel(
-        input_dim=5,
-        output_dim=3,
-        pred_len=1,
-        period_len=32,
-        backbone="mlp",
-        hidden_dim=256
+        input_dim=5, output_dim=3, pred_len=1, period_len=32, backbone="mlp", hidden_dim=256
     )
 
     transformer = TransformerModel(
-        input_dim=5,
-        output_dim=3,
-        d_model=256,
-        nhead=8,
-        num_encoder_layers=2
+        input_dim=5, output_dim=3, d_model=256, nhead=8, num_encoder_layers=2
     )
 
     cyclenet_params = cyclenet.get_num_params()
