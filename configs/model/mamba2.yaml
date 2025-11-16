@@ -1,0 +1,21 @@
+# @package _global_
+
+model:
+  name: mamba2
+  params:
+    pred_len: 64                 # Forecast horizon (override per experiment)
+    embed_dim: 512               # Token dimension for the selective scan backbone
+    state_dim: 256               # Internal state size of selective scan
+    num_layers: 8                # Number of stacked Mamba-2 blocks
+    conv_kernel_size: 5          # Local mixing kernel (must be odd)
+    chunk_length: 1024           # Steps processed per selective scan chunk
+    bidirectional_scan: true     # Use bidirectional scan fusion for better stability
+    dropout: 0.1                 # Dropout applied throughout the backbone
+    ff_expansion: 4              # Feed-forward expansion factor
+    adapter_rank: 8              # LoRA rank for lightweight fine-tuning (0 disables)
+    adapter_alpha: 16.0          # Scaling factor for LoRA adapters
+    adapter_dropout: 0.05        # Dropout applied before LoRA adapters
+    freeze_backbone: false       # Freeze backbone parameters when using adapters
+    train_head: true             # Keep prediction head trainable when freezing
+    pretrained_checkpoint: null  # Optional path to pretrained Mamba-2 weights
+    strict_checkpoint: false     # Require checkpoint exactness when loading
