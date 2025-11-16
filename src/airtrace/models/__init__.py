@@ -23,6 +23,7 @@ from .baselines import (
 from .chronos_bolt import ChronosBoltModel
 from .autoformer import AutoformerModel
 from .cyclenet import CycleNetModel
+from .fedformer import FEDformerModel
 from .gru_ar import GRUARModel
 from .itransformer import iTransformerModel
 from .lag_llama import LagLlamaModel
@@ -55,6 +56,7 @@ __all__ = [
     "iTransformerModel",
     "TimeMixerModel",
     "AutoformerModel",
+    "FEDformerModel",
     "CycleNetModel",
     "ChronosBoltModel",
     "MoiraiModel",
