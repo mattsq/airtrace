@@ -27,6 +27,7 @@ from .itransformer import iTransformerModel
 from .lstm_ar import LSTMARModel
 from .patchtst import PatchTSTModel
 from .moirai import MoiraiModel
+from .mamba2 import Mamba2ARModel
 from .registry import build_model, list_models, register
 from .seq2seq import GRUSeq2SeqModel, LSTMSeq2SeqModel
 from .tcn import TCNModel
@@ -51,6 +52,7 @@ __all__ = [
     "CycleNetModel",
     "ChronosBoltModel",
     "MoiraiModel",
+    "Mamba2ARModel",
     # Baseline models
     "PersistenceModel",
     "MovingAverageModel",

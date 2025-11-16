@@ -174,6 +174,7 @@ AirTrace includes 24 registered models spanning from simple baselines to sophist
 |------------|-------|-------------|
 | `chronos_bolt` | `ChronosBoltModel` | Chronos-Bolt inspired pretrained foundation model with gated conv-attention blocks, tokenizer-free patching, and optional LoRA adapters for efficient fine-tuning |
 | `moirai` | `MoiraiModel` | Moirai-style multiresolution selective state-space model combining hierarchical patching with selective scan blocks and optional LoRA adapters |
+| `mamba2_ar` | `Mamba2ARModel` | Token-free Mamba-2 style selective SSM with chunked scans, bidirectional gating, and lightweight convolutional adapters for long-context efficiency |
 
 ### Convolutional Models
 
