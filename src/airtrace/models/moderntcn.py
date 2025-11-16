@@ -49,6 +49,11 @@ class DepthwiseSeparableConv1d(nn.Module):
         """
         super().__init__()
 
+        # Store padding so we can remove it after convolution to maintain
+        # the original temporal length (causal padding adds future context
+        # that should be trimmed before mixing channels).
+        self.padding = padding
+
         # Depthwise convolution: convolve each channel separately
         self.depthwise = nn.Conv1d(
             in_channels,
@@ -76,6 +81,11 @@ class DepthwiseSeparableConv1d(nn.Module):
             Output tensor [B, C_out, T]
         """
         x = self.depthwise(x)
+
+        # Remove future padding to preserve input sequence length
+        if self.padding > 0:
+            x = x[:, :, :-self.padding]
+
         x = self.pointwise(x)
         return x
 
@@ -155,17 +165,11 @@ class ModernTCNBlock(nn.Module):
 
         # First conv block
         x = self.conv1(x)
-        # Remove future padding (causal)
-        if self.padding > 0:
-            x = x[:, :, :-self.padding]
         x = self.act(x)
         x = self.dropout1(x)
 
         # Second conv block
         x = self.conv2(x)
-        # Remove future padding (causal)
-        if self.padding > 0:
-            x = x[:, :, :-self.padding]
         x = self.dropout2(x)
 
         # Residual connection
