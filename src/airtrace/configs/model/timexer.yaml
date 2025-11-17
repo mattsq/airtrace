@@ -1,0 +1,16 @@
+# @package _global_
+
+model:
+  name: timexer
+  params:
+    exog_dim: 0              # Dimension of exogenous features (0 = no exogenous vars)
+    patch_len: 16            # Length of each patch (subseries segment)
+    stride: 8                # Stride between patches (overlap = patch_len - stride)
+    d_model: 128             # Model dimension
+    nhead: 8                 # Number of attention heads (must divide d_model)
+    num_layers: 3            # Number of transformer encoder layers
+    dim_feedforward: 512     # Dimension of feedforward network
+    dropout: 0.1             # Dropout probability
+    activation: "gelu"       # Activation function (relu, gelu)
+    num_global_tokens: 1     # Number of global endogenous tokens
+    pred_len: 1              # Prediction horizon length
