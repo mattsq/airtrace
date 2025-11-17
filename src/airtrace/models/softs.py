@@ -266,8 +266,16 @@ class SOFTS(ARBaseModel):
 
         # De-normalization
         if self.use_norm and means is not None:
-            x = x * stdev[:, 0, :].unsqueeze(1)
-            x = x + means[:, 0, :].unsqueeze(1)
+            if self.output_dim <= num_channels:
+                stdev_out = stdev[:, :, : self.output_dim]
+                means_out = means[:, :, : self.output_dim]
+            else:
+                pad_size = self.output_dim - num_channels
+                stdev_out = F.pad(stdev, (0, pad_size), mode="replicate")
+                means_out = F.pad(means, (0, pad_size), mode="replicate")
+
+            x = x * stdev_out
+            x = x + means_out
 
         return {
             "preds": x,
