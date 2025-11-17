@@ -42,14 +42,14 @@ class Trainer:
         self.val_loader = val_loader
         self.device = device
 
-        # Build optimizer and scheduler
-        self.optimizer = self._build_optimizer(config.get("train", {}).get("optimizer", {}))
-        self.scheduler = self._build_scheduler(config.get("train", {}).get("scheduler", {}))
-
-        # Training config
+        # Training config (must be set before building scheduler)
         train_config = config.get("train", {})
         self.epochs = train_config.get("epochs", 50)
         self.log_every_n_steps = train_config.get("log_every_n_steps", 50)
+
+        # Build optimizer and scheduler
+        self.optimizer = self._build_optimizer(config.get("train", {}).get("optimizer", {}))
+        self.scheduler = self._build_scheduler(config.get("train", {}).get("scheduler", {}))
 
         # Gradient clipping
         grad_clip_config = train_config.get("grad_clip", {})
