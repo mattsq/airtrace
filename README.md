@@ -144,7 +144,7 @@ See [Synthetic Data Documentation](docs/synthetic_data.md) for details.
 
 ## Model Registry
 
-AirTrace includes 40 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
+AirTrace includes 41 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
 
 ### Recurrent Neural Networks
 
@@ -166,6 +166,7 @@ AirTrace includes 40 registered models spanning from simple baselines to sophist
 |------------|-------|-------------|
 | `nonstationary_transformer` | `NonStationaryTransformerModel` | Non-stationary Transformer with de-stationary attention blocks and learnable stationarization to handle distribution shifts |
 | `transformer` | `TransformerModel` | Transformer with causal self-attention and positional encoding |
+| `informer` | `InformerModel` | Informer with ProbSparse attention, distilling encoder, and lightweight decoder for efficient long-horizon forecasting |
 | `autoformer` | `AutoformerModel` | Autoformer with series decomposition and auto-correlation attention for long-range dependencies |
 | `fedformer` | `FEDformerModel` | FEDformer - Frequency Enhanced Decomposed Transformer with Fourier/Wavelet attention operating in frequency domain for long-term forecasting (ICML 2022) |
 | `patchtst` | `PatchTSTModel` | PatchTST - channel-independent patch time series transformer with efficient patching mechanism (ICLR 2023) |
