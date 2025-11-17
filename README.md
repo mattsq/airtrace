@@ -59,6 +59,9 @@ airtrace train exp=exp_001_gru_zscore
 
 # Override parameters from command line
 airtrace train model=tcn train.epochs=100 train.batch_size=128
+
+# Show CLI options and Hydra defaults
+airtrace train --help
 ```
 
 ### Evaluate a model
@@ -66,6 +69,10 @@ airtrace train model=tcn train.epochs=100 train.batch_size=128
 ```bash
 airtrace eval exp=exp_001_gru_zscore checkpoint=best.ckpt
 ```
+
+The ``train`` and ``eval`` positional commands are mapped to Hydra's ``mode``
+override, so you can use the documented subcommand-style syntax without
+manually supplying ``mode=train`` or ``mode=eval``.
 
 ## Project Structure
 
