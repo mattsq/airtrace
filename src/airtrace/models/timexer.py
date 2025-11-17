@@ -252,10 +252,14 @@ class TimeXerModel(ARBaseModel):
 
         # ===== Prediction head =====
         # Calculate total dimension after processing
-        # Global tokens + all patch representations from all channels
-        # For simplicity, we'll use global tokens and aggregate patch info
+        # We aggregate both the global token summary and patch summary for each
+        # endogenous channel, then flatten across channels. This results in a
+        # feature vector of size ``2 * d_model * input_dim`` regardless of the
+        # number of global tokens (they're averaged per channel).
+        head_input_dim = 2 * d_model * input_dim
+
         self.head = nn.Sequential(
-            nn.Linear(d_model * num_global_tokens + d_model * input_dim, dim_feedforward),
+            nn.Linear(head_input_dim, dim_feedforward),
             nn.GELU() if activation == "gelu" else nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(dim_feedforward, output_dim * pred_len),
