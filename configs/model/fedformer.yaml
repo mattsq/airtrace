@@ -1,0 +1,18 @@
+# @package _global_
+
+model:
+  name: fedformer
+  params:
+    d_model: 128
+    n_heads: 8
+    e_layers: 2
+    d_layers: 1
+    moving_avg: 25
+    d_ff: 256
+    dropout: 0.1
+    activation: "gelu"
+    freq_mode: "fourier"  # or "wavelet"
+    modes: 32  # Number of Fourier modes (for fourier mode)
+    label_len: 24
+    pred_len: 1
+    max_len: 512
