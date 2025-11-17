@@ -17,6 +17,12 @@ AirTrace enables rapid experimentation with different sequence models (RNNs, TCN
 ## Installation
 
 ```bash
+pip install airtrace
+```
+
+## Installation from Source for Development
+
+```bash
 # Clone the repository
 git clone https://github.com/yourusername/airtrace.git
 cd airtrace
