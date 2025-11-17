@@ -88,12 +88,11 @@ class NBeatsBlock(nn.Module):
         return torch.stack([t ** i for i in range(self.degree + 1)], dim=0)
 
     def _seasonality_basis(
-        self, length: int, device: torch.device, dtype: torch.dtype
+        self, length: int, num_harmonics: int, device: torch.device, dtype: torch.dtype
     ) -> torch.Tensor:
-        harmonics = self.harmonics or max(1, length // 2)
         t = torch.linspace(0, 2 * torch.pi, steps=length, device=device, dtype=dtype)
         basis = [torch.ones_like(t)]
-        for k in range(1, harmonics + 1):
+        for k in range(1, num_harmonics + 1):
             basis.append(torch.cos(k * t))
             basis.append(torch.sin(k * t))
         return torch.stack(basis, dim=0)
@@ -128,8 +127,10 @@ class NBeatsBlock(nn.Module):
             theta_dim, _ = self._basis_dim(backcast_size, forecast_size)
             theta_b = theta[:, :theta_dim]
             theta_f = theta[:, theta_dim:]
-            backcast_basis = self._seasonality_basis(backcast_length, device, dtype)
-            forecast_basis = self._seasonality_basis(self.pred_len, device, dtype)
+            # Compute harmonics once based on backcast length
+            num_harmonics = self.harmonics or max(1, backcast_length // 2)
+            backcast_basis = self._seasonality_basis(backcast_length, num_harmonics, device, dtype)
+            forecast_basis = self._seasonality_basis(self.pred_len, num_harmonics, device, dtype)
             backcast = theta_b @ backcast_basis.repeat_interleave(
                 self.input_dim, dim=1
             )
