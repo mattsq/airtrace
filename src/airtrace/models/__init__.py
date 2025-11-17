@@ -23,6 +23,7 @@ from .baselines import (
 from .chronos_bolt import ChronosBoltModel
 from .autoformer import AutoformerModel
 from .cyclenet import CycleNetModel
+from .crossformer import CrossformerModel
 from .fedformer import FEDformerModel
 from .gru_ar import GRUARModel
 from .itransformer import iTransformerModel
@@ -30,6 +31,7 @@ from .lag_llama import LagLlamaModel
 from .lstm_ar import LSTMARModel
 from .mamba2 import Mamba2Model
 from .moderntcn import ModernTCNModel
+from .nonstationary_transformer import NonStationaryTransformerModel
 from .moirai import MoiraiModel
 from .patchtst import PatchTSTModel
 from .registry import build_model, list_models, register
@@ -54,10 +56,12 @@ __all__ = [
     "TransformerModel",
     "PatchTSTModel",
     "iTransformerModel",
+    "NonStationaryTransformerModel",
     "TimeMixerModel",
     "AutoformerModel",
     "FEDformerModel",
     "CycleNetModel",
+    "CrossformerModel",
     "ChronosBoltModel",
     "MoiraiModel",
     "Mamba2Model",
