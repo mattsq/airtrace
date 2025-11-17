@@ -1,0 +1,71 @@
+# @package _global_
+
+model:
+  name: mambats
+  params:
+    # Prediction configuration
+    pred_len: 64                 # Multi-step forecast horizon
+                                 # - Use 1 for anomaly detection / one-step-ahead
+                                 # - Use 16-64 for trajectory forecasting
+                                 # - Override per experiment based on task requirements
+
+    # Patching configuration (MambaTS specific)
+    patch_len: 16                # Length of each patch (typical: 8-32)
+                                 # - Larger patches = fewer tokens, more compression
+                                 # - Smaller patches = more granular temporal info
+    stride: 8                    # Stride for patch creation (typical: patch_len // 2)
+                                 # - stride < patch_len creates overlapping patches
+                                 # - stride == patch_len for non-overlapping patches
+                                 # - 50% overlap (stride = patch_len // 2) often works well
+
+    # Architecture dimensions
+    embed_dim: 128               # Patch embedding dimension
+                                 # - Controls model capacity and memory usage
+                                 # - Typical: 64-256 for most tasks
+    state_dim: 16                # Selective scan internal state dimension
+                                 # - Controls state space capacity (typical: 8-32)
+                                 # - Smaller than embed_dim for efficiency
+    num_layers: 4                # Number of stacked Temporal Mamba Blocks
+                                 # - More layers = deeper model, longer-range dependencies
+                                 # - Typical: 2-8 layers
+
+    # Temporal Mamba Block configuration
+    expand_factor: 2             # Expansion factor for intermediate dimensions in TMB
+                                 # - Controls FFN hidden dimension (embed_dim * expand_factor)
+                                 # - Typical: 2-4
+    bidirectional_scan: true     # Use bidirectional selective scan
+                                 # - true: forward + backward scan (averaged)
+                                 # - false: forward scan only (causal)
+                                 # - Bidirectional often improves stability
+
+    # Regularization
+    dropout: 0.1                 # Dropout probability throughout model
+                                 # - Applied to patch embeddings, TMB outputs, and head
+                                 # - Typical: 0.0-0.2
+
+    # Input normalization
+    normalize_input: true        # Apply mean-std normalization to input sequences
+                                 # - Normalizes each sequence independently
+                                 # - Predictions are denormalized automatically
+                                 # - Recommended for stable training
+
+# Model-specific notes:
+# - MambaTS uses Variable Scan along Time (VST) to organize patches from different
+#   variables at the same timestep together, enabling efficient cross-variable dependency modeling
+# - Temporal Mamba Blocks (TMB) remove causal convolution from standard Mamba, as it's
+#   unnecessary for long-term forecasting tasks
+# - Linear O(L) complexity enables efficient processing of long sequences
+# - Patching reduces sequence length and creates richer token representations
+# - Achieves SOTA results on long-term forecasting benchmarks
+
+# Typical hyperparameter ranges:
+# - Short sequences (T < 100):   patch_len=8,  stride=4,  embed_dim=64,  num_layers=2
+# - Medium sequences (T < 500):  patch_len=16, stride=8,  embed_dim=128, num_layers=4
+# - Long sequences (T > 500):    patch_len=32, stride=16, embed_dim=256, num_layers=6
+
+# Performance tuning:
+# - Increase embed_dim and num_layers for better capacity (at cost of memory/speed)
+# - Decrease patch_len and stride for more fine-grained temporal modeling
+# - Enable bidirectional_scan for non-causal tasks (offline forecasting)
+# - Disable bidirectional_scan for real-time/causal forecasting
+# - Adjust state_dim to control state space capacity vs efficiency tradeoff

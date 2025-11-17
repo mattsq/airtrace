@@ -32,6 +32,7 @@ from .itransformer import iTransformerModel
 from .lag_llama import LagLlamaModel
 from .lstm_ar import LSTMARModel
 from .mamba2 import Mamba2Model
+from .mambats import MambaTSModel
 from .moderntcn import ModernTCNModel
 from .moirai import MoiraiModel
 from .nbeats import NBeatsModel
@@ -74,6 +75,7 @@ __all__ = [
     "ChronosBoltModel",
     "MoiraiModel",
     "Mamba2Model",
+    "MambaTSModel",
     "LagLlamaModel",
     "DLinearModel",
     "NLinearModel",
