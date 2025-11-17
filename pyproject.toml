@@ -55,6 +55,10 @@ airtrace = "airtrace.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+exclude = ["scripts*"]
+
+[tool.setuptools.package-data]
+airtrace = ["configs/**/*.yaml"]
 
 [tool.black]
 line-length = 100
