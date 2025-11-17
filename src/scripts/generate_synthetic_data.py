@@ -151,7 +151,7 @@ def generate_standalone(
     print(f"\n✓ Synthetic dataset ready in {output_dir}")
 
 
-@hydra.main(version_base=None, config_path="../../configs", config_name="config")
+@hydra.main(version_base=None, config_path="../airtrace/configs", config_name="config")
 def main_hydra(cfg: DictConfig):
     """Main entry point using Hydra config."""
     generate_from_config(cfg)

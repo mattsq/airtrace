@@ -6,9 +6,6 @@ from pathlib import Path
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
-# Add src to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 from airtrace.data.datamodule import SensorDataModule
 from airtrace.evaluation.eval_runner import EvaluationRunner
 from airtrace.models.registry import build_model
@@ -177,7 +174,7 @@ def evaluate(cfg: DictConfig):
     print("=" * 80)
 
 
-@hydra.main(version_base=None, config_path="../../configs", config_name="config")
+@hydra.main(version_base=None, config_path="pkg://airtrace.configs", config_name="config")
 def main(cfg: DictConfig):
     """Main entry point.
 

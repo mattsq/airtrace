@@ -100,7 +100,7 @@ class ModelTester:
         from hydra import initialize, compose
 
         # Initialize Hydra
-        with initialize(version_base=None, config_path="../../configs"):
+        with initialize(version_base=None, config_path="../airtrace/configs"):
             cfg = compose(
                 config_name="config",
                 overrides=[
