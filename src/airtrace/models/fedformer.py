@@ -199,7 +199,7 @@ class FourierAttention(nn.Module):
             attn_weight = F.softmax(attn_weight, dim=-1)
 
             # Apply attention to values
-            out_fft[:, :, i, :] = v_fft[:, :, i, :] * attn_weight.unsqueeze(-1).expand_as(v_fft[:, :, i, :])
+            out_fft[:, :, i, :] = v_fft[:, :, i, :] * attn_weight
 
         # Inverse FFT
         out = torch.fft.irfft(out_fft, n=L_q, dim=2, norm='ortho')
