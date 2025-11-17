@@ -10,6 +10,11 @@ mode: train
 seed: 42
 log_dir: runs/${now:%Y%m%d}/${exp_name}
 exp_name: "debug"
+checkpoint: null
+
+cli:
+  data_check: false
+  dry_run: false
 
 # Hydra configuration
 hydra:
