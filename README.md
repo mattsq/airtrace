@@ -526,7 +526,7 @@ See [Synthetic Data Documentation](docs/synthetic_data.md) for details.
 
 ## Model Registry
 
-AirTrace includes 42 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
+AirTrace includes 43 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
 
 ### Recurrent Neural Networks
 
@@ -564,6 +564,7 @@ AirTrace includes 42 registered models spanning from simple baselines to sophist
 | `chronos_bolt` | `ChronosBoltModel` | Chronos-Bolt inspired pretrained foundation model with gated conv-attention blocks, tokenizer-free patching, and optional LoRA adapters for efficient fine-tuning |
 | `moirai` | `MoiraiModel` | Moirai-style multiresolution selective state-space model combining hierarchical patching with selective scan blocks and optional LoRA adapters |
 | `mamba2` | `Mamba2Model` | Temporal Mamba-2 selective state-space model with hardware-aware chunked scans, bidirectional gating, and LoRA-ready forecast head for 100k-token contexts |
+| `mambats` | `MambaTSModel` | MambaTS - improved selective state-space model with Variable Scan along Time (VST) and Temporal Mamba Blocks (TMB) for efficient long-term forecasting with linear complexity (arXiv 2024) |
 | `lag_llama` | `LagLlamaModel` | Retrieval-augmented Lag-Llama-style diffusion forecaster combining patch tokenization, nearest-neighbor memory, and latent diffusion sampling for probabilistic trajectories |
 
 ### Convolutional Models
