@@ -48,42 +48,385 @@ uv pip install -e ".[dev]"
 
 ## Quick Start
 
-### CLI essentials
+This guide walks you through training a timeseries model on your own data in AirTrace.
+
+### Quick Test with Synthetic Data
+
+If you want to test AirTrace before preparing your data:
 
 ```bash
-# Discover commands and flags
+# Generate synthetic data
+airtrace train data=synthetic --dry-run  # Verify setup
+airtrace train data=synthetic  # Train a model
+```
+
+### Working with Your Own Data
+
+#### Step 1: Prepare Your Raw Data
+
+AirTrace expects timeseries data in Parquet or CSV format. Each file should represent one flight or timeseries sequence.
+
+**Required format:**
+- One file per flight/sequence: `{flight_id}.parquet` or `{flight_id}.csv`
+- **Timestamp as the index** (critical for resampling)
+- Sensor value columns (e.g., `fuel_flow`, `mach`, `altitude`)
+
+**Example - saving CSV with timestamp as index:**
+```python
+import pandas as pd
+
+# Your data with timestamp column
+df = pd.DataFrame({
+    'timestamp': pd.date_range('2024-01-01', periods=1000, freq='1S'),
+    'fuel_flow': [1250.5, 1251.2, ...],
+    'mach': [0.82, 0.82, ...],
+    'altitude': [35000, 35001, ...],
+    'oat': [-45, -45, ...],
+    'n1': [85.2, 85.3, ...]
+})
+
+# Set timestamp as index before saving
+df = df.set_index('timestamp')
+df.to_parquet('data/raw/flight_001.parquet')
+# or df.to_csv('data/raw/flight_001.csv')
+```
+
+**Expected file structure:**
+```
+timestamp                  fuel_flow  mach  altitude  oat   n1
+2024-01-01 00:00:00       1250.5     0.82  35000     -45   85.2
+2024-01-01 00:00:01       1251.2     0.82  35001     -45   85.3
+...
+```
+
+Place your files in `data/raw/`:
+```bash
+data/raw/flight_001.parquet
+data/raw/flight_002.parquet
+data/raw/flight_003.parquet
+...
+```
+
+**⚠️ Important:** If your CSV has timestamp as a regular column (not the index), `process_to_interim` will fail to resample correctly. Always ensure timestamp is the DataFrame index.
+
+#### Step 2: Process Data to Interim Format
+
+Convert raw data to clean, aligned timeseries:
+
+```python
+from airtrace.data.loaders import RawDataLoader
+
+loader = RawDataLoader("data")
+
+# Process each flight
+flight_ids = ["flight_001", "flight_002", "flight_003"]
+for flight_id in flight_ids:
+    loader.process_to_interim(
+        flight_id=flight_id,
+        resample_rate="1S",  # 1 second intervals
+        sensor_list=["fuel_flow", "mach", "altitude", "oat", "n1"]
+    )
+```
+
+This creates cleaned files in `data/interim/` with:
+- Uniform timesteps (resampled to 1Hz)
+- Missing values handled
+- Consistent sensor ordering
+
+**If your raw CSVs have timestamp as a column (not index), preprocess them first:**
+
+```python
+import pandas as pd
+from pathlib import Path
+
+raw_dir = Path("data/raw")
+for csv_file in raw_dir.glob("*.csv"):
+    # Read with timestamp as column
+    df = pd.read_csv(csv_file)
+
+    # Set timestamp as index
+    df['timestamp'] = pd.to_datetime(df['timestamp'])
+    df = df.set_index('timestamp')
+
+    # Save back as parquet with proper index
+    output_path = csv_file.with_suffix('.parquet')
+    df.to_parquet(output_path)
+    print(f"Converted {csv_file.name} -> {output_path.name}")
+
+# Now use the loader on the parquet files
+loader = RawDataLoader("data")
+for flight_id in ["flight_001", "flight_002"]:
+    loader.process_to_interim(flight_id=flight_id, resample_rate="1S")
+```
+
+#### Step 3: Create Windowed Datasets
+
+Generate sliding windows for model training:
+
+```python
+from airtrace.data.loaders import InterimDataProcessor
+from airtrace.data.windows import WindowSpec
+
+processor = InterimDataProcessor("data")
+
+# Define window parameters
+window_spec = WindowSpec(
+    input_len=256,      # 256 timesteps of history
+    pred_len=32,        # Predict 32 timesteps ahead
+    stride=32,          # Slide by 32 steps (no overlap)
+    target_sensors=["fuel_flow", "mach"]  # What to predict
+)
+
+# Split your flights
+train_flights = ["flight_001", "flight_002"]
+val_flights = ["flight_003"]
+
+# Create train windows
+processor.create_windows(
+    flight_ids=train_flights,
+    window_spec=window_spec,
+    output_name="train"
+)
+
+# Create validation windows
+processor.create_windows(
+    flight_ids=val_flights,
+    window_spec=window_spec,
+    output_name="val"
+)
+```
+
+This creates index files in `data/metadata/`:
+- `train_index.parquet` - Training windows
+- `val_index.parquet` - Validation windows
+
+#### Step 4: Create a Data Configuration
+
+Create a config file for your dataset at `src/airtrace/configs/data/my_dataset.yaml`:
+
+```yaml
+# @package _global_
+
+data:
+  root: data/
+  dataset_name: "my_dataset"
+  train_index: "metadata/train_index.parquet"
+  val_index: "metadata/val_index.parquet"
+  test_index: "metadata/test_index.parquet"  # Optional
+
+  window:
+    input_len: 256
+    pred_len: 32
+    stride: 32
+    target_sensors: ["fuel_flow", "mach"]
+
+  sensors:
+    use: ["fuel_flow", "mach", "altitude", "oat", "n1"]
+
+  static_features:
+    use: []  # Add flight-level features if available
+```
+
+Verify your data setup:
+```bash
+airtrace train --data-check data=my_dataset
+```
+
+#### Step 5: Choose Data Transforms
+
+Transforms preprocess your data. Common pipelines:
+
+**Z-score normalization + differencing** (for non-stationary data):
+```bash
+airtrace train data=my_dataset transforms=zscore_diff
+```
+
+**Min-max scaling only** (for bounded sensors):
+```bash
+airtrace train data=my_dataset transforms=minmax_only
+```
+
+**Robust scaling** (for outlier-heavy data):
+```bash
+airtrace train data=my_dataset transforms=robust_scaler
+```
+
+**No transforms** (for pre-normalized data):
+```bash
+airtrace train data=my_dataset transforms=minimal
+```
+
+Custom transform pipeline (`src/airtrace/configs/transforms/my_transforms.yaml`):
+```yaml
+# @package _global_
+
+transforms:
+  pipeline:
+    - name: zscore
+      per_sensor: true
+      center: true
+      scale: true
+    - name: clip
+      min_percentile: 1
+      max_percentile: 99
+```
+
+#### Step 6: Select and Train a Model
+
+Choose a model architecture based on your needs:
+
+**For quick experimentation - Baselines:**
+```bash
+# Persistence baseline (last value)
+airtrace train data=my_dataset model=persistence
+
+# Linear autoregressive
+airtrace train data=my_dataset model=linear_ar
+```
+
+**For strong performance - Neural architectures:**
+```bash
+# GRU (good default for timeseries)
+airtrace train data=my_dataset model=gru_ar
+
+# Transformer (for long-range dependencies)
+airtrace train data=my_dataset model=transformer
+
+# PatchTST (state-of-the-art for many tasks)
+airtrace train data=my_dataset model=patchtst
+
+# ModernTCN (efficient convolutional)
+airtrace train data=my_dataset model=moderntcn
+```
+
+**Full training command with all options:**
+```bash
+airtrace train \
+  data=my_dataset \
+  model=gru_ar \
+  transforms=zscore_diff \
+  task=one_step \
+  train.epochs=50 \
+  train.batch_size=64 \
+  train.lr=0.001
+```
+
+**Override model hyperparameters:**
+```bash
+airtrace train \
+  data=my_dataset \
+  model=gru_ar \
+  model.hidden_dim=256 \
+  model.num_layers=3 \
+  model.dropout=0.2
+```
+
+Training progress is logged to `runs/{date}/{exp_name}/`.
+
+#### Step 7: Evaluate Your Model
+
+After training, evaluate on test data:
+
+```bash
+# Evaluate best checkpoint
+airtrace eval \
+  --checkpoint runs/20241117/my_experiment/checkpoints/best.ckpt \
+  data=my_dataset
+```
+
+This outputs metrics:
+```
+================================================================================
+Evaluation Results
+================================================================================
+MSE         : 0.0234
+MAE         : 0.1123
+RMSE        : 0.1531
+Samples     : 1523
+================================================================================
+```
+
+### Complete Example Workflow
+
+Here's a full end-to-end example:
+
+```bash
+# 1. Verify installation
+airtrace --version
+
+# 2. Prepare your data (Python script)
+python scripts/prepare_my_data.py  # Your preprocessing script
+
+# 3. Validate data
+airtrace train --data-check data=my_dataset
+
+# 4. Quick test with baseline
+airtrace train data=my_dataset model=persistence train.epochs=1
+
+# 5. Train a real model
+airtrace train \
+  data=my_dataset \
+  model=gru_ar \
+  transforms=zscore_diff \
+  train.epochs=50 \
+  train.batch_size=64
+
+# 6. Evaluate
+airtrace eval \
+  --checkpoint runs/20241117/gru_zscore_one_step/checkpoints/best.ckpt \
+  data=my_dataset
+```
+
+### Creating Reusable Experiment Configs
+
+For repeated experiments, create a config at `src/airtrace/configs/exp/my_experiment.yaml`:
+
+```yaml
+defaults:
+  - override /data: my_dataset
+  - override /model: gru_ar
+  - override /transforms: zscore_diff
+  - override /task: one_step
+  - override /train: default
+
+exp_name: "my_gru_experiment"
+seed: 42
+```
+
+Then run simply:
+```bash
+airtrace train exp=my_experiment
+```
+
+### CLI Reference
+
+```bash
+# Help and version
 airtrace --help
 airtrace --version
 
-# Validate data paths without launching training
-airtrace train --data-check data=synthetic
+# Validate data only
+airtrace train --data-check data=my_dataset
 
-# Compose configs and exit after verification
-airtrace train --dry-run exp=exp_001_gru_zscore
+# Dry run (check config without training)
+airtrace train --dry-run exp=my_experiment
 
-# Train with overrides (Hydra overrides still apply)
+# Train with overrides
 airtrace train model=tcn train.epochs=100 train.batch_size=128
 
-# Evaluate a saved checkpoint
-airtrace eval --checkpoint runs/20240516/demo/checkpoints/best.ckpt data=synthetic
+# Evaluate checkpoint
+airtrace eval --checkpoint path/to/best.ckpt data=my_dataset
+
+# Resume from checkpoint
+airtrace train --checkpoint path/to/checkpoint.ckpt exp=my_experiment
 ```
 
-Hydra overrides (for example, `model=tcn train.epochs=50`) can be appended after
-the CLI flags for both `train` and `eval`.
+### Next Steps
 
-### Data preparation
-
-AirTrace expects parquet index files such as `metadata/train_index.parquet` and
-`metadata/val_index.parquet` under `data/`. If you don't have local data yet,
-use the bundled synthetic configs:
-
-```bash
-airtrace train --data-check data=synthetic
-airtrace eval --checkpoint <path/to/ckpt> data=synthetic
-```
-
-Running with `--data-check` will verify the configured paths and exit early with
-actionable errors if files are missing.
+- **Explore models**: See [Model Registry](#model-registry) for 42+ available models
+- **Custom components**: See [Adding New Components](#adding-new-components)
+- **Advanced features**: Check `docs/architecture.md` for design details
+- **Experiment tracking**: Review `docs/experiments.md` for best practices
 
 ## Project Structure
 
