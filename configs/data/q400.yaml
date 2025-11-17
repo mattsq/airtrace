@@ -1,0 +1,54 @@
+# @package _global_
+
+data:
+  root: data/
+  dataset_name: "q400"
+  raw_file: "raw/Q400-Ts-Data.parquet"
+  train_index: "metadata/q400_train_index.parquet"
+  val_index: "metadata/q400_val_index.parquet"
+  test_index: "metadata/q400_test_index.parquet"
+
+  # Column name mapping from Q400 raw data to standardized sensor names
+  column_mapping:
+    "Engine Fuel Flow Total (kg/hr)": "fuel_flow"
+    "Airspeed (true) (knots)": "airspeed_true"
+    "% Torque Average (%)": "torque"
+    "Pressure Altitude (ft)": "altitude"
+    "Air Temperature (outside) (deg C)": "oat"
+    "Gross Weight (Best Uncorrected) (kg)": "weight"
+
+  window:
+    input_len: 128  # Input sequence length
+    pred_len: 16    # Prediction horizon
+    stride: 16      # Stride for sliding window
+    target_sensors: ["fuel_flow"]  # Primary prediction target
+
+  sensors:
+    # Using sensors with <0.1% missing values for initial testing
+    # Excluding: weight (6.4% missing), oat (50% missing)
+    use: ["fuel_flow", "airspeed_true", "torque", "altitude"]
+
+  # Data quality notes:
+  # - Total flights: 6,127
+  # - Total timesteps: 25,893,217
+  # - Avg flight length: ~4,226 timesteps
+  # - Flight length range: 360 to 30,936 timesteps
+  # - Missing values:
+  #   * fuel_flow: 5,701 (0.02%)
+  #   * airspeed_true: 5,701 (0.02%)
+  #   * torque: 5,701 (0.02%)
+  #   * altitude: 5,701 (0.02%)
+  #   * weight: 1,659,200 (6.4%) - EXCLUDED
+  #   * oat: 12,949,459 (50%) - EXCLUDED
+
+  # Imputation strategy for remaining missing values
+  imputation:
+    method: "forward_fill"  # Forward fill then backward fill for edges
+
+  # Train/val/test split (flight-level to prevent leakage)
+  split:
+    train: 0.70  # 70% of flights
+    val: 0.15    # 15% of flights
+    test: 0.15   # 15% of flights
+    random_seed: 42
+    stratify_by: null  # Could stratify by flight_length bins if needed

@@ -25,7 +25,8 @@ class SensorWindowDataset(Dataset):
         data_store: "DataStore",
         transforms: Optional[Any] = None,
         sensor_names: Optional[List[str]] = None,
-        target_sensors: Optional[List[str]] = None
+        target_sensors: Optional[List[str]] = None,
+        window_spec: Optional[Any] = None
     ):
         """Initialize dataset.
 
@@ -35,12 +36,14 @@ class SensorWindowDataset(Dataset):
             transforms: Optional transform pipeline to apply
             sensor_names: List of sensor names to use as inputs
             target_sensors: List of sensor names to use as targets
+            window_spec: WindowSpec object defining window structure
         """
         self.index_df = index_df.reset_index(drop=True)
         self.data_store = data_store
         self.transforms = transforms
         self.sensor_names = sensor_names
         self.target_sensors = target_sensors or sensor_names
+        self.window_spec = window_spec
 
         # Compute dimensions
         self.in_dim = len(sensor_names) if sensor_names else None
@@ -61,14 +64,33 @@ class SensorWindowDataset(Dataset):
         """
         row = self.index_df.iloc[idx]
 
-        # Get window from data store
-        x, y, meta = self.data_store.get_window(
+        # Get all columns needed (sensors + targets)
+        all_columns = list(set(self.sensor_names) | set(self.target_sensors))
+
+        # Get full window from data store (no splitting)
+        window_data, meta = self.data_store.get_full_window(
             flight_id=row.flight_id,
             start_idx=row.start_idx,
             end_idx=row.end_idx,
-            sensor_names=self.sensor_names,
-            target_sensors=self.target_sensors
+            column_names=all_columns
         )
+
+        # Dataset handles splitting using WindowSpec
+        if self.window_spec is not None:
+            input_len = self.window_spec.input_len
+        else:
+            # Fallback: use heuristic (this maintains backward compatibility)
+            # Assume 90% input, 10% target
+            total_len = len(window_data)
+            input_len = int(total_len * 0.9)
+
+        # Get column indices for sensors and targets
+        sensor_indices = [all_columns.index(s) for s in self.sensor_names]
+        target_indices = [all_columns.index(s) for s in self.target_sensors]
+
+        # Split window data
+        x = window_data[:input_len, sensor_indices]
+        y = window_data[input_len:, target_indices]
 
         # Apply transforms
         if self.transforms is not None:
@@ -104,6 +126,56 @@ class DataStore:
         self.format = format
         self._cache = {}  # Simple in-memory cache
 
+    def get_full_window(
+        self,
+        flight_id: str,
+        start_idx: int,
+        end_idx: int,
+        column_names: List[str]
+    ) -> tuple:
+        """Get a complete window without splitting into input/target.
+
+        This is the new preferred method. The Dataset will handle splitting.
+
+        Args:
+            flight_id: Flight identifier
+            start_idx: Start index of window
+            end_idx: End index of window
+            column_names: Column names to extract
+
+        Returns:
+            Tuple of (window_array, meta) where:
+                window_array: NumPy array [T_window, D]
+                meta: Metadata dict
+        """
+        # Load flight data (with caching)
+        if flight_id not in self._cache:
+            self._cache[flight_id] = self._load_flight(flight_id)
+
+        flight_data = self._cache[flight_id]
+
+        # Validate columns exist
+        missing_cols = set(column_names) - set(flight_data.columns)
+        if missing_cols:
+            raise ValueError(
+                f"Missing columns in flight {flight_id}: {missing_cols}\n"
+                f"Available columns: {list(flight_data.columns)}"
+            )
+
+        # Extract window using iloc (correct pandas indexing)
+        window_df = flight_data.iloc[start_idx:end_idx]
+
+        # Select columns and convert to numpy
+        window_array = window_df[column_names].values
+
+        meta = {
+            "flight_id": flight_id,
+            "start_idx": start_idx,
+            "end_idx": end_idx
+        }
+
+        return window_array, meta
+
     def get_window(
         self,
         flight_id: str,
@@ -112,7 +184,10 @@ class DataStore:
         sensor_names: List[str],
         target_sensors: List[str]
     ) -> tuple:
-        """Get a window of data.
+        """Get a window of data (DEPRECATED - use get_full_window instead).
+
+        This method is kept for backward compatibility but is deprecated.
+        Use get_full_window() and handle splitting in the Dataset.
 
         Args:
             flight_id: Flight identifier
@@ -127,26 +202,26 @@ class DataStore:
                 y: Target array [T_out, D_out]
                 meta: Metadata dict
         """
-        # Load flight data (with caching)
-        if flight_id not in self._cache:
-            self._cache[flight_id] = self._load_flight(flight_id)
+        # Get full window
+        all_columns = list(set(sensor_names) | set(target_sensors))
+        window_array, meta = self.get_full_window(
+            flight_id=flight_id,
+            start_idx=start_idx,
+            end_idx=end_idx,
+            column_names=all_columns
+        )
 
-        flight_data = self._cache[flight_id]
+        # Use heuristic split (90/10) for backward compatibility
+        total_len = len(window_array)
+        input_len = int(total_len * 0.9)
 
-        # Extract window
-        window_data = flight_data[start_idx:end_idx]
+        # Get column indices
+        sensor_indices = [all_columns.index(s) for s in sensor_names]
+        target_indices = [all_columns.index(s) for s in target_sensors]
 
-        # Split into input and target based on window spec
-        # This is a simplified version - real implementation would use WindowSpec
-        input_len = end_idx - start_idx  # Placeholder
-        x = window_data[:input_len, [flight_data.columns.get_loc(s) for s in sensor_names]]
-        y = window_data[input_len:, [flight_data.columns.get_loc(s) for s in target_sensors]]
-
-        meta = {
-            "flight_id": flight_id,
-            "start_idx": start_idx,
-            "end_idx": end_idx
-        }
+        # Split
+        x = window_array[:input_len, sensor_indices]
+        y = window_array[input_len:, target_indices]
 
         return x, y, meta
 
