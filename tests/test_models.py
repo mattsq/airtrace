@@ -7,6 +7,7 @@ from airtrace.models import (
     CycleNetModel,
     DriftModel,
     ExponentialSmoothingModel,
+    DLinearModel,
     GRUARModel,
     GRUSeq2SeqModel,
     HoltLinearTrendModel,
@@ -22,6 +23,8 @@ from airtrace.models import (
     MLPARModel,
     ModernTCNModel,
     MovingAverageModel,
+    NBeatsModel,
+    NLinearModel,
     NonStationaryTransformerModel,
     PatchTSTModel,
     PersistenceModel,
@@ -97,6 +100,24 @@ def test_informer_model_forward(batch):
     assert output["extras"]["sparse_attention"] is not None
 
 
+def test_dlinear_model_forward(batch):
+    """DLinear should produce decomposed linear forecasts."""
+
+    model = DLinearModel(
+        input_dim=5,
+        output_dim=3,
+        seq_len=batch.shape[1],
+        pred_len=2,
+        kernel_size=7,
+    )
+
+    output = model(batch)
+
+    assert output["preds"].shape == (4, 2, 3)
+    assert "seasonal_component" in output["extras"]
+    assert "trend_component" in output["extras"]
+
+
 def test_nonstationary_transformer_forward(batch):
     """Non-stationary Transformer should honor pred_len and expose attention maps."""
     model = NonStationaryTransformerModel(
@@ -135,6 +156,27 @@ def test_autoformer_model_forward(batch):
 
     assert "preds" in output
     assert output["preds"].shape == (4, 2, 3)
+
+
+def test_nbeats_model_forward(batch):
+    """N-BEATS should produce the correct forecast shape and stack outputs."""
+    model = NBeatsModel(
+        input_dim=5,
+        output_dim=3,
+        pred_len=2,
+        stack_types=["trend", "seasonality"],
+        num_blocks_per_stack=1,
+        hidden_size=64,
+        num_layers=3,
+        degree=2,
+        harmonics=3,
+    )
+
+    output = model(batch)
+
+    assert "preds" in output
+    assert output["preds"].shape == (4, 2, 3)
+    assert output["extras"]["stack_forecasts"].shape == (4, 2, 2, 3)
 
 
 def test_lag_llama_model_forward(batch):
@@ -401,6 +443,22 @@ def test_var_model_recovers_known_system():
 
     expected_next = c + window[-1] @ A
     torch.testing.assert_close(preds, expected_next, atol=1e-4, rtol=1e-4)
+
+
+def test_nlinear_mean_restoration():
+    """NLinear should add back the temporal mean when weights are zeroed."""
+
+    x = torch.full((2, 4, 3), 2.5)
+    model = NLinearModel(input_dim=3, output_dim=3, seq_len=4, pred_len=1, center_data=True)
+
+    model.linear.weight.data.zero_()
+    model.linear.bias.data.zero_()
+
+    output = model(x)
+
+    expected = torch.full((2, 1, 3), 2.5)
+    torch.testing.assert_close(output["preds"], expected)
+    assert output["extras"]["mean_offset"].shape == (2, 1, 3)
 
 
 def test_mean_model_forward(batch):
