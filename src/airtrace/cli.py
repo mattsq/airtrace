@@ -2,6 +2,7 @@
 
 import sys
 from pathlib import Path
+from typing import List
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -192,5 +193,33 @@ def main(cfg: DictConfig):
         sys.exit(1)
 
 
-if __name__ == "__main__":
+def _normalize_hydra_args(argv: List[str]) -> List[str]:
+    """Map positional subcommands to Hydra overrides.
+
+    Hydra interprets bare positional arguments as override expressions, which
+    causes commands like ``airtrace train`` to fail with a parse error. We
+    convert the first positional argument to the expected ``mode=`` override so
+    both ``airtrace train`` and ``airtrace eval`` behave like documented
+    subcommands while still supporting standard Hydra overrides.
+
+    Args:
+        argv: Raw command-line arguments (excluding the program name).
+
+    Returns:
+        The normalized argument list suitable for Hydra parsing.
+    """
+
+    if argv and argv[0] in {"train", "eval"}:
+        return [f"mode={argv[0]}", *argv[1:]]
+    return argv
+
+
+def cli() -> None:
+    """Entry point for the ``airtrace`` console script."""
+
+    sys.argv = [sys.argv[0], *_normalize_hydra_args(sys.argv[1:])]
     main()
+
+
+if __name__ == "__main__":
+    cli()

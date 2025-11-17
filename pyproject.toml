@@ -52,7 +52,7 @@ dev = [
 ]
 
 [project.scripts]
-airtrace = "airtrace.cli:main"
+airtrace = "airtrace.cli:cli"
 
 [tool.setuptools.packages.find]
 where = ["src"]
