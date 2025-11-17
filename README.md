@@ -144,7 +144,7 @@ See [Synthetic Data Documentation](docs/synthetic_data.md) for details.
 
 ## Model Registry
 
-AirTrace includes 27 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
+AirTrace includes 40 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
 
 ### Recurrent Neural Networks
 
@@ -164,8 +164,8 @@ AirTrace includes 27 registered models spanning from simple baselines to sophist
 
 | Model Name | Class | Description |
 |------------|-------|-------------|
-| `transformer` | `TransformerModel` | Transformer with causal self-attention and positional encoding |
 | `nonstationary_transformer` | `NonStationaryTransformerModel` | Non-stationary Transformer with de-stationary attention blocks and learnable stationarization to handle distribution shifts |
+| `transformer` | `TransformerModel` | Transformer with causal self-attention and positional encoding |
 | `autoformer` | `AutoformerModel` | Autoformer with series decomposition and auto-correlation attention for long-range dependencies |
 | `fedformer` | `FEDformerModel` | FEDformer - Frequency Enhanced Decomposed Transformer with Fourier/Wavelet attention operating in frequency domain for long-term forecasting (ICML 2022) |
 | `patchtst` | `PatchTSTModel` | PatchTST - channel-independent patch time series transformer with efficient patching mechanism (ICLR 2023) |
@@ -196,6 +196,8 @@ AirTrace includes 27 registered models spanning from simple baselines to sophist
 | `timemixer` | `TimeMixerModel` | TimeMixer - decomposable multiscale mixing for time series forecasting with MLP architecture (ICLR 2024) |
 | `nbeats` | `NBeatsModel` | N-BEATS - residual stack of basis expansion blocks with interpretable trend/seasonality components (ICLR 2020) |
 | `cyclenet` | `CycleNetModel` | CycleNet - residual cycle forecasting with learnable periodic patterns for extreme efficiency (NeurIPS 2024 Spotlight) |
+| `dlinear` | `DLinearModel` | DLinear - decomposition-based linear forecaster with separate trend and seasonal projections |
+| `nlinear` | `NLinearModel` | NLinear - mean-adjusted linear projection for non-stationary series |
 
 ### Baseline Models
 
