@@ -1,0 +1,14 @@
+# @package _global_
+
+model:
+  name: softs
+  params:
+    seq_len: ${data.window.input_len}    # Input sequence length
+    pred_len: ${data.window.pred_len}    # Prediction horizon
+    hidden_dim: 512                       # Model dimension (d_model)
+    d_core: 128                           # STAR core compression dimension
+    d_ff: 512                             # Feedforward network dimension
+    e_layers: 3                           # Number of encoder layers
+    dropout: 0.0                          # Dropout probability
+    activation: "gelu"                    # Activation function (gelu, relu)
+    use_norm: true                        # Instance normalization
