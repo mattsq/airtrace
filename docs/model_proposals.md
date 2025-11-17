@@ -2,451 +2,417 @@
 
 This document tracks proposals for adding models to AirTrace based on recent literature and identified gaps in the model registry.
 
-**Last Updated**: 2025-11-16
+**Last Updated**: 2025-11-17
 **Status**: Proposed, awaiting implementation decision
 
 ---
 
 ## Current Status
 
-**Implemented**: 27 models including:
-- Modern architectures: PatchTST (ICLR 2023), iTransformer (ICLR 2024), TimeMixer (ICLR 2024), CycleNet (NeurIPS 2024)
+**Implemented**: 41 models including:
+- Modern attention architectures: PatchTST (ICLR 2023), iTransformer (ICLR 2024), Crossformer (ICLR 2023), TimeMixer (ICLR 2024), CycleNet (NeurIPS 2024), TFT
+- Classic transformers: Informer (AAAI 2021), Autoformer (NeurIPS 2021), FEDformer (ICML 2022), Non-stationary Transformer (NeurIPS 2022)
 - Foundation models: Chronos-Bolt, Moirai, Mamba2, Lag-Llama
-- Basis expansion models: N-BEATS (ICLR 2020)
+- MLP/Basis expansion: N-BEATS (ICLR 2020), DLinear, NLinear
 - RNNs/Seq2Seq: GRU, LSTM variants
 - Baseline models: 16 statistical and simple baselines
-- Convolutions: TCN
+- Convolutions: TCN, ModernTCN (ICLR 2024 Spotlight)
 
-**Missing**: ~15 significant architectures spanning 2019-2024
+**Recent Additions** (since last update): TFT, ModernTCN, DLinear, NLinear, Informer, Autoformer, FEDformer, Non-stationary Transformer, Crossformer, N-BEATS
+
+**Missing**: ~20 significant architectures spanning 2023-2025, including latest foundation models and efficient architectures
 
 ---
 
-## Priority Tier 1: Critical Gaps (Implement First)
+## Priority Tier 1: Latest Foundation Models (ICLR 2025 / ICML 2024)
 
-### 1. Temporal Fusion Transformer (TFT) ⭐⭐⭐ HIGHEST PRIORITY
+### 1. Time-MoE (ICLR 2025 Spotlight) ⭐⭐⭐ HIGHEST PRIORITY
 
-**Full Title**: Temporal Fusion Transformers for Interpretable Multi-horizon Time Series Forecasting
-**Venue**: Original paper (2019) + Aviation application (MDPI Aerospace 2024)
-**Paper**: https://arxiv.org/abs/1912.09363
-**Aviation Paper**: https://www.mdpi.com/2226-4310/11/8/646
-**Code**: https://github.com/google-research/google-research/tree/master/tft
-**PyTorch Forecasting**: https://pytorch-forecasting.readthedocs.io/en/stable/api/pytorch_forecasting.models.temporal_fusion_transformer.TemporalFusionTransformer.html
+**Full Title**: Time-MoE: Billion-Scale Time Series Foundation Models with Mixture of Experts
+**Venue**: ICLR 2025 Spotlight (Top 5.1%)
+**Paper**: https://arxiv.org/abs/2409.16040
+**Code**: https://github.com/Time-MoE/Time-MoE
+**OpenReview**: https://openreview.net/forum?id=e1wDDFmlVu
 
 #### Key Innovations
 
-1. **Multi-horizon Forecasting**: Explicitly designed for predicting multiple future timesteps simultaneously
-2. **Interpretability**: Variable selection networks, temporal attention weights, static covariate encoders
-3. **Uncertainty Quantification**: Quantile regression for probabilistic forecasts
-4. **Flexible Input Handling**:
-   - Time-varying known inputs (flight plan, scheduled altitude)
-   - Time-varying unknown inputs (actual sensor readings)
-   - Static metadata (aircraft type, engine model, weather)
+1. **Billion-Scale**: First time series foundation model scaled up to 2.4 billion parameters
+2. **Mixture of Experts (MoE)**: Sparse activation of expert networks for computational efficiency
+3. **Time-300B Dataset**: Pre-trained on 300+ billion time points across 9 domains
+4. **Universal Forecasting**: Arbitrary prediction horizons and context lengths up to 4096
+5. **Decoder-Only**: Auto-regressive architecture like GPT for time series
 
-#### Why Perfect for Aircraft Sensors
+#### Why for AirTrace
 
-**Domain-Specific Success**: The 2024 MDPI Aerospace paper demonstrates explicit success on aircraft sensor data:
-- Detects cascading failures in multivariate sensor data
-- Identifies precursor events before catastrophic failures
-- Handles sensor readout differences and drift
-- Provides interpretable attention weights for failure analysis
+**State-of-the-Art Scale**: Time-MoE represents the cutting edge of foundation models:
+- Validates scaling laws for time series (more parameters + more data = better performance)
+- Sparse MoE design activates only subset of networks per prediction (efficient)
+- Significantly outperforms dense models with same activated parameters
+- Zero-shot forecasting capability on new datasets/domains
 
-**Safety-Critical Interpretability**: Aviation requires understanding *why* a model makes predictions:
-- Variable importance networks reveal which sensors drive predictions
-- Temporal attention shows which historical time periods matter
-- Essential for certification and trust in safety applications
-
-**Handles Complex Aircraft Data**:
-- Static context: Aircraft type, engine model, configuration
-- Known future inputs: Flight plan, scheduled waypoints, weather forecasts
-- Unknown future inputs: Actual sensor readings to predict
-- Multi-horizon: Predict entire trajectories, not just next timestep
+**Aircraft Sensor Applications**:
+- Pre-trained on diverse domains → transfer learning to aviation
+- Long context (4096) handles entire flight segments
+- MoE could specialize experts for different flight phases or sensor types
+- Foundation model baseline for fine-tuning on aircraft-specific data
 
 #### Architecture Components
 
 ```
-Input Layer:
-  ├── Static Covariate Encoders (aircraft metadata)
-  ├── Variable Selection (learned gating for time-varying inputs)
-  └── Temporal Processing
-      ├── LSTM Encoder (past context)
-      ├── LSTM Decoder (future trajectory)
-      └── Multi-head Attention (temporal relationships)
-
-Interpretability Layer:
-  ├── Variable Importance Weights
-  ├── Temporal Attention Weights
-  └── Quantile Outputs (uncertainty bounds)
+Decoder-Only Transformer with MoE:
+  ├── Patch Embedding (tokenize time series)
+  ├── Positional Encoding (up to 4096 tokens)
+  ├── Transformer Blocks (stacked)
+  │   ├── Self-Attention
+  │   └── Mixture-of-Experts FFN
+  │       ├── Router Network (select K experts)
+  │       └── Expert Networks (sparse activation)
+  └── Forecasting Head (predict next tokens)
 ```
 
 #### Implementation Guidance
 
-**Effort**: High (500-700 lines + tests + config)
+**Effort**: Very High (1500+ lines + infrastructure)
 
-**Key Components**:
-1. `VariableSelectionNetwork`: Learnable gating mechanism
-2. `GatedResidualNetwork`: Building block with GLU activations
-3. `InterpretableMultiHeadAttention`: Attention with importance weights
-4. `QuantileLoss`: For probabilistic forecasting
-5. Static/dynamic input encoders
+**Challenges**:
+- Requires MoE training infrastructure
+- Large model size (2.4B parameters for full model, smaller variants available)
+- Pre-training dataset (Time-300B) is massive
+- May need distributed training support
 
-**Integration with AirTrace**:
-- Extend `ARBaseModel` with multi-horizon output `[B, T_out, D_out]`
-- Add metadata handling to dataset (static features per flight)
-- Create `TFTTask` that handles known future inputs
-- Store attention weights in `extras` for visualization
-
-**Config Structure**:
-```yaml
-# configs/model/tft.yaml
-_target_: airtrace.models.tft.TFTModel
-input_dim: ${data.input_dim}
-output_dim: ${data.output_dim}
-hidden_size: 128
-lstm_layers: 2
-num_heads: 4
-dropout: 0.1
-quantiles: [0.1, 0.5, 0.9]  # P10, median, P90
-static_input_dim: 0  # Aircraft metadata features
-known_future_dim: 0  # Flight plan features
-```
-
-**Testing Strategy**:
-1. Unit tests: Each component (VSN, GRN, attention)
-2. Integration tests: Full model forward pass
-3. Synthetic data: Verify interpretability outputs
-4. Multi-horizon task compatibility
-
-**References**:
-- Lim et al. (2021): "Temporal Fusion Transformers for Interpretable Multi-horizon Time Series Forecasting"
-- Ogunfowora & Najjaran (2024): "On the Exploration of Temporal Fusion Transformers for Anomaly Detection with Multivariate Aviation Time-Series Data"
-
----
-
-### 2. ModernTCN (ICLR 2024 Spotlight) ⭐⭐
-
-**Full Title**: ModernTCN: A Modern Pure Convolution Structure for General Time Series Analysis
-**Venue**: ICLR 2024 Spotlight
-**Paper**: https://openreview.net/forum?id=vpJMJerXHU
-**Code**: https://github.com/luodhhh/ModernTCN
-**OpenReview**: https://openreview.net/forum?id=vpJMJerXHU
-
-#### Key Innovations
-
-1. **Much Larger Effective Receptive Fields (ERFs)**: Critical improvement over classic TCN
-2. **Pure Convolution**: Demonstrates convolutions can match/exceed transformers when properly designed
-3. **General Time Series Analysis**: SOTA on 5 tasks (long/short forecasting, imputation, classification, anomaly detection)
-4. **Efficiency**: Maintains computational advantages of convolution-based models
-
-#### Why for AirTrace
-
-1. **Natural Evolution**: AirTrace already has TCN; ModernTCN is the SOTA upgrade
-2. **Proven Architecture**: ICLR 2024 Spotlight recognition validates quality
-3. **Smooth Sensor Data**: Convolutions have excellent inductive bias for continuous sensor readings
-4. **Production Deployment**: Lower computational cost than transformers for real-world systems
-5. **Multi-Task**: Same architecture works for forecasting, anomaly detection, classification
-
-#### Technical Improvements Over TCN
-
-- Depthwise separable convolutions for efficiency
-- Larger receptive fields through architectural innovations
-- Better parameter efficiency
-- Improved gradient flow for deeper networks
-- Modern training techniques (LayerNorm, GELU)
-
-#### Implementation Guidance
-
-**Effort**: Low-Medium (200-300 lines + tests + config)
-
-**Key Components**:
-1. `ModernTCNBlock`: Depthwise separable conv + pointwise conv
-2. `LargeReceptiveField`: Parallel dilated convolutions
-3. `DownsamplingBlock`: Multi-resolution processing
-4. Residual connections and layer normalization
+**Pragmatic Approach**:
+1. **Option A**: Use pre-trained checkpoints from HuggingFace for fine-tuning
+2. **Option B**: Implement smaller-scale version (e.g., 200M params) for experimentation
+3. **Option C**: Wait for community implementations to mature
 
 **Integration**:
-- Similar structure to existing `TCNModel`
-- Replace basic dilated convs with modernized blocks
-- Add multi-resolution hierarchy
-
-**Config Structure**:
-```yaml
-# configs/model/moderntcn.yaml
-_target_: airtrace.models.moderntcn.ModernTCNModel
-input_dim: ${data.input_dim}
-output_dim: ${data.output_dim}
-num_blocks: 6
-kernel_size: 3
-hidden_channels: 64
-dilation_growth: 2
-dropout: 0.1
-```
+- Add as foundation model similar to Chronos-Bolt, Moirai
+- Support fine-tuning with LoRA adapters
+- Implement zero-shot inference API
+- Store router decisions for interpretability
 
 **References**:
-- Luo et al. (2024): "ModernTCN: A Modern Pure Convolution Structure for General Time Series Analysis"
+- Time-MoE Team (2025): "Time-MoE: Billion-Scale Time Series Foundation Models with Mixture of Experts"
 
 ---
 
-### 3. DLinear / NLinear ⭐⭐
+### 2. Timer (ICML 2024) ⭐⭐⭐
 
-**Full Title**: Are Transformers Effective for Time Series Forecasting?
-**Venue**: AAAI 2023
-**Paper**: https://arxiv.org/abs/2205.13504
-**Code**: https://github.com/cure-lab/LTSF-Linear
+**Full Title**: Timer: Generative Pre-trained Transformers Are Large Time Series Models
+**Venue**: ICML 2024
+**Paper**: Available via THUML GitHub
+**Code**: https://github.com/thuml/Large-Time-Series-Model
+**HuggingFace**: Pre-trained checkpoints available
 
 #### Key Innovations
 
-1. **Embarrassingly Simple**: One-layer linear models that often beat complex transformers
-2. **DLinear**: Decomposition + two linear layers (trend + seasonal)
-3. **NLinear**: Instance normalization + one linear layer
-4. **Essential Baseline**: Exposes when complexity isn't needed
+1. **Generative Pre-training**: GPT-style pre-training for time series
+2. **Unified Framework**: Single model for forecasting, imputation, anomaly detection
+3. **Zero-Shot Forecasting**: Pre-trained on UTSD (Unified Time Series Dataset)
+4. **No Training/GPU Needed**: Out-of-the-box inference on new datasets
 
 #### Why for AirTrace
 
-**Critical Missing Baseline**: Current `linear_ar` is generic; DLinear/NLinear are specific SOTA linear methods that:
-- Consistently cited in recent papers as strong baselines
-- Often beat PatchTST/TimeMixer on some datasets
-- Expose model overparameterization
-- Extremely fast for ablation studies
+**Production-Ready Foundation Model**:
+- Simple to integrate: pre-trained checkpoints on HuggingFace
+- Zero-shot capability: test on aircraft data without training
+- General-purpose: works across domains and tasks
+- Academic credibility: ICML 2024 acceptance
 
-**Simple != Weak**: These models leverage:
-- Temporal continuity (predictions close to recent values)
-- Distribution shift handling (instance normalization)
-- Seasonal decomposition (moving average)
+**Comparison to Time-MoE**:
+- Smaller scale (easier to deploy)
+- Proven on public benchmarks
+- Active open-source community (THUML)
 
 #### Implementation Guidance
 
-**Effort**: Very Low (50-100 lines total + tests + config)
+**Effort**: Medium (400-500 lines + integration)
 
-**DLinear**:
+**Key Steps**:
+1. Load pre-trained checkpoint from HuggingFace
+2. Implement AirTrace adapter (convert to ARBaseModel interface)
+3. Add patching/tokenization logic
+4. Support fine-tuning pipeline
+5. Evaluate zero-shot on synthetic data
+
+**Integration**:
 ```python
-@register("dlinear")
-class DLinearModel(ARBaseModel):
-    def __init__(self, input_dim, output_dim, seq_len, pred_len, kernel_size=25):
-        super().__init__(input_dim, output_dim)
-        self.decomp = SeriesDecomposition(kernel_size)
-        self.linear_seasonal = nn.Linear(seq_len, pred_len)
-        self.linear_trend = nn.Linear(seq_len, pred_len)
+@register("timer")
+class TimerModel(ARBaseModel):
+    def __init__(self, checkpoint="thuml/timer-base", ...):
+        self.model = load_pretrained_timer(checkpoint)
+        self.patcher = TimePatcher(patch_len=16)
 
     def forward(self, x):
-        # x: [B, T, D]
-        seasonal, trend = self.decomp(x)  # [B, T, D] each
-        seasonal_out = self.linear_seasonal(seasonal.permute(0,2,1)).permute(0,2,1)
-        trend_out = self.linear_trend(trend.permute(0,2,1)).permute(0,2,1)
-        return {"preds": seasonal_out + trend_out}
+        patches = self.patcher(x)  # [B, T, D] -> [B, N_patches, D_patch]
+        out = self.model(patches)
+        return {"preds": self.patcher.inverse(out)}
 ```
 
-**NLinear**:
-```python
-@register("nlinear")
-class NLinearModel(ARBaseModel):
-    def __init__(self, input_dim, output_dim, seq_len, pred_len):
-        super().__init__(input_dim, output_dim)
-        self.linear = nn.Linear(seq_len, pred_len)
-
-    def forward(self, x):
-        # Instance normalization
-        seq_last = x[:, -1:, :]  # [B, 1, D]
-        x = x - seq_last  # [B, T, D]
-        # Linear projection per feature
-        x_out = self.linear(x.permute(0,2,1)).permute(0,2,1)  # [B, T_out, D]
-        # Denormalize
-        x_out = x_out + seq_last
-        return {"preds": x_out}
-```
-
-**Quick Win**: Can implement both in ~2 hours including tests.
-
 **References**:
-- Zeng et al. (2023): "Are Transformers Effective for Time Series Forecasting?"
+- Liu et al. (2024): "Timer: Generative Pre-trained Transformers Are Large Time Series Models"
 
 ---
 
-## Priority Tier 2: Classic Transformer Baselines
+### 3. TimesFM (Google, ICML 2024) ⭐⭐
 
-These are foundational transformer models (2020-2022) that established the paradigm and are still widely used as baselines in current papers.
-
-### 4. Informer (AAAI 2021 Best Paper)
-
-**Full Title**: Informer: Beyond Efficient Transformer for Long Sequence Time-Series Forecasting
-**Venue**: AAAI 2021 (Best Paper Award)
-**Paper**: https://arxiv.org/abs/2012.07436
-**Code**: https://github.com/zhouhaoyi/Informer2020
-**Citations**: 2000+
+**Full Title**: A decoder-only foundation model for time-series forecasting
+**Venue**: ICML 2024
+**Paper**: Google Research Blog
+**Code**: https://github.com/google-research/timesfm
+**HuggingFace**: google/timesfm-1.0-200m
 
 #### Key Innovations
 
-1. **ProbSparse Self-Attention**: Reduces complexity from O(L²) to O(L log L)
-2. **Self-Attention Distilling**: Halves input at each layer for efficiency
-3. **Generative Style Decoder**: Predicts long sequences in one forward pass
-4. **Long Sequence**: First to effectively handle 10k+ timesteps
+1. **Google-Backed**: 200M parameter Transformer from Google Research
+2. **100B Time Points**: Pre-trained on massive real-world corpus
+3. **Patch-Based**: Treats patches (groups of time points) as tokens
+4. **Outperforms Baselines**: Beats DeepAR and GPT-3-based approaches by >25%
 
-#### Why Important
+#### Why for AirTrace
 
-- **Historical Baseline**: Still the #1 cited baseline in time series papers
-- **Long Sequences**: Aircraft flights can be hours of continuous data
-- **Proven Architecture**: Widely deployed in production systems
+**Industrial-Grade**:
+- Google-maintained and battle-tested
+- Integrated into Google Cloud BigQuery
+- Strong zero-shot performance
+- Well-documented and supported
 
-#### Implementation Effort
+**Aircraft Applications**:
+- Production-ready for deployment
+- Handles variable-length sequences
+- Domain-agnostic (tested across industries)
 
-Medium (300-400 lines) - ProbSparse attention is the complex part.
+#### Implementation Guidance
+
+**Effort**: Medium (300-400 lines)
+
+**Availability**: Pre-trained model on HuggingFace makes integration straightforward.
 
 **References**:
-- Zhou et al. (2021): "Informer: Beyond Efficient Transformer for Long Sequence Time-Series Forecasting"
+- Das et al. (2024): "A decoder-only foundation model for time-series forecasting"
 
 ---
 
-### 5. Autoformer (NeurIPS 2021)
+## Priority Tier 2: Recent NeurIPS/ICML Models (2024)
 
-**Full Title**: Autoformer: Decomposition Transformers with Auto-Correlation for Long-Term Series Forecasting
-**Venue**: NeurIPS 2021
-**Paper**: https://arxiv.org/abs/2106.13008
-**Code**: https://github.com/thuml/Autoformer
+### 4. MOMENT (ICML 2024) ⭐⭐
+
+**Full Title**: MOMENT: A Family of Open Time-series Foundation Models
+**Venue**: ICML 2024
+**Paper**: https://arxiv.org/abs/2402.03885
+**Code**: https://github.com/moment-timeseries-foundation-model/moment
+**HuggingFace**: AutonLab/MOMENT-1-large
 
 #### Key Innovations
 
-1. **Auto-Correlation Mechanism**: Replaces self-attention with series-wise connection discovery
-2. **Progressive Decomposition**: Extracts trend-cyclical components at each layer
-3. **Better for Time Series**: Auto-correlation > self-attention for temporal data
+1. **Open-Source Foundation Models**: Fully open-source family of pre-trained models
+2. **Time-series Pile**: Large diverse collection of public time-series for pre-training
+3. **General-Purpose**: Works across forecasting, classification, anomaly detection, imputation
+4. **Limited Supervision**: Designed for few-shot and zero-shot scenarios
 
-#### Why Important
+#### Why for AirTrace
 
-- Auto-correlation is specifically designed for time series (vs. NLP-borrowed attention)
-- Decomposition provides interpretability
-- Strong performance on long-term forecasting
+**Open Research**:
+- Carnegie Mellon University (Auton Lab) backed
+- Fully reproducible with public datasets and code
+- Active research community
+- Benchmark suite included
 
-#### Implementation Effort
+**Practical Benefits**:
+- Multiple model sizes available
+- Pre-training code available (can adapt to aviation data)
+- Well-documented and tested
+- Academic rigor with practical focus
 
-Medium (300-400 lines) - Auto-correlation and decomposition modules.
+#### Implementation Guidance
+
+**Effort**: Medium (300-400 lines)
+
+**Resources**:
+- Pre-trained models on HuggingFace
+- Time-series Pile dataset available
+- Comprehensive benchmarks provided
 
 **References**:
-- Wu et al. (2021): "Autoformer: Decomposition Transformers with Auto-Correlation for Long-Term Series Forecasting"
+- Goswami et al. (2024): "MOMENT: A Family of Open Time-series Foundation Models"
 
 ---
 
-### 6. FEDformer (ICML 2022)
+### 5. TimeXer (NeurIPS 2024) ⭐⭐
 
-**Full Title**: FEDformer: Frequency Enhanced Decomposed Transformer for Long-term Series Forecasting
-**Venue**: ICML 2022
-**Paper**: https://arxiv.org/abs/2201.12740
-**Code**: https://github.com/MAZiqing/FEDformer
+**Full Title**: TimeXer: Empowering Transformers for Time Series Forecasting with Exogenous Variables
+**Venue**: NeurIPS 2024
+**Paper**: https://arxiv.org/abs/2402.19072
+**Code**: https://github.com/thuml/TimeXer
+**OpenReview**: https://openreview.net/forum?id=INAeUQ04lT
 
 #### Key Innovations
 
-1. **Frequency Domain**: Operates on Fourier/Wavelet transforms of input
-2. **Seasonal-Trend Decomposition**: Architecture-level decomposition
-3. **Sparse Attention in Frequency**: Lower frequencies carry most information
+1. **Exogenous Variable Handling**: Explicit architecture for external/contextual features
+2. **Dual Representation**: Patch-level for endogenous, variate-level for exogenous
+3. **Global Endogenous Tokens**: Bridge between endogenous and exogenous information
+4. **SOTA Performance**: Consistent state-of-the-art on 12 benchmarks
 
 #### Why for Aircraft Sensors
 
-- Engine vibrations have strong frequency components
-- Periodic patterns (rotation, oscillations)
-- More efficient for long sequences in frequency space
+**Perfect for Aircraft Context**:
+- **Endogenous**: Sensor readings we want to predict (fuel flow, thrust, temperature)
+- **Exogenous**: Known external factors (flight plan, weather, altitude schedule, weight)
+- Many aircraft forecasting problems inherently involve exogenous inputs
+- TimeXer explicitly models this distinction (unlike models that treat all as endogenous)
 
-#### Implementation Effort
+**Architecture Fit**:
+- Patch-wise self-attention for temporal sensor patterns
+- Variate-wise cross-attention for exogenous context
+- Interpretable bridging mechanism
 
-Medium-High (400-500 lines) - FFT/Wavelet transforms + frequency attention.
+#### Implementation Guidance
+
+**Effort**: Medium-High (500-600 lines)
+
+**Key Components**:
+1. Patch embedding for endogenous time series
+2. Variate embedding for exogenous variables
+3. Global endogenous token mechanism
+4. Dual attention: self-attention + cross-attention
+
+**Integration**:
+- Extend dataset to provide exogenous features (flight plan, weather)
+- Modify task interface to pass both endogenous and exogenous inputs
+- Store attention patterns for interpretability
 
 **References**:
-- Zhou et al. (2022): "FEDformer: Frequency Enhanced Decomposed Transformer for Long-term Series Forecasting"
+- Wang et al. (2024): "TimeXer: Empowering Transformers for Time Series Forecasting with Exogenous Variables"
 
 ---
 
-### 7. Non-stationary Transformer (NeurIPS 2022)
+### 6. SOFTS (NeurIPS 2024) ⭐⭐
 
-**Full Title**: Non-stationary Transformers: Exploring the Stationarity in Time Series Forecasting
-**Venue**: NeurIPS 2022
-**Paper**: https://arxiv.org/abs/2205.14415
-**Code**: https://github.com/thuml/Nonstationary_Transformers
+**Full Title**: SOFTS: Efficient Multivariate Time Series Forecasting with Series-Core Fusion
+**Venue**: NeurIPS 2024
+**Paper**: https://arxiv.org/abs/2404.14197
+**Code**: https://github.com/Secilia-Cxy/SOFTS
+**OpenReview**: https://openreview.net/forum?id=89AUi5L1uA
 
 #### Key Innovations
 
-1. **De-stationary Attention**: Projects to stationary space before attention
-2. **Over-stationarization**: Aggressive normalization to handle distribution shifts
-3. **Series Stationarization**: Learnable normalization per series
+1. **STar Aggregate-Redistribute (STAR) Module**: Novel channel mixing mechanism
+2. **Global Core Representation**: Aggregates all series into shared representation
+3. **Linear Complexity**: Efficient MLP-based architecture
+4. **Channel Interaction**: Balances independence (for drift) with correlation modeling
 
-#### Why for Aircraft Sensors
+#### Why for AirTrace
 
-**Critical for Flight Phases**: Aircraft data is highly non-stationary:
-- Takeoff → Climb → Cruise → Descent → Landing
-- Each phase has different distributions
-- Weight decreases over flight (fuel burn)
-- Altitude/temperature/pressure change dramatically
+**Efficient Multivariate**:
+- Addresses weakness of channel-independent models (ignores correlations)
+- Addresses weakness of attention models (quadratic complexity, noise)
+- STAR module: aggregate → global core → redistribute to series
+- Perfect for aircraft sensors with known physical correlations
 
-#### Implementation Effort
+**Computational Efficiency**:
+- Pure MLP (no attention)
+- Linear complexity
+- Fast training and inference
 
-Medium (300-400 lines) - Stationarization layers + modified attention.
+#### Implementation Guidance
+
+**Effort**: Medium (300-400 lines)
+
+**Key Components**:
+1. STAR module (aggregate, core, redistribute)
+2. Temporal mixing blocks
+3. Residual connections
 
 **References**:
-- Liu et al. (2022): "Non-stationary Transformers: Exploring the Stationarity in Time Series Forecasting"
+- Han et al. (2024): "SOFTS: Efficient Multivariate Time Series Forecasting with Series-Core Fusion"
 
 ---
 
-### 8. Crossformer (ICLR 2023)
+## Priority Tier 3: State Space Models (Mamba Variants)
 
-**Full Title**: Crossformer: Transformer Utilizing Cross-Dimension Dependency for Multivariate Time Series Forecasting
-**Venue**: ICLR 2023
-**Paper**: https://openreview.net/forum?id=vSVLM2j9eie
-**Code**: https://github.com/Thinklab-SJTU/Crossformer
+### 7. MambaTS ⭐⭐
+
+**Full Title**: MambaTS: Improved Selective State Space Models for Long-term Time Series Forecasting
+**Venue**: arXiv 2024 (May)
+**Paper**: https://arxiv.org/abs/2405.16440
+**Code**: Available on GitHub
 
 #### Key Innovations
 
-1. **Two-Stage Attention**: Cross-time dimension, then cross-variable dimension
-2. **Dimension-Segment-Wise (DSW) Embedding**: Embeds segments across dimensions
-3. **Explicitly Models Cross-Variate Dependencies**: Unlike channel-independent models
+1. **Variable Scan along Time (VST)**: Segments variables into patches, organizes tokens at same timestep
+2. **Temporal Mamba Block (TMB)**: Removes causal convolution (unnecessary for LTSF)
+3. **Linear Complexity**: Global dependency modeling with O(L) complexity
+4. **SOTA Results**: New state-of-the-art on multiple long-term forecasting benchmarks
 
-#### Why for Aircraft Sensors
+#### Why for AirTrace
 
-**Strong Cross-Sensor Correlations**:
-- Fuel flow ↔ Thrust ↔ Speed ↔ Weight
-- Temperature ↔ Altitude ↔ Pressure (physics-based)
-- Engine sensors are highly coupled
+**Efficiency**:
+- Linear complexity vs. quadratic for transformers
+- Suitable for long flight sequences
+- Global dependency modeling (like attention) without the cost
 
-Current models (PatchTST, iTransformer) handle multivariate differently; Crossformer offers another approach.
+**Mamba Advantages**:
+- Selective state space model (S6)
+- Hardware-efficient implementation
+- Captures long-range dependencies better than RNNs
 
-#### Implementation Effort
+#### Implementation Guidance
 
-Medium-High (400-500 lines) - DSW embedding + two-stage attention.
+**Effort**: Medium-High (400-500 lines)
+
+**Key Components**:
+1. Variable scanning mechanism
+2. Temporal Mamba blocks (based on Mamba2 architecture)
+3. Patching logic
+4. Integration with existing Mamba2 in AirTrace
+
+**Note**: AirTrace already has Mamba2; MambaTS is a time-series-specific adaptation.
 
 **References**:
-- Zhang & Yan (2023): "Crossformer: Transformer Utilizing Cross-Dimension Dependency for Multivariate Time Series Forecasting"
+- MambaTS Authors (2024): "MambaTS: Improved Selective State Space Models for Long-term Time Series Forecasting"
 
 ---
 
-## Priority Tier 3: Pure MLP Models
+### 8. S-Mamba (Simple-Mamba) ⭐
+
+**Full Title**: Is Mamba Effective for Time Series Forecasting?
+**Venue**: Neurocomputing, Volume 619 (February 2025)
+**Paper**: https://arxiv.org/abs/2403.11144
+**Code**: https://github.com/wzhwzhwzh0921/S-D-Mamba
+
+#### Key Innovations
+
+1. **Simple Design**: Straightforward Mamba application to time series
+2. **Tokenization**: Each variate tokenized autonomously via linear layer
+3. **Bidirectional Mamba**: Extract inter-variate correlations
+4. **FFN for Temporal**: Feed-forward network learns temporal dependencies
+
+#### Why for AirTrace
+
+**Simplicity**:
+- Easier to implement than MambaTS
+- Good baseline for Mamba-based approaches
+- Demonstrates Mamba effectiveness empirically
+
+**Comparison Point**:
+- Simpler than AirTrace's current Mamba2
+- Could be faster for some tasks
+- Different design philosophy (simple vs. complex)
+
+#### Implementation Guidance
+
+**Effort**: Low-Medium (200-300 lines)
+
+**References**:
+- Authors (2024): "Is Mamba Effective for Time Series Forecasting?"
+
+---
+
+## Priority Tier 4: Pure MLP Models
 
 Simple, efficient, non-sequential architectures that surprisingly compete with transformers.
 
-### 9. N-BEATS (ICLR 2020)
-
-**Full Title**: N-BEATS: Neural Basis Expansion Analysis for Interpretable Time Series Forecasting
-**Venue**: ICLR 2020
-**Paper**: https://arxiv.org/abs/1905.10437
-**Code**: https://github.com/ElementAI/N-BEATS
-
-#### Key Innovations
-
-1. **Doubly Residual Stacking**: Backward (forecast) and forward (backcast) branches
-2. **Basis Expansion**: Interpretable trend/seasonality components
-3. **Pure MLP**: No convolutions, RNNs, or transformers
-4. **Industry Proven**: M4 competition winner, widely deployed
-
-#### Why for AirTrace
-
-- **Interpretable Decomposition**: Explicit trend/seasonal split
-- **Strong Baseline**: Often beats complex models
-- **Non-Sequential**: Tests if temporal modeling is needed
-- **Safety-Critical**: Interpretable components for aviation
-
-#### Implementation Effort
-
-Medium (300-400 lines) - Block structure + basis functions.
-
-**References**:
-- Oreshkin et al. (2020): "N-BEATS: Neural Basis Expansion Analysis for Interpretable Time Series Forecasting"
-
----
-
-### 10. N-HiTS (AAAI 2023)
+### 9. N-HiTS (AAAI 2023) ⭐
 
 **Full Title**: N-HiTS: Neural Hierarchical Interpolation for Time Series Forecasting
 **Venue**: AAAI 2023
@@ -461,20 +427,22 @@ Medium (300-400 lines) - Block structure + basis functions.
 
 #### Why for AirTrace
 
-- Evolution of N-BEATS with better long-term performance
+- Evolution of N-BEATS (already implemented) with better long-term performance
 - Multi-scale (like TimeMixer) but pure MLP
 - Interpretable hierarchical structure
 
-#### Implementation Effort
+#### Implementation Guidance
 
-Medium (250-350 lines) - Similar to N-BEATS with pooling layers.
+**Effort**: Medium (250-350 lines) - Similar to N-BEATS with pooling layers.
+
+**Note**: AirTrace already has N-BEATS; N-HiTS is the improved successor.
 
 **References**:
 - Challu et al. (2023): "N-HiTS: Neural Hierarchical Interpolation for Time Series Forecasting"
 
 ---
 
-### 11. TSMixer (KDD 2023)
+### 10. TSMixer (KDD 2023) ⭐
 
 **Full Title**: TSMixer: An All-MLP Architecture for Time Series Forecasting
 **Venue**: KDD 2023
@@ -487,20 +455,29 @@ Medium (250-350 lines) - Similar to N-BEATS with pooling layers.
 2. **Time-Mixing + Feature-Mixing**: Alternating MLPs for time/channel
 3. **All-MLP**: No attention, convolutions, or recurrence
 
-**Note**: Different from TimeMixer (already implemented). TimeMixer = decomposition + multiscale. TSMixer = pure MLP-Mixer adaptation.
+#### Why for AirTrace
 
-#### Implementation Effort
+**Note**: Different from TimeMixer (already implemented in AirTrace):
+- TimeMixer = decomposition + multiscale mixing
+- TSMixer = pure MLP-Mixer adaptation from vision
 
-Low-Medium (200-300 lines) - MLP blocks with permutations.
+**Simple and Effective**:
+- Google Research backed
+- Competitive with transformers
+- Very efficient (MLP only)
+
+#### Implementation Guidance
+
+**Effort**: Low-Medium (200-300 lines) - MLP blocks with permutations.
 
 **References**:
 - Chen et al. (2023): "TSMixer: An All-MLP Architecture for Time Series Forecasting"
 
 ---
 
-## Priority Tier 4: Frequency Domain & Novel Paradigms
+## Priority Tier 5: Frequency Domain & Novel Paradigms
 
-### 12. TimesNet (ICLR 2023)
+### 11. TimesNet (ICLR 2023)
 
 **Full Title**: TimesNet: Temporal 2D-Variation Modeling for General Time Series Analysis
 **Venue**: ICLR 2023
@@ -516,18 +493,19 @@ Low-Medium (200-300 lines) - MLP blocks with permutations.
 #### Why for Aircraft
 
 - Engine cycles, rotation periods
-- Novel inductive bias
+- Novel inductive bias different from sequential models
+- General architecture (works for forecasting, classification, anomaly detection)
 
-#### Implementation Effort
+#### Implementation Guidance
 
-Medium-High (400-500 lines) - Period detection + 2D convolutions.
+**Effort**: Medium-High (400-500 lines) - Period detection + 2D convolutions.
 
 **References**:
 - Wu et al. (2023): "TimesNet: Temporal 2D-Variation Modeling for General Time Series Analysis"
 
 ---
 
-### 13. FreTS (NeurIPS 2023)
+### 12. FreTS (NeurIPS 2023)
 
 **Full Title**: FreTS: Frequency-domain MLPs are More Effective Learners in Time Series Forecasting
 **Venue**: NeurIPS 2023
@@ -544,17 +522,20 @@ Medium-High (400-500 lines) - Period detection + 2D convolutions.
 
 - Periodic engine/rotation signals
 - Efficient for smooth sensor data
+- Complements FEDformer (already implemented, uses frequency attention)
 
-#### Implementation Effort
+#### Implementation Guidance
 
-Low-Medium (200-300 lines) - FFT + MLPs.
+**Effort**: Low-Medium (200-300 lines) - FFT + MLPs.
+
+**Note**: AirTrace already has FEDformer (frequency domain transformer). FreTS is simpler MLP alternative.
 
 **References**:
 - Yi et al. (2023): "FreTS: Frequency-domain MLPs are More Effective Learners in Time Series Forecasting"
 
 ---
 
-### 14. ETSformer (ICML 2023)
+### 13. ETSformer (ICML 2023)
 
 **Full Title**: ETSformer: Exponential Smoothing Transformers for Time-series Forecasting
 **Venue**: ICML 2023
@@ -569,21 +550,22 @@ Low-Medium (200-300 lines) - FFT + MLPs.
 
 #### Why for Aircraft
 
-- Interpretable components for safety
+- Interpretable components for safety-critical applications
 - Combines physics-based priors (smoothing) with learning
+- Salesforce-backed implementation
 
-#### Implementation Effort
+#### Implementation Guidance
 
-Medium-High (400-500 lines) - ETS components + frequency attention.
+**Effort**: Medium-High (400-500 lines) - ETS components + frequency attention.
 
 **References**:
 - Woo et al. (2023): "ETSformer: Exponential Smoothing Transformers for Time-series Forecasting"
 
 ---
 
-## Priority Tier 5: LLM-Based Models (Research Frontier)
+## Priority Tier 6: LLM-Based Models (Future Research)
 
-### 15. TIME-LLM (ICLR 2024)
+### 14. TIME-LLM (ICLR 2024)
 
 **Full Title**: Time-LLM: Time Series Forecasting by Reprogramming Large Language Models
 **Venue**: ICLR 2024
@@ -598,7 +580,7 @@ Medium-High (400-500 lines) - ETS components + frequency attention.
 
 #### Why for AirTrace
 
-- Cutting-edge paradigm
+- Cutting-edge paradigm for time series
 - Potential for reasoning about anomalies
 - Zero-shot on new aircraft types
 
@@ -608,18 +590,18 @@ Medium-High (400-500 lines) - ETS components + frequency attention.
 - **Integration**: Significant changes to pipeline
 - **Compute**: GPU memory intensive
 
-#### Implementation Effort
+#### Implementation Guidance
 
-Very High (1000+ lines + LLM dependencies + infrastructure)
+**Effort**: Very High (1000+ lines + LLM dependencies + infrastructure)
 
-**Recommendation**: Wait for more mature tooling or consider as separate research direction.
+**Recommendation**: Future research direction. Foundation models (Time-MoE, Timer, TimesFM) are more practical currently.
 
 **References**:
 - Jin et al. (2024): "Time-LLM: Time Series Forecasting by Reprogramming Large Language Models"
 
 ---
 
-### 16. TEMPO (ICLR 2024)
+### 15. TEMPO (ICLR 2024)
 
 **Full Title**: TEMPO: Prompt-based Generative Pre-trained Transformer for Time Series Forecasting
 **Venue**: ICLR 2024
@@ -632,11 +614,11 @@ Very High (1000+ lines + LLM dependencies + infrastructure)
 2. **Prompt-based**: Task specification via prompts
 3. **Foundation Model**: Pre-trained on diverse datasets
 
-#### Implementation Effort
+#### Implementation Guidance
 
-Very High (similar to TIME-LLM)
+**Effort**: Very High (similar to TIME-LLM)
 
-**Recommendation**: Future work, requires significant infrastructure.
+**Recommendation**: Future work. Similar to TIME-LLM but with prompting interface. Other foundation models are more mature.
 
 **References**:
 - Cao et al. (2024): "TEMPO: Prompt-based Generative Pre-trained Transformer for Time Series Forecasting"
@@ -645,54 +627,102 @@ Very High (similar to TIME-LLM)
 
 ## Implementation Priority Summary
 
-### Quick Wins (1-2 days each)
-1. **DLinear / NLinear** - Essential baseline, 50-100 lines
-2. **FreTS** - Frequency MLP, 200-300 lines
+### Tier 1: Foundation Models (Highest Priority)
+**Rationale**: Zero-shot capability, state-of-the-art performance, production-ready
 
-### High Impact (1 week each)
-3. **TFT** - Domain-specific, interpretable, proven on aircraft
-4. **ModernTCN** - Natural TCN upgrade, production-ready
-5. **N-BEATS** - Interpretable MLP baseline
+1. **Time-MoE** (ICLR 2025 Spotlight) - Billion-scale, MoE architecture - **Effort**: Very High
+2. **Timer** (ICML 2024) - GPT-style, mature implementation - **Effort**: Medium
+3. **TimesFM** (Google, ICML 2024) - Industrial-grade, well-supported - **Effort**: Medium
+4. **MOMENT** (ICML 2024) - Open-source, research-friendly - **Effort**: Medium
 
-### Classic Baselines (1 week each)
-6. **Informer** - Most cited baseline
-7. **Autoformer** - Auto-correlation paradigm
-8. **Non-stationary Transformer** - Critical for flight phases
+**Recommendation**: Start with **Timer** or **TimesFM** for easiest integration, then explore Time-MoE.
 
-### Advanced (2 weeks each)
-9. **FEDformer** - Frequency domain
-10. **Crossformer** - Cross-variate modeling
-11. **N-HiTS** - Hierarchical interpolation
-12. **TSMixer** - MLP-Mixer adaptation
+### Tier 2: Specialized Architectures (High Value)
+**Rationale**: Address specific needs (exogenous vars, efficiency, multivariate)
 
-### Research/Long-term
-13. **TimesNet** - 2D vision approach
-14. **ETSformer** - Classical-DL hybrid
-15. **TIME-LLM / TEMPO** - LLM-based (infrastructure needed)
+5. **TimeXer** (NeurIPS 2024) - Exogenous variable handling - **Effort**: Medium-High
+6. **SOFTS** (NeurIPS 2024) - Efficient multivariate, linear complexity - **Effort**: Medium
+7. **MambaTS** - State space alternative to Mamba2 - **Effort**: Medium-High
+8. **S-Mamba** - Simple Mamba baseline - **Effort**: Low-Medium
+
+**Recommendation**: **TimeXer** if planning to use flight plan/weather data. **SOFTS** for efficient multivariate.
+
+### Tier 3: MLP Baselines (Quick Wins)
+**Rationale**: Simple, fast, often competitive
+
+9. **N-HiTS** (AAAI 2023) - Successor to N-BEATS - **Effort**: Medium
+10. **TSMixer** (KDD 2023) - Google-backed MLP-Mixer - **Effort**: Low-Medium
+
+**Recommendation**: **TSMixer** for quickest implementation.
+
+### Tier 4: Novel Paradigms (Research Interest)
+**Rationale**: Different inductive biases, worth exploring
+
+11. **TimesNet** (ICLR 2023) - 2D vision approach - **Effort**: Medium-High
+12. **FreTS** (NeurIPS 2023) - Frequency-domain MLPs - **Effort**: Low-Medium
+13. **ETSformer** (ICML 2023) - Classical + DL hybrid - **Effort**: Medium-High
+
+**Recommendation**: **FreTS** for quick frequency-domain baseline (complements FEDformer).
+
+### Tier 5: Future Research (Long-term)
+**Rationale**: Requires significant infrastructure or immature tooling
+
+14. **TIME-LLM** (ICLR 2024) - LLM-based forecasting
+15. **TEMPO** (ICLR 2024) - Prompt-based foundation model
+
+**Recommendation**: Monitor development, wait for community implementations to mature.
 
 ---
 
-## Recommended Implementation Order
+## Recommended Implementation Roadmap
 
-**Phase 1 (Month 1)**: Critical gaps
-1. TFT (highest priority for aviation)
-2. DLinear/NLinear (quick baseline win)
-3. ModernTCN (TCN upgrade)
+### Phase 1: Foundation Models (Priority)
+**Timeline**: 1-2 months
 
-**Phase 2 (Month 2)**: Classic baselines
-4. Informer (most cited)
-5. Autoformer (auto-correlation)
-6. N-BEATS (interpretable MLP)
+1. **Timer** or **TimesFM** - Pick one based on preference (THUML vs Google)
+   - Integrate pre-trained checkpoints
+   - Test zero-shot on synthetic aircraft data
+   - Evaluate fine-tuning pipeline
+   - **Deliverable**: Foundation model baseline
 
-**Phase 3 (Month 3)**: Advanced capabilities
-7. Non-stationary Transformer (flight phases)
-8. FEDformer (frequency domain)
-9. N-HiTS (hierarchical)
+2. **MOMENT** - Open-source alternative
+   - Academic rigor, reproducible
+   - **Deliverable**: Research comparison point
 
-**Phase 4 (Month 4+)**: Nice-to-have
-10. Crossformer, TSMixer, TimesNet, FreTS, ETSformer
+### Phase 2: Specialized Needs (If Applicable)
+**Timeline**: 2-4 weeks each
 
-**Future Research**: TIME-LLM, TEMPO (requires dedicated infrastructure)
+3. **TimeXer** - If using exogenous variables (flight plan, weather)
+   - Extend dataset for exogenous features
+   - **Deliverable**: Exogenous-aware forecasting
+
+4. **SOFTS** - If multivariate efficiency is critical
+   - Fast training/inference
+   - **Deliverable**: Efficient multivariate baseline
+
+### Phase 3: Quick Wins & Baselines
+**Timeline**: 1-2 weeks each
+
+5. **TSMixer** - Quick MLP baseline
+6. **FreTS** - Quick frequency baseline
+7. **N-HiTS** - Successor to N-BEATS
+
+**Deliverable**: Comprehensive MLP baseline suite
+
+### Phase 4: Research Exploration (Optional)
+**Timeline**: Variable
+
+8. **MambaTS** - Time series-specific Mamba adaptation
+9. **TimesNet** - 2D vision approach
+10. **ETSformer** - Classical-DL hybrid
+
+**Deliverable**: Research papers, novel approaches
+
+### Phase 5: Future (Monitor)
+**Timeline**: TBD
+
+- **Time-MoE** - When compute infrastructure ready (or use smaller checkpoints)
+- **TIME-LLM / TEMPO** - When tooling matures
 
 ---
 
@@ -717,44 +747,76 @@ For each new model:
 
 5. **Interpretability** (if applicable): Verify attention weights, decompositions
 
-6. **README Update**: Add to Model Registry table
+6. **README Update**: Add to Model Registry table (REQUIRED!)
 
 ---
 
 ## References
 
-### Papers
-- Lim et al. (2021): Temporal Fusion Transformers
-- Luo et al. (2024): ModernTCN
-- Zeng et al. (2023): DLinear/NLinear
-- Zhou et al. (2021): Informer
-- Wu et al. (2021): Autoformer
-- Zhou et al. (2022): FEDformer
-- Liu et al. (2022): Non-stationary Transformer
-- Zhang & Yan (2023): Crossformer
-- Oreshkin et al. (2020): N-BEATS
-- Challu et al. (2023): N-HiTS
-- Chen et al. (2023): TSMixer
-- Wu et al. (2023): TimesNet
-- Yi et al. (2023): FreTS
-- Woo et al. (2023): ETSformer
-- Jin et al. (2024): TIME-LLM
-- Cao et al. (2024): TEMPO
+### Foundation Models (2024-2025)
+- Time-MoE Team (2025): "Time-MoE: Billion-Scale Time Series Foundation Models with Mixture of Experts" (ICLR 2025 Spotlight)
+- Liu et al. (2024): "Timer: Generative Pre-trained Transformers Are Large Time Series Models" (ICML 2024)
+- Das et al. (2024): "A decoder-only foundation model for time-series forecasting" (ICML 2024, Google)
+- Goswami et al. (2024): "MOMENT: A Family of Open Time-series Foundation Models" (ICML 2024)
 
-### Aviation Domain
-- Ogunfowora & Najjaran (2024): "On the Exploration of Temporal Fusion Transformers for Anomaly Detection with Multivariate Aviation Time-Series Data", MDPI Aerospace
+### Recent Architectures (2024)
+- Wang et al. (2024): "TimeXer: Empowering Transformers for Time Series Forecasting with Exogenous Variables" (NeurIPS 2024)
+- Han et al. (2024): "SOFTS: Efficient Multivariate Time Series Forecasting with Series-Core Fusion" (NeurIPS 2024)
+- MambaTS Authors (2024): "MambaTS: Improved Selective State Space Models for Long-term Time Series Forecasting"
+- S-Mamba Authors (2024): "Is Mamba Effective for Time Series Forecasting?" (Neurocomputing 2025)
+
+### MLP and Novel Paradigms (2023)
+- Challu et al. (2023): "N-HiTS: Neural Hierarchical Interpolation for Time Series Forecasting" (AAAI 2023)
+- Chen et al. (2023): "TSMixer: An All-MLP Architecture for Time Series Forecasting" (KDD 2023)
+- Wu et al. (2023): "TimesNet: Temporal 2D-Variation Modeling for General Time Series Analysis" (ICLR 2023)
+- Yi et al. (2023): "FreTS: Frequency-domain MLPs are More Effective Learners in Time Series Forecasting" (NeurIPS 2023)
+- Woo et al. (2023): "ETSformer: Exponential Smoothing Transformers for Time-series Forecasting" (ICML 2023)
+
+### LLM-Based (2024)
+- Jin et al. (2024): "Time-LLM: Time Series Forecasting by Reprogramming Large Language Models" (ICLR 2024)
+- Cao et al. (2024): "TEMPO: Prompt-based Generative Pre-trained Transformer for Time Series Forecasting" (ICLR 2024)
 
 ### Code Repositories
+- Time-MoE: https://github.com/Time-MoE/Time-MoE
+- Timer/OpenLTM: https://github.com/thuml/Large-Time-Series-Model
+- TimesFM: https://github.com/google-research/timesfm
+- MOMENT: https://github.com/moment-timeseries-foundation-model/moment
+- TimeXer: https://github.com/thuml/TimeXer
+- SOFTS: https://github.com/Secilia-Cxy/SOFTS
 - Time-Series-Library: https://github.com/thuml/Time-Series-Library
-- PyTorch Forecasting: https://pytorch-forecasting.readthedocs.io/
 - NeuralForecast: https://github.com/Nixtla/neuralforecast
 
 ---
 
 ## Notes
 
-- Models removed from this document (now implemented): TimeMixer, Mamba2/S-Mamba, Chronos-Bolt, Moirai, Lag-Llama
-- Focus on models with public code and reproducible results
-- Prioritize interpretability for safety-critical aviation applications
-- Balance between cutting-edge research and proven baselines
-- Consider computational efficiency for potential onboard deployment
+### Models Removed (Now Implemented in AirTrace)
+- TFT (Temporal Fusion Transformer)
+- ModernTCN
+- DLinear / NLinear
+- Informer
+- Autoformer
+- FEDformer
+- Non-stationary Transformer
+- Crossformer
+- N-BEATS
+
+### Previously Implemented Foundation Models
+- Chronos-Bolt
+- Moirai
+- Mamba2
+- Lag-Llama
+
+### Key Priorities
+1. **Foundation Models First**: Timer, TimesFM, MOMENT offer immediate value with pre-trained checkpoints
+2. **Interpretability**: Essential for safety-critical aviation applications
+3. **Efficiency**: Consider computational constraints for potential onboard deployment
+4. **Reproducibility**: All proposed models have public code and reproducible results
+5. **Exogenous Variables**: TimeXer is unique in handling external contextual features (flight plan, weather)
+
+### Implementation Philosophy
+- Start with foundation models (zero-shot baseline)
+- Add specialized architectures as needed (exogenous vars, efficiency)
+- Fill gaps with quick MLP baselines
+- Explore novel paradigms for research
+- Monitor LLM-based approaches for future integration
