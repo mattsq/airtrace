@@ -39,6 +39,17 @@ class ContextTransform(Transform):
         # Encoding mappings (to be learned during fit)
         self.static_encoders = {}
 
+    @property
+    def context_dim(self) -> int:
+        """Return the number of context features that will be added."""
+        dim = 0
+        if self.use_static:
+            dim += len(self.use_static)
+        # In the future, we might add other context types here
+        # if self.use_plan_deltas:
+        #     dim += ...
+        return dim
+
     def fit(self, dataset) -> "ContextTransform":
         """Fit transform (learn encodings for categorical features).
 
@@ -95,10 +106,13 @@ class ContextTransform(Transform):
                     else:
                         # Assume numeric
                         encoded = float(value)
+                else:
+                    # Use default value (0.0) when metadata is missing
+                    encoded = 0.0
 
-                    # Broadcast to all timesteps
-                    feature_array = np.full((T_in, 1), encoded)
-                    context_features.append(feature_array)
+                # Broadcast to all timesteps
+                feature_array = np.full((T_in, 1), encoded)
+                context_features.append(feature_array)
 
         # Add plan deltas (if available in meta)
         if self.use_plan_deltas and "plan_deltas" in meta:
