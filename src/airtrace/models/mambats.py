@@ -497,6 +497,13 @@ class MambaTSModel(ARBaseModel):
         if not self.normalize_input or mean is None or std is None:
             return x
 
+        if mean.size(-1) != x.size(-1):
+            # When the output dimension differs from the input dimension used for
+            # normalization, fall back to a per-sample scalar statistic to
+            # preserve scale without shape mismatches.
+            mean = mean.mean(dim=-1, keepdim=True).expand(-1, 1, x.size(-1))
+            std = std.mean(dim=-1, keepdim=True).expand(-1, 1, x.size(-1))
+
         return x * std + mean
 
     def forward(
