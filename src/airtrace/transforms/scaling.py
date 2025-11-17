@@ -28,7 +28,8 @@ class ZScoreTransform(Transform):
         self.per_sensor = per_sensor
         self.center = center
         self.scale = scale
-        self.scaler = StandardScaler(with_mean=center, with_std=scale)
+        self.scaler_x = StandardScaler(with_mean=center, with_std=scale)
+        self.scaler_y = StandardScaler(with_mean=center, with_std=scale)
 
     def fit(self, dataset) -> "ZScoreTransform":
         """Fit scaler on dataset.
@@ -41,16 +42,21 @@ class ZScoreTransform(Transform):
         """
         # Collect samples for fitting
         all_x = []
+        all_y = []
         for i in range(min(len(dataset), 1000)):  # Sample first 1000 for efficiency
             sample = dataset[i]
             x = sample["x"] if isinstance(sample, dict) else sample[0]
+            y = sample["y"] if isinstance(sample, dict) else sample[1]
             all_x.append(x.numpy() if hasattr(x, "numpy") else x)
+            all_y.append(y.numpy() if hasattr(y, "numpy") else y)
 
         # Reshape to [N, D] for fitting
         all_x = np.concatenate(all_x, axis=0)
+        all_y = np.concatenate(all_y, axis=0)
 
-        # Fit scaler
-        self.scaler.fit(all_x)
+        # Fit scalers
+        self.scaler_x.fit(all_x)
+        self.scaler_y.fit(all_y)
         self.is_fitted = True
 
         return self
@@ -74,13 +80,13 @@ class ZScoreTransform(Transform):
         # Transform x
         x_shape = x.shape
         x_flat = x.reshape(-1, x_shape[-1])
-        x_transformed = self.scaler.transform(x_flat)
+        x_transformed = self.scaler_x.transform(x_flat)
         x = x_transformed.reshape(x_shape)
 
-        # Transform y (same scaler)
+        # Transform y (separate scaler)
         y_shape = y.shape
         y_flat = y.reshape(-1, y_shape[-1])
-        y_transformed = self.scaler.transform(y_flat)
+        y_transformed = self.scaler_y.transform(y_flat)
         y = y_transformed.reshape(y_shape)
 
         return x, y, meta
@@ -97,13 +103,13 @@ class ZScoreTransform(Transform):
         """
         x_shape = x.shape
         x_flat = x.reshape(-1, x_shape[-1])
-        x_inv = self.scaler.inverse_transform(x_flat)
+        x_inv = self.scaler_x.inverse_transform(x_flat)
         x = x_inv.reshape(x_shape)
 
         if y is not None:
             y_shape = y.shape
             y_flat = y.reshape(-1, y_shape[-1])
-            y_inv = self.scaler.inverse_transform(y_flat)
+            y_inv = self.scaler_y.inverse_transform(y_flat)
             y = y_inv.reshape(y_shape)
 
         return x, y
@@ -134,7 +140,12 @@ class RobustScalerTransform(Transform):
         super().__init__()
         self.per_sensor = per_sensor
         self.quantile_range = quantile_range
-        self.scaler = RobustScaler(
+        self.scaler_x = RobustScaler(
+            quantile_range=quantile_range,
+            with_centering=with_centering,
+            with_scaling=with_scaling
+        )
+        self.scaler_y = RobustScaler(
             quantile_range=quantile_range,
             with_centering=with_centering,
             with_scaling=with_scaling
@@ -151,15 +162,20 @@ class RobustScalerTransform(Transform):
         """
         # Collect samples
         all_x = []
+        all_y = []
         for i in range(min(len(dataset), 1000)):
             sample = dataset[i]
             x = sample["x"] if isinstance(sample, dict) else sample[0]
+            y = sample["y"] if isinstance(sample, dict) else sample[1]
             all_x.append(x.numpy() if hasattr(x, "numpy") else x)
+            all_y.append(y.numpy() if hasattr(y, "numpy") else y)
 
         all_x = np.concatenate(all_x, axis=0)
+        all_y = np.concatenate(all_y, axis=0)
 
-        # Fit scaler
-        self.scaler.fit(all_x)
+        # Fit scalers
+        self.scaler_x.fit(all_x)
+        self.scaler_y.fit(all_y)
         self.is_fitted = True
 
         return self
@@ -182,10 +198,10 @@ class RobustScalerTransform(Transform):
 
         # Transform x and y
         x_shape = x.shape
-        x = self.scaler.transform(x.reshape(-1, x_shape[-1])).reshape(x_shape)
+        x = self.scaler_x.transform(x.reshape(-1, x_shape[-1])).reshape(x_shape)
 
         y_shape = y.shape
-        y = self.scaler.transform(y.reshape(-1, y_shape[-1])).reshape(y_shape)
+        y = self.scaler_y.transform(y.reshape(-1, y_shape[-1])).reshape(y_shape)
 
         return x, y, meta
 
@@ -200,10 +216,10 @@ class RobustScalerTransform(Transform):
             Original scale (x, y)
         """
         x_shape = x.shape
-        x = self.scaler.inverse_transform(x.reshape(-1, x_shape[-1])).reshape(x_shape)
+        x = self.scaler_x.inverse_transform(x.reshape(-1, x_shape[-1])).reshape(x_shape)
 
         if y is not None:
             y_shape = y.shape
-            y = self.scaler.inverse_transform(y.reshape(-1, y_shape[-1])).reshape(y_shape)
+            y = self.scaler_y.inverse_transform(y.reshape(-1, y_shape[-1])).reshape(y_shape)
 
         return x, y
