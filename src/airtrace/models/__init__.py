@@ -40,6 +40,7 @@ from .informer import InformerModel
 from .patchtst import PatchTSTModel
 from .registry import build_model, list_models, register
 from .seq2seq import GRUSeq2SeqModel, LSTMSeq2SeqModel
+from .softs import SOFTS
 from .tcn import TCNModel
 from .timemixer import TimeMixerModel
 from .timexer import TimeXerModel
@@ -64,6 +65,7 @@ __all__ = [
     "NonStationaryTransformerModel",
     "TimeMixerModel",
     "TimeXerModel",
+    "SOFTS",
     "NBeatsModel",
     "AutoformerModel",
     "FEDformerModel",
