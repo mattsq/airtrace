@@ -68,14 +68,34 @@ AirTrace expects timeseries data in Parquet or CSV format. Each file should repr
 
 **Required format:**
 - One file per flight/sequence: `{flight_id}.parquet` or `{flight_id}.csv`
-- Column `timestamp` (datetime or integer index)
+- **Timestamp as the index** (critical for resampling)
 - Sensor value columns (e.g., `fuel_flow`, `mach`, `altitude`)
 
-**Example CSV:**
-```csv
-timestamp,fuel_flow,mach,altitude,oat,n1
-2024-01-01 00:00:00,1250.5,0.82,35000,-45,85.2
-2024-01-01 00:00:01,1251.2,0.82,35001,-45,85.3
+**Example - saving CSV with timestamp as index:**
+```python
+import pandas as pd
+
+# Your data with timestamp column
+df = pd.DataFrame({
+    'timestamp': pd.date_range('2024-01-01', periods=1000, freq='1S'),
+    'fuel_flow': [1250.5, 1251.2, ...],
+    'mach': [0.82, 0.82, ...],
+    'altitude': [35000, 35001, ...],
+    'oat': [-45, -45, ...],
+    'n1': [85.2, 85.3, ...]
+})
+
+# Set timestamp as index before saving
+df = df.set_index('timestamp')
+df.to_parquet('data/raw/flight_001.parquet')
+# or df.to_csv('data/raw/flight_001.csv')
+```
+
+**Expected file structure:**
+```
+timestamp                  fuel_flow  mach  altitude  oat   n1
+2024-01-01 00:00:00       1250.5     0.82  35000     -45   85.2
+2024-01-01 00:00:01       1251.2     0.82  35001     -45   85.3
 ...
 ```
 
@@ -86,6 +106,8 @@ data/raw/flight_002.parquet
 data/raw/flight_003.parquet
 ...
 ```
+
+**⚠️ Important:** If your CSV has timestamp as a regular column (not the index), `process_to_interim` will fail to resample correctly. Always ensure timestamp is the DataFrame index.
 
 #### Step 2: Process Data to Interim Format
 
@@ -110,6 +132,32 @@ This creates cleaned files in `data/interim/` with:
 - Uniform timesteps (resampled to 1Hz)
 - Missing values handled
 - Consistent sensor ordering
+
+**If your raw CSVs have timestamp as a column (not index), preprocess them first:**
+
+```python
+import pandas as pd
+from pathlib import Path
+
+raw_dir = Path("data/raw")
+for csv_file in raw_dir.glob("*.csv"):
+    # Read with timestamp as column
+    df = pd.read_csv(csv_file)
+
+    # Set timestamp as index
+    df['timestamp'] = pd.to_datetime(df['timestamp'])
+    df = df.set_index('timestamp')
+
+    # Save back as parquet with proper index
+    output_path = csv_file.with_suffix('.parquet')
+    df.to_parquet(output_path)
+    print(f"Converted {csv_file.name} -> {output_path.name}")
+
+# Now use the loader on the parquet files
+loader = RawDataLoader("data")
+for flight_id in ["flight_001", "flight_002"]:
+    loader.process_to_interim(flight_id=flight_id, resample_rate="1S")
+```
 
 #### Step 3: Create Windowed Datasets
 
