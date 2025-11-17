@@ -16,9 +16,22 @@ AirTrace enables rapid experimentation with different sequence models (RNNs, TCN
 
 ## Installation
 
+We recommend using `uv` to create an isolated environment and to ensure dependencies are resolved
+with the pinned NumPy version that is compatible with PyTorch wheels.
+
 ```bash
-pip install airtrace
+# Create and activate a virtual environment
+uv venv .venv
+source .venv/bin/activate
+
+# Install the latest release
+uv pip install airtrace
 ```
+
+> **Note:** PyTorch binaries are still built against NumPy 1.x. Installing without the pinned
+> constraint can pull NumPy 2.x and trigger import-time ABI errors like
+> `A module that was compiled using NumPy 1.x cannot be run in NumPy 2.x`. The pinned dependency
+> in `pyproject.toml` keeps installs on a compatible NumPy version.
 
 ## Installation from Source for Development
 
@@ -27,8 +40,10 @@ pip install airtrace
 git clone https://github.com/yourusername/airtrace.git
 cd airtrace
 
-# Install in development mode
-pip install -e ".[dev]"
+# Install in development mode (use --link-mode=copy on Windows)
+uv venv .venv
+source .venv/bin/activate
+uv pip install -e ".[dev]"
 ```
 
 ## Quick Start
