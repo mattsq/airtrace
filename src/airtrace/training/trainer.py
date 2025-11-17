@@ -138,7 +138,7 @@ class Trainer:
         metric_sums = {}
         num_batches = 0
 
-        pbar = tqdm(self.train_loader, desc=f"Epoch {self.current_epoch}")
+        pbar = tqdm(self.train_loader, desc=f"Epoch {self.current_epoch}", disable=True)
 
         for batch in pbar:
             # Move batch to device
@@ -197,7 +197,7 @@ class Trainer:
         metric_sums = {}
         num_batches = 0
 
-        for batch in tqdm(self.val_loader, desc="Validation"):
+        for batch in tqdm(self.val_loader, desc="Validation", disable=True):
             batch = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v
                     for k, v in batch.items()}
 

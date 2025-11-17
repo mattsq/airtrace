@@ -53,11 +53,10 @@ class OneStepTask(Task):
 
         # Compute metrics
         metrics = self.compute_metrics(preds, targets)
-        metrics["loss"] = loss.item()
 
         return {
-            "loss": loss,
-            **metrics
+            "loss": loss,  # Tensor for backprop
+            **{k: v for k, v in metrics.items()}  # Metrics as floats/scalars
         }
 
     def validation_step(
