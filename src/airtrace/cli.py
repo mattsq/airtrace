@@ -1,18 +1,35 @@
 """Command-line interface for AirTrace."""
 
+from __future__ import annotations
+
+import argparse
+import re
 import sys
+import textwrap
 from pathlib import Path
-from typing import List
+from typing import Iterable, List, TYPE_CHECKING
 
 import hydra
+from importlib import metadata
 from omegaconf import DictConfig, OmegaConf
 
-from airtrace.data.datamodule import SensorDataModule
-from airtrace.evaluation.eval_runner import EvaluationRunner
-from airtrace.models.registry import build_model
-from airtrace.tasks.registry import build_task
-from airtrace.training.trainer import Trainer, set_seed
-from airtrace.transforms.registry import build_transforms
+if TYPE_CHECKING:
+    import torch
+
+
+def _resolve_version() -> str:
+    try:
+        return metadata.version("airtrace")
+    except metadata.PackageNotFoundError:
+        init_path = Path(__file__).resolve().parent / "__init__.py"
+        if init_path.exists():
+            for line in init_path.read_text().splitlines():
+                if line.startswith("__version__"):
+                    return re.split(r"=\s*", line, maxsplit=1)[1].strip("\"' ")
+    return "0.0.0"
+
+
+CLI_VERSION = _resolve_version()
 
 
 def train(cfg: DictConfig):
@@ -21,14 +38,21 @@ def train(cfg: DictConfig):
     Args:
         cfg: Hydra configuration
     """
-    print("=" * 80)
-    print("Training Configuration")
-    print("=" * 80)
-    print(OmegaConf.to_yaml(cfg))
-    print("=" * 80)
+    from airtrace.data.datamodule import SensorDataModule
+    from airtrace.models.registry import build_model
+    from airtrace.tasks.registry import build_task
+    from airtrace.training.trainer import Trainer, set_seed
+    from airtrace.transforms.registry import build_transforms
+    _print_run_summary(cfg, heading="Training")
 
     # Set random seed
     set_seed(cfg.seed)
+
+    # Validate data presence before constructing the pipeline
+    missing_assets = _missing_data_assets(cfg.data, require_test=False)
+    if missing_assets:
+        _print_data_guidance(cfg.data, missing_assets)
+        sys.exit(1)
 
     # Build transforms
     transform_pipeline = None
@@ -49,9 +73,16 @@ def train(cfg: DictConfig):
         datamodule.setup()
         print(f"Data module: {datamodule}")
     except Exception as e:
-        print(f"Warning: Could not set up data module: {e}")
-        print("This is expected if data files don't exist yet.")
-        print("Please prepare your data first using the data preparation scripts.")
+        print(f"Error: Could not set up data module: {e}")
+        print("Check that the index parquet files match the configured sensors and window specs.")
+        sys.exit(1)
+
+    if cfg.cli.get("data_check"):
+        print("\nData check complete. Training was not started because --data-check was supplied.")
+        return
+
+    if cfg.cli.get("dry_run"):
+        print("\nDry run complete. Configuration and data checks passed; training skipped by request.")
         return
 
     # Build model
@@ -62,6 +93,17 @@ def train(cfg: DictConfig):
         output_dim=datamodule.out_dim
     )
     print(f"Model: {model}")
+
+    if cfg.checkpoint:
+        checkpoint_path = Path(cfg.checkpoint)
+        if not checkpoint_path.exists():
+            print(f"Error: Checkpoint not found at {checkpoint_path}")
+            sys.exit(1)
+        _load_checkpoint_if_present(
+            model,
+            checkpoint_path=checkpoint_path,
+            preload_message="Loading checkpoint before training",
+        )
 
     # Build task
     print("\nBuilding task...")
@@ -101,14 +143,21 @@ def evaluate(cfg: DictConfig):
     Args:
         cfg: Hydra configuration
     """
-    print("=" * 80)
-    print("Evaluation Configuration")
-    print("=" * 80)
-    print(OmegaConf.to_yaml(cfg))
-    print("=" * 80)
+    from airtrace.data.datamodule import SensorDataModule
+    from airtrace.evaluation.eval_runner import EvaluationRunner
+    from airtrace.models.registry import build_model
+    from airtrace.tasks.registry import build_task
+    from airtrace.training.trainer import set_seed
+    from airtrace.transforms.registry import build_transforms
+    _print_run_summary(cfg, heading="Evaluation")
 
     # Set random seed
     set_seed(cfg.seed)
+
+    missing_assets = _missing_data_assets(cfg.data, require_test=True)
+    if missing_assets:
+        _print_data_guidance(cfg.data, missing_assets)
+        sys.exit(1)
 
     # Build transforms
     transform_pipeline = None
@@ -128,18 +177,16 @@ def evaluate(cfg: DictConfig):
         datamodule.setup()
     except Exception as e:
         print(f"Error: Could not set up data module: {e}")
+        sys.exit(1)
+
+    if cfg.cli.get("data_check"):
+        print("\nData check complete. Evaluation was not started because --data-check was supplied.")
         return
 
     # Build task
     task = build_task(cfg.task)
 
-    # Load checkpoint
-    checkpoint_path = Path(cfg.get("checkpoint", "checkpoints/best.ckpt"))
-    if not checkpoint_path.exists():
-        print(f"Error: Checkpoint not found at {checkpoint_path}")
-        return
-
-    print(f"\nLoading checkpoint from {checkpoint_path}...")
+    checkpoint_path = _require_checkpoint(cfg)
 
     # Build model from checkpoint
     model = build_model(
@@ -148,10 +195,7 @@ def evaluate(cfg: DictConfig):
         output_dim=datamodule.out_dim
     )
 
-    # Load state dict
-    import torch
-    checkpoint = torch.load(checkpoint_path)
-    model.load_state_dict(checkpoint["model_state_dict"])
+    _load_checkpoint_if_present(model, checkpoint_path)
 
     # Create evaluation runner
     test_loader = datamodule.test_dataloader() or datamodule.val_dataloader()
@@ -175,6 +219,181 @@ def evaluate(cfg: DictConfig):
     print("=" * 80)
 
 
+def _build_parser() -> argparse.ArgumentParser:
+    description = textwrap.dedent(
+        """AirTrace command-line interface. Subcommands map to Hydra overrides and
+        accept additional overrides after the CLI flags.
+
+        Examples:
+          airtrace train --data-check data=synthetic
+          airtrace train --dry-run exp=exp_001_gru_zscore
+          airtrace eval --checkpoint runs/20240516/demo/checkpoints/best.ckpt data=synthetic
+        """
+    )
+
+    epilog = textwrap.dedent(
+        """Hydra overrides (e.g., model=tcn train.epochs=5) can be appended after
+        any CLI flags. Use --config-name to switch experiments if needed.
+        """
+    )
+
+    parser = argparse.ArgumentParser(
+        prog="airtrace",
+        description=description,
+        epilog=epilog,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--version", action="version", version=f"airtrace {CLI_VERSION}")
+    subparsers = parser.add_subparsers(dest="command", title="commands", metavar="command")
+
+    train_parser = subparsers.add_parser(
+        "train",
+        help="Train a model with the selected config overrides",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    _add_train_flags(train_parser)
+
+    eval_parser = subparsers.add_parser(
+        "eval",
+        help="Evaluate a trained checkpoint",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    _add_eval_flags(eval_parser)
+
+    parser.set_defaults(command="train")
+    return parser
+
+
+def _add_train_flags(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--data-check", action="store_true", help="Validate data paths and exit before training")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Compose the config and run data checks without launching training",
+    )
+    parser.add_argument(
+        "--checkpoint",
+        type=str,
+        help="Optional checkpoint to load before training (same semantics as checkpoint override)",
+    )
+
+
+def _add_eval_flags(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--checkpoint",
+        type=str,
+        help="Checkpoint path to evaluate. You can also set checkpoint=<path> as a Hydra override.",
+    )
+    parser.add_argument(
+        "--data-check",
+        action="store_true",
+        help="Validate data paths for the evaluation dataset and exit",
+    )
+
+
+def prepare_hydra_overrides(argv: Iterable[str]) -> List[str]:
+    """Convert CLI arguments into Hydra override strings."""
+
+    parser = _build_parser()
+    args, overrides = parser.parse_known_args(list(argv))
+
+    command = args.command or "train"
+    hydra_overrides = [f"mode={command}"]
+
+    if getattr(args, "checkpoint", None):
+        hydra_overrides.append(f"checkpoint={args.checkpoint}")
+
+    if getattr(args, "data_check", False):
+        hydra_overrides.append("cli.data_check=true")
+
+    if getattr(args, "dry_run", False):
+        hydra_overrides.append("cli.dry_run=true")
+
+    hydra_overrides.extend(overrides)
+    return hydra_overrides
+
+
+def _print_run_summary(cfg: DictConfig, heading: str) -> None:
+    data_cfg = cfg.data
+    transforms = cfg.get("transforms", {})
+    transform_names = [step.get("name", "?") for step in transforms.get("pipeline", [])]
+
+    print("=" * 80)
+    print(f"{heading} Configuration Summary")
+    print("=" * 80)
+    print(f"Mode:        {cfg.get('mode', heading.lower())}")
+    print(f"Experiment:  {cfg.get('exp_name', 'debug')}")
+    print(f"Data root:   {Path(data_cfg.root).resolve()}")
+    print(f"Train index: {data_cfg.get('train_index')}")
+    print(f"Val index:   {data_cfg.get('val_index')}")
+    if data_cfg.get("test_index"):
+        print(f"Test index:  {data_cfg.get('test_index')}")
+    print(f"Transforms:  {', '.join(transform_names) if transform_names else 'none'}")
+    if cfg.get("checkpoint"):
+        print(f"Checkpoint:  {cfg.checkpoint}")
+    print(f"Log dir:     {cfg.get('log_dir', 'runs/debug')}")
+    if cfg.cli.get("data_check"):
+        print("Data check:  enabled (will exit after validation)")
+    if cfg.cli.get("dry_run"):
+        print("Dry run:     enabled (will skip training)")
+    print("=" * 80)
+    print(OmegaConf.to_yaml(cfg, resolve=True))
+    print("=" * 80)
+
+
+def _missing_data_assets(data_config: DictConfig, require_test: bool) -> List[Path]:
+    data_root = Path(data_config.get("root", "data"))
+    missing: List[Path] = []
+
+    if not data_root.exists():
+        missing.append(data_root)
+
+    required_keys = ["train_index", "val_index"]
+    if require_test and data_config.get("test_index"):
+        required_keys.append("test_index")
+
+    for key in required_keys:
+        candidate = data_root / data_config.get(key, "")
+        if not candidate.exists():
+            missing.append(candidate)
+
+    return missing
+
+
+def _print_data_guidance(data_config: DictConfig, missing_assets: List[Path]) -> None:
+    print("\nData assets are missing:")
+    for path in missing_assets:
+        print(f"  - {path}")
+
+    print(
+        "\nPopulate the expected parquet index files under your data root or switch to "
+        "the bundled synthetic configs (e.g., `data=synthetic` or `data=synthetic_cruise`)."
+    )
+    print("Run with --data-check after updating your data to verify the configuration.")
+
+
+def _require_checkpoint(cfg: DictConfig) -> Path:
+    if not cfg.get("checkpoint"):
+        print("Error: No checkpoint provided. Use --checkpoint <path> or checkpoint=<path>.")
+        sys.exit(1)
+
+    checkpoint_path = Path(cfg.checkpoint)
+    if not checkpoint_path.exists():
+        print(f"Error: Checkpoint not found at {checkpoint_path}")
+        sys.exit(1)
+    return checkpoint_path
+
+
+def _load_checkpoint_if_present(model: torch.nn.Module | None, checkpoint_path: Path, preload_message: str | None = None) -> None:
+    if preload_message:
+        print(f"\n{preload_message} from {checkpoint_path}...")
+
+    import torch
+
+    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    if model is not None:
+        model.load_state_dict(checkpoint["model_state_dict"])
+
 @hydra.main(version_base=None, config_path="pkg://airtrace.configs", config_name="config")
 def main(cfg: DictConfig):
     """Main entry point.
@@ -193,31 +412,11 @@ def main(cfg: DictConfig):
         sys.exit(1)
 
 
-def _normalize_hydra_args(argv: List[str]) -> List[str]:
-    """Map positional subcommands to Hydra overrides.
-
-    Hydra interprets bare positional arguments as override expressions, which
-    causes commands like ``airtrace train`` to fail with a parse error. We
-    convert the first positional argument to the expected ``mode=`` override so
-    both ``airtrace train`` and ``airtrace eval`` behave like documented
-    subcommands while still supporting standard Hydra overrides.
-
-    Args:
-        argv: Raw command-line arguments (excluding the program name).
-
-    Returns:
-        The normalized argument list suitable for Hydra parsing.
-    """
-
-    if argv and argv[0] in {"train", "eval"}:
-        return [f"mode={argv[0]}", *argv[1:]]
-    return argv
-
-
 def cli() -> None:
     """Entry point for the ``airtrace`` console script."""
 
-    sys.argv = [sys.argv[0], *_normalize_hydra_args(sys.argv[1:])]
+    hydra_overrides = prepare_hydra_overrides(sys.argv[1:])
+    sys.argv = [sys.argv[0], *hydra_overrides]
     main()
 
 

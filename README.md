@@ -48,31 +48,42 @@ uv pip install -e ".[dev]"
 
 ## Quick Start
 
-### Train a model
+### CLI essentials
 
 ```bash
-# Run with default config
-airtrace train
+# Discover commands and flags
+airtrace --help
+airtrace --version
 
-# Run a specific experiment
-airtrace train exp=exp_001_gru_zscore
+# Validate data paths without launching training
+airtrace train --data-check data=synthetic
 
-# Override parameters from command line
+# Compose configs and exit after verification
+airtrace train --dry-run exp=exp_001_gru_zscore
+
+# Train with overrides (Hydra overrides still apply)
 airtrace train model=tcn train.epochs=100 train.batch_size=128
 
-# Show CLI options and Hydra defaults
-airtrace train --help
+# Evaluate a saved checkpoint
+airtrace eval --checkpoint runs/20240516/demo/checkpoints/best.ckpt data=synthetic
 ```
 
-### Evaluate a model
+Hydra overrides (for example, `model=tcn train.epochs=50`) can be appended after
+the CLI flags for both `train` and `eval`.
+
+### Data preparation
+
+AirTrace expects parquet index files such as `metadata/train_index.parquet` and
+`metadata/val_index.parquet` under `data/`. If you don't have local data yet,
+use the bundled synthetic configs:
 
 ```bash
-airtrace eval exp=exp_001_gru_zscore checkpoint=best.ckpt
+airtrace train --data-check data=synthetic
+airtrace eval --checkpoint <path/to/ckpt> data=synthetic
 ```
 
-The ``train`` and ``eval`` positional commands are mapped to Hydra's ``mode``
-override, so you can use the documented subcommand-style syntax without
-manually supplying ``mode=train`` or ``mode=eval``.
+Running with `--data-check` will verify the configured paths and exit early with
+actionable errors if files are missing.
 
 ## Project Structure
 
