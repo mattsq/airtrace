@@ -33,6 +33,7 @@ from .mamba2 import Mamba2Model
 from .moderntcn import ModernTCNModel
 from .nonstationary_transformer import NonStationaryTransformerModel
 from .moirai import MoiraiModel
+from .nbeats import NBeatsModel
 from .patchtst import PatchTSTModel
 from .registry import build_model, list_models, register
 from .seq2seq import GRUSeq2SeqModel, LSTMSeq2SeqModel
@@ -58,6 +59,7 @@ __all__ = [
     "iTransformerModel",
     "NonStationaryTransformerModel",
     "TimeMixerModel",
+    "NBeatsModel",
     "AutoformerModel",
     "FEDformerModel",
     "CycleNetModel",

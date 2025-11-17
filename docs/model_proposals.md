@@ -9,9 +9,10 @@ This document tracks proposals for adding models to AirTrace based on recent lit
 
 ## Current Status
 
-**Implemented**: 25 models including:
+**Implemented**: 27 models including:
 - Modern architectures: PatchTST (ICLR 2023), iTransformer (ICLR 2024), TimeMixer (ICLR 2024), CycleNet (NeurIPS 2024)
 - Foundation models: Chronos-Bolt, Moirai, Mamba2, Lag-Llama
+- Basis expansion models: N-BEATS (ICLR 2020)
 - RNNs/Seq2Seq: GRU, LSTM variants
 - Baseline models: 16 statistical and simple baselines
 - Convolutions: TCN

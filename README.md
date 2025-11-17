@@ -194,6 +194,7 @@ AirTrace includes 27 registered models spanning from simple baselines to sophist
 | Model Name | Class | Description |
 |------------|-------|-------------|
 | `timemixer` | `TimeMixerModel` | TimeMixer - decomposable multiscale mixing for time series forecasting with MLP architecture (ICLR 2024) |
+| `nbeats` | `NBeatsModel` | N-BEATS - residual stack of basis expansion blocks with interpretable trend/seasonality components (ICLR 2020) |
 | `cyclenet` | `CycleNetModel` | CycleNet - residual cycle forecasting with learnable periodic patterns for extreme efficiency (NeurIPS 2024 Spotlight) |
 
 ### Baseline Models
