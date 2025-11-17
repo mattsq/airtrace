@@ -225,11 +225,25 @@ The CI model validation script (`src/scripts/validate_models.py`) builds every r
 
 ---
 
+### 2026-03-10 Dependencies: NumPy 2.x breaks PyTorch wheels
+
+**Discovered by**: gpt-5.1-codex session
+**Impact**: Package installation, CLI entrypoints
+
+Installing with unconstrained dependencies can pull NumPy 2.x, but current PyTorch wheels are built
+against NumPy 1.x. The mismatch triggers import-time errors such as `A module that was compiled
+using NumPy 1.x cannot be run in NumPy 2.x` when running `airtrace` commands. Pinning NumPy to
+`<2.0.0` in `pyproject.toml` and installing via `uv` keeps environments on a compatible version.
+
+**Example/Code Reference**: `pyproject.toml` dependency pin, README installation note
+
+---
+
 ## Current State
 
-**Total learnings**: 6
-**Last updated**: 2025-11-15
-**Most active areas**: Project structure, configuration system, data pipeline, synthetic data, baseline models, model validation
+**Total learnings**: 7
+**Last updated**: 2026-03-10
+**Most active areas**: Project structure, configuration system, data pipeline, synthetic data, baseline models, model validation, dependency management
 
 ---
 
