@@ -83,11 +83,10 @@ class MultiStepTask(Task):
 
         # Compute metrics
         metrics = self.compute_metrics(preds, targets)
-        metrics["loss"] = loss.item()
 
         return {
-            "loss": loss,
-            **metrics
+            "loss": loss,  # Tensor for backprop
+            **{k: v for k, v in metrics.items()}  # Metrics as floats/scalars
         }
 
     def validation_step(
@@ -128,9 +127,8 @@ class MultiStepTask(Task):
 
             loss = self.loss_fn(preds, targets)
             metrics = self.compute_metrics(preds, targets)
-            metrics["loss"] = loss.item()
 
             return {
-                "loss": loss,
-                **metrics
+                "loss": loss,  # Tensor for backprop
+                **{k: v for k, v in metrics.items()}  # Metrics as floats/scalars
             }

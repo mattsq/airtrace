@@ -74,7 +74,8 @@ class SensorDataModule:
             data_store=self.data_store,
             transforms=self.transforms,
             sensor_names=self.sensor_names,
-            target_sensors=self.target_sensors
+            target_sensors=self.target_sensors,
+            window_spec=self.window_spec
         )
 
         self.val_dataset = SensorWindowDataset(
@@ -82,7 +83,8 @@ class SensorDataModule:
             data_store=self.data_store,
             transforms=self.transforms,
             sensor_names=self.sensor_names,
-            target_sensors=self.target_sensors
+            target_sensors=self.target_sensors,
+            window_spec=self.window_spec
         )
 
         # Test dataset (if available)
@@ -93,7 +95,8 @@ class SensorDataModule:
                 data_store=self.data_store,
                 transforms=self.transforms,
                 sensor_names=self.sensor_names,
-                target_sensors=self.target_sensors
+                target_sensors=self.target_sensors,
+                window_spec=self.window_spec
             )
 
     def train_dataloader(self) -> DataLoader:
