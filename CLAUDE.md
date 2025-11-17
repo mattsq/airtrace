@@ -11,6 +11,62 @@ AirTrace is a **modular, config-driven framework** for autoregressive timeseries
 3. **Reproducible**: One config + one seed = one deterministic experiment
 4. **Type-safe**: Heavy use of type hints, validated with mypy
 
+## Python Environment Setup
+
+**CRITICAL**: This project uses a local virtual environment managed by `uv`.
+
+### Using the Virtual Environment
+
+**ALWAYS use the virtual environment** for all Python commands:
+
+```bash
+# On Windows (Git Bash/MINGW):
+source .venv/Scripts/activate
+
+# On Linux/macOS:
+source .venv/bin/activate
+```
+
+**OR** prefix Python commands with the venv path:
+
+```bash
+# Windows:
+.venv/Scripts/python -m pytest tests/
+.venv/Scripts/python -m airtrace.cli train exp=exp_001
+
+# Linux/macOS:
+.venv/bin/python -m pytest tests/
+.venv/bin/python -m airtrace.cli train exp=exp_001
+```
+
+### Package Management with uv
+
+**ALWAYS use `uv` for package management** (NOT pip):
+
+```bash
+# Install/update dependencies (use --link-mode=copy on Windows):
+uv pip install -e ".[dev]" --link-mode=copy
+
+# Add a new dependency:
+# 1. Edit pyproject.toml
+# 2. Run: uv pip install -e ".[dev]" --link-mode=copy
+
+# Sync environment (after pulling changes):
+uv pip install -e ".[dev]" --link-mode=copy
+```
+
+### Important Notes
+
+- **DO NOT** use system Python or create new venvs
+- **DO NOT** use `pip` directly - always use `uv pip`
+- On Windows with OneDrive/cloud-synced drives, **always use `--link-mode=copy`**
+- The venv is at `.venv/` in the project root (gitignored)
+- If `.venv/` is missing or broken, recreate it:
+  ```bash
+  uv venv .venv
+  uv pip install -e ".[dev]" --link-mode=copy
+  ```
+
 ## Quick Orientation
 
 ```
@@ -163,8 +219,9 @@ airtrace train exp=exp_001_gru_zscore model.hidden_dim=256 train.epochs=100
 
 **Add a dependency:**
 ```bash
-# Edit pyproject.toml, then:
-pip install -e ".[dev]"
+# 1. Edit pyproject.toml to add the dependency
+# 2. Reinstall with uv (use --link-mode=copy on Windows):
+uv pip install -e ".[dev]" --link-mode=copy
 ```
 
 ## Common Pitfalls (DON'T DO THIS)

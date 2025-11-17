@@ -1,0 +1,13 @@
+defaults:
+  - override /data: q400
+  - override /model: persistence
+  - override /transforms: minimal
+  - override /task: one_step
+  - override /train: default
+
+exp_name: "q400_persistence_baseline"
+seed: 42
+
+# Q400 baseline experiment - Phase 2 testing
+# Model: Persistence (last value forecast)
+# Purpose: Validate data pipeline and establish baseline performance
