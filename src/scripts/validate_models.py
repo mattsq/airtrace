@@ -429,6 +429,11 @@ def validate_single_model(
                 "dim_feedforward": 128,
                 "dropout": 0.0
             }
+        elif model_name == "softs":
+            # SOFTS requires explicit sequence and prediction lengths.
+            # Use the synthetic dataset defaults (window_size=60, pred_horizon=1)
+            # so validation can instantiate the model without extra config.
+            config["params"] = {"seq_len": 60, "pred_len": 1}
 
         model = build_model(config, input_dim=input_dim, output_dim=output_dim)
 
