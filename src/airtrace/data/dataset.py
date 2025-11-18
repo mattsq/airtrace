@@ -2,7 +2,7 @@
 
 import functools
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -143,6 +143,8 @@ class DataStore:
         self.data_root = Path(data_root)
         self.format = format
         self._load_flight = functools.lru_cache(maxsize=128)(self._load_flight)
+        self._column_index_cache: Dict[Tuple[str, Tuple[str, ...]], List[int]] = {}
+        self._column_positions_cache: Dict[str, Dict[str, int]] = {}
 
         # Load flight metadata
         metadata_path = self.data_root / "metadata" / "q400_flight_metadata.csv"
@@ -174,21 +176,28 @@ class DataStore:
                 meta: Metadata dict
         """
         # Load flight data (with caching)
-        flight_data = self._load_flight(flight_id)
+        flight_array, columns = self._load_flight(flight_id)
 
-        # Validate columns exist
-        missing_cols = set(column_names) - set(flight_data.columns)
-        if missing_cols:
-            raise ValueError(
-                f"Missing columns in flight {flight_id}: {missing_cols}\n"
-                f"Available columns: {list(flight_data.columns)}"
-            )
+        cache_key = (flight_id, tuple(column_names))
+        if cache_key not in self._column_index_cache:
+            column_positions = self._column_positions_cache.get(flight_id)
+            if column_positions is None:
+                column_positions = {name: idx for idx, name in enumerate(columns)}
+                self._column_positions_cache[flight_id] = column_positions
 
-        # Extract window using iloc (correct pandas indexing)
-        window_df = flight_data.iloc[start_idx:end_idx]
+            missing_cols = [name for name in column_names if name not in column_positions]
+            if missing_cols:
+                raise ValueError(
+                    f"Missing columns in flight {flight_id}: {missing_cols}\n"
+                    f"Available columns: {list(columns)}"
+                )
 
-        # Select columns and convert to numpy
-        window_array = window_df[column_names].values
+            self._column_index_cache[cache_key] = [column_positions[name] for name in column_names]
+
+        column_indices = self._column_index_cache[cache_key]
+
+        # Extract window and select columns using numpy indexing for speed
+        window_array = flight_array[start_idx:end_idx, column_indices]
 
         meta = {
             "flight_id": flight_id,
@@ -252,21 +261,29 @@ class DataStore:
 
         return x, y, meta
 
-    def _load_flight(self, flight_id: str) -> pd.DataFrame:
-        """Load flight data from disk.
+    def _load_flight(self, flight_id: str) -> Tuple[np.ndarray, Tuple[str, ...]]:
+        """Load flight data from disk and return a numpy view plus column names.
 
         Args:
             flight_id: Flight identifier
 
         Returns:
-            DataFrame with sensor timeseries
+            Tuple of (numpy array, column names)
         """
         if self.format == "parquet":
             file_path = self.data_root / "processed" / f"{flight_id}.parquet"
-            return pd.read_parquet(file_path)
+            flight_df = pd.read_parquet(file_path)
         else:
             raise NotImplementedError(f"Format {self.format} not yet implemented")
+
+        # Convert to a contiguous float32 array once to avoid per-sample casting
+        flight_array = np.ascontiguousarray(flight_df.to_numpy(dtype=np.float32))
+        columns = tuple(flight_df.columns)
+        self._column_positions_cache[flight_id] = {name: idx for idx, name in enumerate(columns)}
+        return flight_array, columns
 
     def clear_cache(self):
         """Clear the in-memory cache of the decorated _load_flight method."""
         self._load_flight.cache_clear()
+        self._column_index_cache.clear()
+        self._column_positions_cache.clear()
