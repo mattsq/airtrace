@@ -92,6 +92,11 @@ class SensorWindowDataset(Dataset):
         x = window_data[:input_len, sensor_indices]
         y = window_data[input_len:, target_indices]
 
+        # Add sensor mapping to metadata for models to use
+        meta["sensor_names"] = self.sensor_names
+        meta["target_sensors"] = self.target_sensors
+        meta["input_sensor_indices"] = {name: i for i, name in enumerate(self.sensor_names)}
+
         # Apply transforms
         if self.transforms is not None:
             x, y, meta = self.transforms(x, y, meta)
@@ -125,6 +130,13 @@ class DataStore:
         self.data_root = Path(data_root)
         self.format = format
         self._cache = {}  # Simple in-memory cache
+
+        # Load flight metadata
+        metadata_path = self.data_root / "metadata" / "q400_flight_metadata.csv"
+        if metadata_path.exists():
+            self.flight_metadata = pd.read_csv(metadata_path).set_index("flight_id")
+        else:
+            self.flight_metadata = None
 
     def get_full_window(
         self,
@@ -173,6 +185,11 @@ class DataStore:
             "start_idx": start_idx,
             "end_idx": end_idx
         }
+
+        # Add static metadata if available
+        if self.flight_metadata is not None and flight_id in self.flight_metadata.index:
+            static_meta = self.flight_metadata.loc[flight_id].to_dict()
+            meta.update(static_meta)
 
         return window_array, meta
 

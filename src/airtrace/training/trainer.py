@@ -42,14 +42,22 @@ class Trainer:
         self.val_loader = val_loader
         self.device = device
 
-        # Build optimizer and scheduler
-        self.optimizer = self._build_optimizer(config.get("train", {}).get("optimizer", {}))
-        self.scheduler = self._build_scheduler(config.get("train", {}).get("scheduler", {}))
-
-        # Training config
+        # Training config (must be set before building scheduler)
         train_config = config.get("train", {})
         self.epochs = train_config.get("epochs", 50)
         self.log_every_n_steps = train_config.get("log_every_n_steps", 50)
+
+        # Check if model has trainable parameters
+        self.has_trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad) > 0
+
+        # Build optimizer and scheduler (only if model has trainable parameters)
+        if self.has_trainable_params:
+            self.optimizer = self._build_optimizer(config.get("train", {}).get("optimizer", {}))
+            self.scheduler = self._build_scheduler(config.get("train", {}).get("scheduler", {}))
+        else:
+            self.optimizer = None
+            self.scheduler = None
+            print("[INFO] Model has no trainable parameters - skipping optimizer/scheduler creation")
 
         # Gradient clipping
         grad_clip_config = train_config.get("grad_clip", {})
@@ -146,21 +154,22 @@ class Trainer:
                     for k, v in batch.items()}
 
             # Forward pass
-            self.optimizer.zero_grad()
             outputs = self.task.training_step(batch, self.model)
             loss = outputs["loss"]
 
-            # Backward pass
-            loss.backward()
+            # Only do backward pass if model has trainable parameters
+            if self.has_trainable_params:
+                self.optimizer.zero_grad()
+                loss.backward()
 
-            # Gradient clipping
-            if self.use_grad_clip:
-                torch.nn.utils.clip_grad_norm_(
-                    self.model.parameters(), self.grad_clip_max_norm
-                )
+                # Gradient clipping
+                if self.use_grad_clip:
+                    torch.nn.utils.clip_grad_norm_(
+                        self.model.parameters(), self.grad_clip_max_norm
+                    )
 
-            # Optimizer step
-            self.optimizer.step()
+                # Optimizer step
+                self.optimizer.step()
 
             # Accumulate metrics
             for k, v in outputs.items():

@@ -27,10 +27,11 @@ def _batched_eye(size: int, batch: int, device: torch.device, dtype: torch.dtype
 class PersistenceModel(ARBaseModel):
     """Persistence (naive) baseline model.
 
-    Predicts the last observed value as the next value.
+    Predicts the last observed value of target sensor(s) as the next value.
     Also known as the "naive forecast" or "random walk model".
 
-    This is one of the most common baselines for time series prediction.
+    This is a truly non-trainable baseline with 0 learnable parameters.
+    It uses metadata to identify which input dimensions correspond to target sensors.
     """
 
     def __init__(self, input_dim: int, output_dim: int, **kwargs):
@@ -42,24 +43,17 @@ class PersistenceModel(ARBaseModel):
             **kwargs: Additional arguments (ignored)
         """
         super().__init__(input_dim, output_dim, **kwargs)
-
-        # No trainable parameters needed
-        # But we need to handle input_dim != output_dim case
-        if input_dim != output_dim:
-            # Simple linear projection (could also just take first output_dim features)
-            self.projection = nn.Linear(input_dim, output_dim, bias=False)
-        else:
-            self.projection = None
+        # No trainable parameters at all
 
     def forward(
         self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
     ) -> Dict[str, torch.Tensor]:
-        """Forward pass - return last value.
+        """Forward pass - return last value of target sensors.
 
         Args:
             x: Input tensor [B, T_in, D_in]
             context: Optional context tensor (ignored)
-            **kwargs: Additional arguments (ignored)
+            **kwargs: Additional arguments (may contain 'meta' batch)
 
         Returns:
             Dictionary with 'preds' [B, 1, D_out]
@@ -67,9 +61,44 @@ class PersistenceModel(ARBaseModel):
         # Get last timestep
         last_value = x[:, -1, :]  # [B, D_in]
 
-        # Handle dimension mismatch
-        if self.projection is not None:
-            last_value = self.projection(last_value)  # [B, D_out]
+        # Try to extract target sensor values from metadata
+        meta_batch = kwargs.get("meta", [])
+        if meta_batch and len(meta_batch) > 0:
+            # Get first sample's metadata (assuming homogeneous batch)
+            first_meta = meta_batch[0] if isinstance(meta_batch, list) else meta_batch
+
+            # Check if we have sensor mapping information
+            if "target_sensors" in first_meta and "input_sensor_indices" in first_meta:
+                target_sensors = first_meta["target_sensors"]
+                input_indices = first_meta["input_sensor_indices"]
+                original_dim = first_meta.get("original_sensor_dim", self.input_dim)
+
+                # Find target sensor indices in input (excluding context features)
+                target_indices = []
+                for target in target_sensors:
+                    if target in input_indices:
+                        idx = input_indices[target]
+                        if idx < original_dim:  # Exclude context features
+                            target_indices.append(idx)
+
+                # Extract target sensor values if found
+                if len(target_indices) > 0:
+                    last_value = last_value[:, target_indices]  # [B, len(targets)]
+
+        # Handle dimension mismatch with fallback strategy
+        if last_value.shape[1] != self.output_dim:
+            if last_value.shape[1] >= self.output_dim:
+                # Take first output_dim features
+                last_value = last_value[:, :self.output_dim]
+            else:
+                # Pad with zeros if needed
+                padding = torch.zeros(
+                    last_value.shape[0],
+                    self.output_dim - last_value.shape[1],
+                    device=last_value.device,
+                    dtype=last_value.dtype
+                )
+                last_value = torch.cat([last_value, padding], dim=1)
 
         # Reshape to [B, 1, D_out]
         preds = last_value.unsqueeze(1)

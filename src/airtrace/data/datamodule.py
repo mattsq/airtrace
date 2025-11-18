@@ -10,6 +10,9 @@ from .dataset import DataStore, SensorWindowDataset
 from .windows import WindowSpec
 
 
+from ..transforms.context import ContextTransform
+
+
 class SensorDataModule:
     """DataModule for sensor timeseries data.
 
@@ -22,7 +25,8 @@ class SensorDataModule:
         data_config: Dict[str, Any],
         transforms: Optional[Any] = None,
         batch_size: int = 32,
-        num_workers: int = 4
+        num_workers: int = 4,
+        max_samples: Optional[int] = None
     ):
         """Initialize data module.
 
@@ -31,11 +35,13 @@ class SensorDataModule:
             transforms: Transform pipeline to apply
             batch_size: Batch size for dataloaders
             num_workers: Number of worker processes
+            max_samples: Max samples to use for each dataset (for quick tests)
         """
         self.data_config = data_config
         self.transforms = transforms
         self.batch_size = batch_size
         self.num_workers = num_workers
+        self.max_samples = max_samples
 
         # Extract config
         self.data_root = Path(data_config["root"])
@@ -68,6 +74,12 @@ class SensorDataModule:
         train_index = pd.read_parquet(self.data_root / self.data_config["train_index"])
         val_index = pd.read_parquet(self.data_root / self.data_config["val_index"])
 
+        # Limit samples if max_samples is set
+        if self.max_samples is not None:
+            print(f"[INFO] Limiting datasets to {self.max_samples} samples.")
+            train_index = train_index.head(self.max_samples)
+            val_index = val_index.head(self.max_samples)
+
         # Create datasets
         self.train_dataset = SensorWindowDataset(
             index_df=train_index,
@@ -77,6 +89,18 @@ class SensorDataModule:
             target_sensors=self.target_sensors,
             window_spec=self.window_spec
         )
+
+        # Fit transforms on training data
+        if self.transforms is not None:
+            print("Fitting transforms on training data...")
+            # Temporarily remove transforms from dataset to avoid circular dependency
+            saved_transforms = self.train_dataset.transforms
+            self.train_dataset.transforms = None
+            # Fit transforms on raw data
+            self.transforms.fit(self.train_dataset)
+            # Restore transforms to dataset
+            self.train_dataset.transforms = saved_transforms
+            print(f"Transforms fitted: {self.transforms}")
 
         self.val_dataset = SensorWindowDataset(
             index_df=val_index,
@@ -90,6 +114,8 @@ class SensorDataModule:
         # Test dataset (if available)
         if "test_index" in self.data_config:
             test_index = pd.read_parquet(self.data_root / self.data_config["test_index"])
+            if self.max_samples is not None:
+                test_index = test_index.head(self.max_samples)
             self.test_dataset = SensorWindowDataset(
                 index_df=test_index,
                 data_store=self.data_store,
@@ -153,7 +179,14 @@ class SensorDataModule:
     @property
     def in_dim(self) -> int:
         """Input feature dimension."""
-        return len(self.sensor_names)
+        base_dim = len(self.sensor_names)
+        context_dim = 0
+        if self.transforms is not None:
+            # self.transforms is a Compose object, access transforms list
+            for t in self.transforms.transforms:
+                if isinstance(t, ContextTransform):
+                    context_dim += t.context_dim
+        return base_dim + context_dim
 
     @property
     def out_dim(self) -> int:
