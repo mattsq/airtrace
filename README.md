@@ -423,7 +423,7 @@ airtrace train --checkpoint path/to/checkpoint.ckpt exp=my_experiment
 
 ### Next Steps
 
-- **Explore models**: See [Model Registry](#model-registry) for 42+ available models
+- **Explore models**: See [Model Registry](#model-registry) for 44+ available models
 - **Custom components**: See [Adding New Components](#adding-new-components)
 - **Advanced features**: Check `docs/architecture.md` for design details
 - **Experiment tracking**: Review `docs/experiments.md` for best practices
@@ -526,7 +526,7 @@ See [Synthetic Data Documentation](docs/synthetic_data.md) for details.
 
 ## Model Registry
 
-AirTrace includes 43 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
+AirTrace includes 44 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
 
 ### Recurrent Neural Networks
 
@@ -573,6 +573,7 @@ AirTrace includes 43 registered models spanning from simple baselines to sophist
 |------------|-------|-------------|
 | `tcn` | `TCNModel` | Temporal Convolutional Network with dilated causal convolutions |
 | `moderntcn` | `ModernTCNModel` | ModernTCN - modern pure convolution architecture with depthwise separable convolutions, large receptive fields, and improved efficiency over classic TCN (ICLR 2024 Spotlight) |
+| `timesnet` | `TimesNetModel` | TimesNet - 2D vision backbone for time series via period-based reshaping, capturing intraperiod and interperiod variations with Inception-style convolutions (ICLR 2023) |
 
 ### MLP-Based Models
 
