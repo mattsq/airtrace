@@ -100,7 +100,7 @@ class SensorDataModule:
             # Compute cache key
             dataset_name = self.data_config.get("dataset_name", "unknown")
             index_hash = compute_index_hash(train_index)
-            transform_config = self.data_config.get("transforms", {})
+            transform_config = {"pipeline": repr(self.transforms)} if self.transforms is not None else {}
 
             # Try to load from cache
             cache_path = self.data_root / "metadata"

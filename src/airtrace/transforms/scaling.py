@@ -81,9 +81,13 @@ class ZScoreTransform(Transform):
             'scaler_x_mean': self.scaler_x.mean_,
             'scaler_x_scale': self.scaler_x.scale_,
             'scaler_x_var': self.scaler_x.var_,
+            'scaler_x_n_features_in': self.scaler_x.n_features_in_,
+            'scaler_x_n_samples_seen': self.scaler_x.n_samples_seen_,
             'scaler_y_mean': self.scaler_y.mean_,
             'scaler_y_scale': self.scaler_y.scale_,
             'scaler_y_var': self.scaler_y.var_,
+            'scaler_y_n_features_in': self.scaler_y.n_features_in_,
+            'scaler_y_n_samples_seen': self.scaler_y.n_samples_seen_,
             'per_sensor': self.per_sensor,
             'center': self.center,
             'scale': self.scale,
@@ -98,9 +102,13 @@ class ZScoreTransform(Transform):
         self.scaler_x.mean_ = stats['scaler_x_mean']
         self.scaler_x.scale_ = stats['scaler_x_scale']
         self.scaler_x.var_ = stats['scaler_x_var']
+        self.scaler_x.n_features_in_ = stats['scaler_x_n_features_in']
+        self.scaler_x.n_samples_seen_ = stats['scaler_x_n_samples_seen']
         self.scaler_y.mean_ = stats['scaler_y_mean']
         self.scaler_y.scale_ = stats['scaler_y_scale']
         self.scaler_y.var_ = stats['scaler_y_var']
+        self.scaler_y.n_features_in_ = stats['scaler_y_n_features_in']
+        self.scaler_y.n_samples_seen_ = stats['scaler_y_n_samples_seen']
         self.is_fitted = True
 
     def __call__(
