@@ -112,6 +112,7 @@ class MovingAverageModel(ARBaseModel):
 
     Predicts the mean of the last k values.
     Uses all available values in the input window if k is not specified.
+    This is a truly non-trainable baseline with 0 learnable parameters.
     """
 
     def __init__(
@@ -126,14 +127,8 @@ class MovingAverageModel(ARBaseModel):
             **kwargs: Additional arguments (ignored)
         """
         super().__init__(input_dim, output_dim, **kwargs)
-
         self.window_size = window_size
-
-        # Handle dimension mismatch
-        if input_dim != output_dim:
-            self.projection = nn.Linear(input_dim, output_dim, bias=False)
-        else:
-            self.projection = None
+        # No trainable parameters at all
 
     def forward(
         self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
@@ -157,9 +152,20 @@ class MovingAverageModel(ARBaseModel):
         # Compute mean
         avg_value = window.mean(dim=1)  # [B, D_in]
 
-        # Handle dimension mismatch
-        if self.projection is not None:
-            avg_value = self.projection(avg_value)  # [B, D_out]
+        # Handle dimension mismatch with non-parametric approach
+        if avg_value.shape[1] != self.output_dim:
+            if avg_value.shape[1] >= self.output_dim:
+                # Take first output_dim features
+                avg_value = avg_value[:, :self.output_dim]
+            else:
+                # Pad with zeros if needed
+                padding = torch.zeros(
+                    avg_value.shape[0],
+                    self.output_dim - avg_value.shape[1],
+                    device=avg_value.device,
+                    dtype=avg_value.dtype
+                )
+                avg_value = torch.cat([avg_value, padding], dim=1)
 
         # Reshape to [B, 1, D_out]
         preds = avg_value.unsqueeze(1)
@@ -219,6 +225,7 @@ class LinearTrendModel(ARBaseModel):
     For each feature independently:
         y_pred = a + b * (T_in + 1)
     where a and b are fitted to the input window.
+    This is a truly non-trainable baseline with 0 learnable parameters.
     """
 
     def __init__(self, input_dim: int, output_dim: int, **kwargs):
@@ -230,12 +237,7 @@ class LinearTrendModel(ARBaseModel):
             **kwargs: Additional arguments (ignored)
         """
         super().__init__(input_dim, output_dim, **kwargs)
-
-        # Handle dimension mismatch
-        if input_dim != output_dim:
-            self.projection = nn.Linear(input_dim, output_dim, bias=False)
-        else:
-            self.projection = None
+        # No trainable parameters at all
 
     def forward(
         self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
@@ -287,9 +289,20 @@ class LinearTrendModel(ARBaseModel):
         # Predict next timestep (t = T_in)
         next_value = a + b * T_in  # [B, D_in]
 
-        # Handle dimension mismatch
-        if self.projection is not None:
-            next_value = self.projection(next_value)  # [B, D_out]
+        # Handle dimension mismatch with non-parametric approach
+        if next_value.shape[1] != self.output_dim:
+            if next_value.shape[1] >= self.output_dim:
+                # Take first output_dim features
+                next_value = next_value[:, :self.output_dim]
+            else:
+                # Pad with zeros if needed
+                padding = torch.zeros(
+                    next_value.shape[0],
+                    self.output_dim - next_value.shape[1],
+                    device=next_value.device,
+                    dtype=next_value.dtype
+                )
+                next_value = torch.cat([next_value, padding], dim=1)
 
         # Reshape to [B, 1, D_out]
         preds = next_value.unsqueeze(1)
@@ -305,6 +318,7 @@ class MeanModel(ARBaseModel):
     Equivalent to a moving average with window_size = all available data.
 
     Useful baseline for stationary time series.
+    This is a truly non-trainable baseline with 0 learnable parameters.
     """
 
     def __init__(self, input_dim: int, output_dim: int, **kwargs):
@@ -316,12 +330,7 @@ class MeanModel(ARBaseModel):
             **kwargs: Additional arguments (ignored)
         """
         super().__init__(input_dim, output_dim, **kwargs)
-
-        # Handle dimension mismatch
-        if input_dim != output_dim:
-            self.projection = nn.Linear(input_dim, output_dim, bias=False)
-        else:
-            self.projection = None
+        # No trainable parameters at all
 
     def forward(
         self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
@@ -339,9 +348,20 @@ class MeanModel(ARBaseModel):
         # Compute mean across time dimension
         mean_value = x.mean(dim=1)  # [B, D_in]
 
-        # Handle dimension mismatch
-        if self.projection is not None:
-            mean_value = self.projection(mean_value)  # [B, D_out]
+        # Handle dimension mismatch with non-parametric approach
+        if mean_value.shape[1] != self.output_dim:
+            if mean_value.shape[1] >= self.output_dim:
+                # Take first output_dim features
+                mean_value = mean_value[:, :self.output_dim]
+            else:
+                # Pad with zeros if needed
+                padding = torch.zeros(
+                    mean_value.shape[0],
+                    self.output_dim - mean_value.shape[1],
+                    device=mean_value.device,
+                    dtype=mean_value.dtype
+                )
+                mean_value = torch.cat([mean_value, padding], dim=1)
 
         # Reshape to [B, 1, D_out]
         preds = mean_value.unsqueeze(1)
@@ -357,6 +377,7 @@ class MedianModel(ARBaseModel):
     More robust to outliers than the mean model.
 
     Useful baseline for time series with outliers or heavy-tailed distributions.
+    This is a truly non-trainable baseline with 0 learnable parameters.
     """
 
     def __init__(self, input_dim: int, output_dim: int, **kwargs):
@@ -368,12 +389,7 @@ class MedianModel(ARBaseModel):
             **kwargs: Additional arguments (ignored)
         """
         super().__init__(input_dim, output_dim, **kwargs)
-
-        # Handle dimension mismatch
-        if input_dim != output_dim:
-            self.projection = nn.Linear(input_dim, output_dim, bias=False)
-        else:
-            self.projection = None
+        # No trainable parameters at all
 
     def forward(
         self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
@@ -391,9 +407,20 @@ class MedianModel(ARBaseModel):
         # Compute median across time dimension
         median_value = x.median(dim=1).values  # [B, D_in]
 
-        # Handle dimension mismatch
-        if self.projection is not None:
-            median_value = self.projection(median_value)  # [B, D_out]
+        # Handle dimension mismatch with non-parametric approach
+        if median_value.shape[1] != self.output_dim:
+            if median_value.shape[1] >= self.output_dim:
+                # Take first output_dim features
+                median_value = median_value[:, :self.output_dim]
+            else:
+                # Pad with zeros if needed
+                padding = torch.zeros(
+                    median_value.shape[0],
+                    self.output_dim - median_value.shape[1],
+                    device=median_value.device,
+                    dtype=median_value.dtype
+                )
+                median_value = torch.cat([median_value, padding], dim=1)
 
         # Reshape to [B, 1, D_out]
         preds = median_value.unsqueeze(1)
@@ -411,6 +438,7 @@ class DriftModel(ARBaseModel):
     Equivalent to: y_pred = y_T + (y_T - y_1) / (T - 1)
 
     Useful for time series with a trend but no clear pattern.
+    This is a truly non-trainable baseline with 0 learnable parameters.
     """
 
     def __init__(self, input_dim: int, output_dim: int, **kwargs):
@@ -422,12 +450,7 @@ class DriftModel(ARBaseModel):
             **kwargs: Additional arguments (ignored)
         """
         super().__init__(input_dim, output_dim, **kwargs)
-
-        # Handle dimension mismatch
-        if input_dim != output_dim:
-            self.projection = nn.Linear(input_dim, output_dim, bias=False)
-        else:
-            self.projection = None
+        # No trainable parameters at all
 
     def forward(
         self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
@@ -457,9 +480,20 @@ class DriftModel(ARBaseModel):
         # Predict: last value + one step of drift
         next_value = last_value + drift  # [B, D_in]
 
-        # Handle dimension mismatch
-        if self.projection is not None:
-            next_value = self.projection(next_value)  # [B, D_out]
+        # Handle dimension mismatch with non-parametric approach
+        if next_value.shape[1] != self.output_dim:
+            if next_value.shape[1] >= self.output_dim:
+                # Take first output_dim features
+                next_value = next_value[:, :self.output_dim]
+            else:
+                # Pad with zeros if needed
+                padding = torch.zeros(
+                    next_value.shape[0],
+                    self.output_dim - next_value.shape[1],
+                    device=next_value.device,
+                    dtype=next_value.dtype
+                )
+                next_value = torch.cat([next_value, padding], dim=1)
 
         # Reshape to [B, 1, D_out]
         preds = next_value.unsqueeze(1)
@@ -477,6 +511,7 @@ class ExponentialSmoothingModel(ARBaseModel):
     y_pred = alpha * y_T + (1-alpha) * EWMA_{T-1}
 
     Common baseline in time series forecasting.
+    This is a truly non-trainable baseline with 0 learnable parameters.
     """
 
     def __init__(self, input_dim: int, output_dim: int, alpha: float = 0.3, **kwargs):
@@ -496,12 +531,7 @@ class ExponentialSmoothingModel(ARBaseModel):
             raise ValueError(f"alpha must be in (0, 1], got {alpha}")
 
         self.alpha = alpha
-
-        # Handle dimension mismatch
-        if input_dim != output_dim:
-            self.projection = nn.Linear(input_dim, output_dim, bias=False)
-        else:
-            self.projection = None
+        # No trainable parameters at all
 
     def forward(
         self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
@@ -529,9 +559,20 @@ class ExponentialSmoothingModel(ARBaseModel):
         # The EWMA at the last timestep is our prediction
         next_value = ewma  # [B, D_in]
 
-        # Handle dimension mismatch
-        if self.projection is not None:
-            next_value = self.projection(next_value)  # [B, D_out]
+        # Handle dimension mismatch with non-parametric approach
+        if next_value.shape[1] != self.output_dim:
+            if next_value.shape[1] >= self.output_dim:
+                # Take first output_dim features
+                next_value = next_value[:, :self.output_dim]
+            else:
+                # Pad with zeros if needed
+                padding = torch.zeros(
+                    next_value.shape[0],
+                    self.output_dim - next_value.shape[1],
+                    device=next_value.device,
+                    dtype=next_value.dtype
+                )
+                next_value = torch.cat([next_value, padding], dim=1)
 
         # Reshape to [B, 1, D_out]
         preds = next_value.unsqueeze(1)
@@ -550,6 +591,7 @@ class SeasonalNaiveModel(ARBaseModel):
     If season_length > input length, falls back to persistence model.
 
     Classic baseline for seasonal time series.
+    This is a truly non-trainable baseline with 0 learnable parameters.
     """
 
     def __init__(self, input_dim: int, output_dim: int, season_length: int = 24, **kwargs):
@@ -567,12 +609,7 @@ class SeasonalNaiveModel(ARBaseModel):
             raise ValueError(f"season_length must be >= 1, got {season_length}")
 
         self.season_length = season_length
-
-        # Handle dimension mismatch
-        if input_dim != output_dim:
-            self.projection = nn.Linear(input_dim, output_dim, bias=False)
-        else:
-            self.projection = None
+        # No trainable parameters at all
 
     def forward(
         self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
@@ -597,9 +634,20 @@ class SeasonalNaiveModel(ARBaseModel):
             # Fall back to persistence if not enough history
             seasonal_value = x[:, -1, :]  # [B, D_in]
 
-        # Handle dimension mismatch
-        if self.projection is not None:
-            seasonal_value = self.projection(seasonal_value)  # [B, D_out]
+        # Handle dimension mismatch with non-parametric approach
+        if seasonal_value.shape[1] != self.output_dim:
+            if seasonal_value.shape[1] >= self.output_dim:
+                # Take first output_dim features
+                seasonal_value = seasonal_value[:, :self.output_dim]
+            else:
+                # Pad with zeros if needed
+                padding = torch.zeros(
+                    seasonal_value.shape[0],
+                    self.output_dim - seasonal_value.shape[1],
+                    device=seasonal_value.device,
+                    dtype=seasonal_value.dtype
+                )
+                seasonal_value = torch.cat([seasonal_value, padding], dim=1)
 
         # Reshape to [B, 1, D_out]
         preds = seasonal_value.unsqueeze(1)
@@ -625,6 +673,7 @@ class PolynomialTrendModel(ARBaseModel):
     where coefficients are fitted to the input window.
 
     Useful for time series with curved trends.
+    This is a truly non-trainable baseline with 0 learnable parameters.
     """
 
     def __init__(self, input_dim: int, output_dim: int, degree: int = 2, **kwargs):
@@ -642,12 +691,7 @@ class PolynomialTrendModel(ARBaseModel):
             raise ValueError(f"degree must be >= 1, got {degree}")
 
         self.degree = degree
-
-        # Handle dimension mismatch
-        if input_dim != output_dim:
-            self.projection = nn.Linear(input_dim, output_dim, bias=False)
-        else:
-            self.projection = None
+        # No trainable parameters at all
 
     def forward(
         self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
@@ -699,9 +743,20 @@ class PolynomialTrendModel(ARBaseModel):
         # Reshape back: [B*D_in] -> [B, D_in]
         next_value = next_value.reshape(B, D_in)
 
-        # Handle dimension mismatch
-        if self.projection is not None:
-            next_value = self.projection(next_value)  # [B, D_out]
+        # Handle dimension mismatch with non-parametric approach
+        if next_value.shape[1] != self.output_dim:
+            if next_value.shape[1] >= self.output_dim:
+                # Take first output_dim features
+                next_value = next_value[:, :self.output_dim]
+            else:
+                # Pad with zeros if needed
+                padding = torch.zeros(
+                    next_value.shape[0],
+                    self.output_dim - next_value.shape[1],
+                    device=next_value.device,
+                    dtype=next_value.dtype
+                )
+                next_value = torch.cat([next_value, padding], dim=1)
 
         # Reshape to [B, 1, D_out]
         preds = next_value.unsqueeze(1)
@@ -721,6 +776,7 @@ class HoltLinearTrendModel(ARBaseModel):
 
     This is a classic baseline for trending time series that is more
     sophisticated than simple exponential smoothing.
+    This is a truly non-trainable baseline with 0 learnable parameters.
     """
 
     def __init__(
@@ -744,12 +800,7 @@ class HoltLinearTrendModel(ARBaseModel):
 
         self.alpha = alpha
         self.beta = beta
-
-        # Handle dimension mismatch
-        if input_dim != output_dim:
-            self.projection = nn.Linear(input_dim, output_dim, bias=False)
-        else:
-            self.projection = None
+        # No trainable parameters at all
 
     def forward(
         self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
@@ -789,9 +840,20 @@ class HoltLinearTrendModel(ARBaseModel):
         # Forecast: l_T + b_T
         next_value = level + trend  # [B, D_in]
 
-        # Handle dimension mismatch
-        if self.projection is not None:
-            next_value = self.projection(next_value)  # [B, D_out]
+        # Handle dimension mismatch with non-parametric approach
+        if next_value.shape[1] != self.output_dim:
+            if next_value.shape[1] >= self.output_dim:
+                # Take first output_dim features
+                next_value = next_value[:, :self.output_dim]
+            else:
+                # Pad with zeros if needed
+                padding = torch.zeros(
+                    next_value.shape[0],
+                    self.output_dim - next_value.shape[1],
+                    device=next_value.device,
+                    dtype=next_value.dtype
+                )
+                next_value = torch.cat([next_value, padding], dim=1)
 
         # Reshape to [B, 1, D_out]
         preds = next_value.unsqueeze(1)
@@ -861,11 +923,7 @@ class HoltWintersModel(ARBaseModel):
         self.beta = beta
         self.gamma = gamma
         self.seasonal = seasonal_lower
-
-        if input_dim != output_dim:
-            self.projection = nn.Linear(input_dim, output_dim, bias=False)
-        else:
-            self.projection = None
+        # No trainable parameters at all
 
     def _initialize_states(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Initialize level, trend, and seasonality states."""
@@ -958,8 +1016,20 @@ class HoltWintersModel(ARBaseModel):
         else:
             next_value = (level + trend) * next_season
 
-        if self.projection is not None:
-            next_value = self.projection(next_value)
+        # Handle dimension mismatch with non-parametric approach
+        if next_value.shape[1] != self.output_dim:
+            if next_value.shape[1] >= self.output_dim:
+                # Take first output_dim features
+                next_value = next_value[:, :self.output_dim]
+            else:
+                # Pad with zeros if needed
+                padding = torch.zeros(
+                    next_value.shape[0],
+                    self.output_dim - next_value.shape[1],
+                    device=next_value.device,
+                    dtype=next_value.dtype
+                )
+                next_value = torch.cat([next_value, padding], dim=1)
 
         preds = next_value.unsqueeze(1)
 
@@ -1010,12 +1080,7 @@ class ThetaModel(ARBaseModel):
 
         self.theta = theta
         self.alpha = alpha
-
-        # Handle dimension mismatch
-        if input_dim != output_dim:
-            self.projection = nn.Linear(input_dim, output_dim, bias=False)
-        else:
-            self.projection = None
+        # No trainable parameters at all
 
     def forward(
         self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
@@ -1083,9 +1148,20 @@ class ThetaModel(ARBaseModel):
         # Combine forecasts
         next_value = self.alpha * theta0_forecast + (1 - self.alpha) * theta2_forecast  # [B, D_in]
 
-        # Handle dimension mismatch
-        if self.projection is not None:
-            next_value = self.projection(next_value)  # [B, D_out]
+        # Handle dimension mismatch with non-parametric approach
+        if next_value.shape[1] != self.output_dim:
+            if next_value.shape[1] >= self.output_dim:
+                # Take first output_dim features
+                next_value = next_value[:, :self.output_dim]
+            else:
+                # Pad with zeros if needed
+                padding = torch.zeros(
+                    next_value.shape[0],
+                    self.output_dim - next_value.shape[1],
+                    device=next_value.device,
+                    dtype=next_value.dtype
+                )
+                next_value = torch.cat([next_value, padding], dim=1)
 
         # Reshape to [B, 1, D_out]
         preds = next_value.unsqueeze(1)
@@ -1258,11 +1334,7 @@ class VARModel(ARBaseModel):
         self.order = order
         self.fit_intercept = fit_intercept
         self.regularization = regularization
-
-        if input_dim != output_dim:
-            self.projection = nn.Linear(input_dim, output_dim, bias=False)
-        else:
-            self.projection = None
+        # No trainable parameters at all
 
     def _prepare_design(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """Construct design and target matrices for batched least squares."""
@@ -1338,8 +1410,20 @@ class VARModel(ARBaseModel):
 
         if T_in <= self.order:
             last_value = x[:, -1, :]
-            if self.projection is not None:
-                last_value = self.projection(last_value)
+            # Handle dimension mismatch with non-parametric approach
+            if last_value.shape[1] != self.output_dim:
+                if last_value.shape[1] >= self.output_dim:
+                    # Take first output_dim features
+                    last_value = last_value[:, :self.output_dim]
+                else:
+                    # Pad with zeros if needed
+                    padding = torch.zeros(
+                        last_value.shape[0],
+                        self.output_dim - last_value.shape[1],
+                        device=last_value.device,
+                        dtype=last_value.dtype
+                    )
+                    last_value = torch.cat([last_value, padding], dim=1)
             preds = last_value.unsqueeze(1)
             extras["fitted"] = torch.tensor(False, device=x.device)
             return {"preds": preds, "extras": extras}
@@ -1356,8 +1440,20 @@ class VARModel(ARBaseModel):
         forecast_core = torch.einsum("bod,bodk->bk", lag_tensor, lag_matrices)
         next_value = forecast_core + intercept
 
-        if self.projection is not None:
-            next_value = self.projection(next_value)
+        # Handle dimension mismatch with non-parametric approach
+        if next_value.shape[1] != self.output_dim:
+            if next_value.shape[1] >= self.output_dim:
+                # Take first output_dim features
+                next_value = next_value[:, :self.output_dim]
+            else:
+                # Pad with zeros if needed
+                padding = torch.zeros(
+                    next_value.shape[0],
+                    self.output_dim - next_value.shape[1],
+                    device=next_value.device,
+                    dtype=next_value.dtype
+                )
+                next_value = torch.cat([next_value, padding], dim=1)
 
         preds = next_value.unsqueeze(1)
 

@@ -276,6 +276,15 @@ class Trainer:
         print(f"Device: {self.device}")
         print(f"Model parameters: {self.model.get_num_params():,}")
 
+        # Early exit for non-trainable models (baselines with 0 parameters)
+        if not self.has_trainable_params:
+            print("\n[INFO] Model has no trainable parameters - skipping training loop")
+            print("[INFO] Running single validation pass to compute baseline metrics...")
+            val_metrics = self.validate_epoch()
+            print(f"\nBaseline validation metrics: {val_metrics}")
+            self.writer.close()
+            return
+
         for epoch in range(self.epochs):
             self.current_epoch = epoch
 

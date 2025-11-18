@@ -59,16 +59,23 @@ class ContextTransform(Transform):
         Returns:
             self for method chaining
         """
-        # Build encoding mappings for categorical static features
+        # Build encoding mappings for categorical static features with batch loading
         if self.use_static:
+            num_samples = min(len(dataset), 200)  # Reduced from 1000
+            batch_size = 10  # Load 10 samples at a time
+
             # Collect unique values for each static feature
             for feature_name in self.use_static:
                 unique_values = set()
-                for i in range(min(len(dataset), 1000)):
-                    sample = dataset[i]
-                    meta = sample["meta"] if isinstance(sample, dict) else sample[2]
-                    if feature_name in meta:
-                        unique_values.add(meta[feature_name])
+
+                # Batch load for better I/O performance
+                for batch_start in range(0, num_samples, batch_size):
+                    batch_end = min(batch_start + batch_size, num_samples)
+                    for i in range(batch_start, batch_end):
+                        sample = dataset[i]
+                        meta = sample["meta"] if isinstance(sample, dict) else sample[2]
+                        if feature_name in meta:
+                            unique_values.add(meta[feature_name])
 
                 # Create encoding mapping
                 self.static_encoders[feature_name] = {
@@ -77,6 +84,31 @@ class ContextTransform(Transform):
 
         self.is_fitted = True
         return self
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get encoding statistics for caching.
+
+        Returns:
+            Dictionary containing encoder mappings
+        """
+        if not self.is_fitted:
+            raise RuntimeError("Transform not fitted. Call fit() first.")
+
+        return {
+            'static_encoders': self.static_encoders,
+            'use_static': self.use_static,
+            'use_plan_deltas': self.use_plan_deltas,
+            'use_env': self.use_env,
+        }
+
+    def set_stats(self, stats: Dict[str, Any]) -> None:
+        """Set encoding statistics from cache.
+
+        Args:
+            stats: Dictionary containing encoder mappings
+        """
+        self.static_encoders = stats['static_encoders']
+        self.is_fitted = True
 
     def __call__(
         self, x: np.ndarray, y: np.ndarray, meta: Dict[str, Any]

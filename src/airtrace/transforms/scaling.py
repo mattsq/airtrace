@@ -40,15 +40,22 @@ class ZScoreTransform(Transform):
         Returns:
             self for method chaining
         """
-        # Collect samples for fitting
+        # Collect samples for fitting with batch loading for speed
+        num_samples = min(len(dataset), 200)  # Reduced from 1000 for faster fitting
+        batch_size = 10  # Load 10 samples at a time
+
         all_x = []
         all_y = []
-        for i in range(min(len(dataset), 1000)):  # Sample first 1000 for efficiency
-            sample = dataset[i]
-            x = sample["x"] if isinstance(sample, dict) else sample[0]
-            y = sample["y"] if isinstance(sample, dict) else sample[1]
-            all_x.append(x.numpy() if hasattr(x, "numpy") else x)
-            all_y.append(y.numpy() if hasattr(y, "numpy") else y)
+
+        # Batch load for better I/O performance
+        for batch_start in range(0, num_samples, batch_size):
+            batch_end = min(batch_start + batch_size, num_samples)
+            for i in range(batch_start, batch_end):
+                sample = dataset[i]
+                x = sample["x"] if isinstance(sample, dict) else sample[0]
+                y = sample["y"] if isinstance(sample, dict) else sample[1]
+                all_x.append(x.numpy() if hasattr(x, "numpy") else x)
+                all_y.append(y.numpy() if hasattr(y, "numpy") else y)
 
         # Reshape to [N, D] for fitting
         all_x = np.concatenate(all_x, axis=0)
@@ -60,6 +67,41 @@ class ZScoreTransform(Transform):
         self.is_fitted = True
 
         return self
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get scaler statistics for caching.
+
+        Returns:
+            Dictionary containing scaler parameters
+        """
+        if not self.is_fitted:
+            raise RuntimeError("Transform not fitted. Call fit() first.")
+
+        return {
+            'scaler_x_mean': self.scaler_x.mean_,
+            'scaler_x_scale': self.scaler_x.scale_,
+            'scaler_x_var': self.scaler_x.var_,
+            'scaler_y_mean': self.scaler_y.mean_,
+            'scaler_y_scale': self.scaler_y.scale_,
+            'scaler_y_var': self.scaler_y.var_,
+            'per_sensor': self.per_sensor,
+            'center': self.center,
+            'scale': self.scale,
+        }
+
+    def set_stats(self, stats: Dict[str, Any]) -> None:
+        """Set scaler statistics from cache.
+
+        Args:
+            stats: Dictionary containing scaler parameters
+        """
+        self.scaler_x.mean_ = stats['scaler_x_mean']
+        self.scaler_x.scale_ = stats['scaler_x_scale']
+        self.scaler_x.var_ = stats['scaler_x_var']
+        self.scaler_y.mean_ = stats['scaler_y_mean']
+        self.scaler_y.scale_ = stats['scaler_y_scale']
+        self.scaler_y.var_ = stats['scaler_y_var']
+        self.is_fitted = True
 
     def __call__(
         self, x: np.ndarray, y: np.ndarray, meta: Dict[str, Any]

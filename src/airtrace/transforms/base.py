@@ -115,6 +115,30 @@ class Compose:
             x, y = transform.inverse(x, y)
         return x, y
 
+    def get_stats(self) -> Dict[str, Any]:
+        """Get statistics from all transforms for caching.
+
+        Returns:
+            Dictionary mapping transform names to their statistics
+        """
+        stats = {}
+        for i, transform in enumerate(self.transforms):
+            transform_name = f"{transform.__class__.__name__}_{i}"
+            if hasattr(transform, 'get_stats'):
+                stats[transform_name] = transform.get_stats()
+        return stats
+
+    def set_stats(self, stats: Dict[str, Any]) -> None:
+        """Set statistics for all transforms from cache.
+
+        Args:
+            stats: Dictionary mapping transform names to their statistics
+        """
+        for i, transform in enumerate(self.transforms):
+            transform_name = f"{transform.__class__.__name__}_{i}"
+            if transform_name in stats and hasattr(transform, 'set_stats'):
+                transform.set_stats(stats[transform_name])
+
     def __repr__(self):
         format_string = self.__class__.__name__ + '('
         for t in self.transforms:
