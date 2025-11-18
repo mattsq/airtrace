@@ -3,6 +3,7 @@
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+import torch
 import pandas as pd
 from torch.utils.data import DataLoader
 
@@ -169,7 +170,8 @@ class SensorDataModule:
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
-            pin_memory=True
+            pin_memory=torch.cuda.is_available(),
+            persistent_workers=self.num_workers > 0
         )
 
     def val_dataloader(self) -> DataLoader:
@@ -186,7 +188,8 @@ class SensorDataModule:
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
-            pin_memory=True
+            pin_memory=torch.cuda.is_available(),
+            persistent_workers=self.num_workers > 0
         )
 
     def test_dataloader(self) -> Optional[DataLoader]:
@@ -203,7 +206,8 @@ class SensorDataModule:
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
-            pin_memory=True
+            pin_memory=torch.cuda.is_available(),
+            persistent_workers=self.num_workers > 0
         )
 
     @property
