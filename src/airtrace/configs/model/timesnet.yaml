@@ -1,0 +1,14 @@
+# @package _global_
+
+model:
+  name: timesnet
+  params:
+    seq_len: ${data.window.input_len}
+    pred_len: ${data.window.pred_len}
+    d_model: 64
+    d_ff: 128
+    num_layers: 2
+    num_kernels: 6
+    top_k: 5
+    dropout: 0.1
+    embed_type: "positional"

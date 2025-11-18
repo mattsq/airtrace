@@ -44,6 +44,7 @@ from .seq2seq import GRUSeq2SeqModel, LSTMSeq2SeqModel
 from .softs import SOFTS
 from .tcn import TCNModel
 from .timemixer import TimeMixerModel
+from .timesnet import TimesNetModel
 from .timexer import TimeXerModel
 from .transformer import TransformerModel
 from .tft import TemporalFusionTransformer
@@ -65,6 +66,7 @@ __all__ = [
     "iTransformerModel",
     "NonStationaryTransformerModel",
     "TimeMixerModel",
+    "TimesNetModel",
     "TimeXerModel",
     "SOFTS",
     "NBeatsModel",
