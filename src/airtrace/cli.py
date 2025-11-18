@@ -373,11 +373,12 @@ def _print_data_guidance(data_config: DictConfig, missing_assets: List[Path]) ->
 
 
 def _require_checkpoint(cfg: DictConfig) -> Path:
-    if not cfg.get("checkpoint"):
+    checkpoint_value = cfg.get("checkpoint") if hasattr(cfg, "get") else getattr(cfg, "checkpoint", None)
+    if not checkpoint_value:
         print("Error: No checkpoint provided. Use --checkpoint <path> or checkpoint=<path>.")
         sys.exit(1)
 
-    checkpoint_path = Path(cfg.checkpoint)
+    checkpoint_path = Path(checkpoint_value)
     if not checkpoint_path.exists():
         print(f"Error: Checkpoint not found at {checkpoint_path}")
         sys.exit(1)
