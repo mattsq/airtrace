@@ -36,7 +36,10 @@ def test_pickle_backed_parquet_installed(monkeypatch):
         loaded = pd.read_parquet(path)
         pd.testing.assert_frame_equal(df, loaded)
 
-    # Restore original parquet helpers
+    # Restore original parquet helpers and reload after removing the monkeypatch
     monkeypatch.setattr(pd.DataFrame, "to_parquet", original_to_parquet, raising=False)
     monkeypatch.setattr(pd, "read_parquet", original_read_parquet, raising=False)
+    monkeypatch.setattr(
+        compat.importlib.util, "find_spec", importlib.util.find_spec, raising=False
+    )
     importlib.reload(compat)
