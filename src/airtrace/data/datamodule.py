@@ -11,6 +11,11 @@ from .windows import WindowSpec
 
 
 from ..transforms.context import ContextTransform
+from ..transforms.cache import (
+    compute_index_hash,
+    load_transform_stats,
+    save_transform_stats,
+)
 
 
 class SensorDataModule:
@@ -90,17 +95,42 @@ class SensorDataModule:
             window_spec=self.window_spec
         )
 
-        # Fit transforms on training data
+        # Fit transforms on training data (with caching)
         if self.transforms is not None:
-            print("Fitting transforms on training data...")
-            # Temporarily remove transforms from dataset to avoid circular dependency
-            saved_transforms = self.train_dataset.transforms
-            self.train_dataset.transforms = None
-            # Fit transforms on raw data
-            self.transforms.fit(self.train_dataset)
-            # Restore transforms to dataset
-            self.train_dataset.transforms = saved_transforms
-            print(f"Transforms fitted: {self.transforms}")
+            # Compute cache key
+            dataset_name = self.data_config.get("dataset_name", "unknown")
+            index_hash = compute_index_hash(train_index)
+            transform_config = {"pipeline": repr(self.transforms)} if self.transforms is not None else {}
+
+            # Try to load from cache
+            cache_path = self.data_root / "metadata"
+            cached_stats = load_transform_stats(
+                cache_path, dataset_name, transform_config, index_hash
+            )
+
+            if cached_stats is not None and hasattr(self.transforms, 'set_stats'):
+                # Load from cache
+                self.transforms.set_stats(cached_stats)
+                print("[INFO] Loaded transform statistics from cache")
+            else:
+                # Fit transforms from scratch
+                print("Fitting transforms on training data...")
+                # Temporarily remove transforms from dataset to avoid circular dependency
+                saved_transforms = self.train_dataset.transforms
+                self.train_dataset.transforms = None
+                # Fit transforms on raw data
+                self.transforms.fit(self.train_dataset)
+                # Restore transforms to dataset
+                self.train_dataset.transforms = saved_transforms
+
+                # Save to cache if possible
+                if hasattr(self.transforms, 'get_stats'):
+                    stats = self.transforms.get_stats()
+                    save_transform_stats(
+                        stats, cache_path, dataset_name, transform_config, index_hash
+                    )
+
+            print(f"Transforms ready: {self.transforms}")
 
         self.val_dataset = SensorWindowDataset(
             index_df=val_index,
