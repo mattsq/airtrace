@@ -46,6 +46,27 @@ class SensorWindowDataset(Dataset):
         self.target_sensors = target_sensors or sensor_names
         self.window_spec = window_spec
 
+        # Precompute column mappings to avoid per-sample set operations
+        combined_columns = (sensor_names or []) + [
+            s
+            for s in (self.target_sensors or [])
+            if s not in (sensor_names or [])
+        ]
+        # Preserve order while removing duplicates
+        self.all_columns = list(dict.fromkeys(combined_columns))
+        self.sensor_indices = [self.all_columns.index(s) for s in (self.sensor_names or [])]
+        self.target_indices = [self.all_columns.index(s) for s in (self.target_sensors or [])]
+
+        self._cached_meta = {
+            "sensor_names": self.sensor_names,
+            "target_sensors": self.target_sensors,
+            "input_sensor_indices": {
+                name: i for i, name in enumerate(self.sensor_names or [])
+            }
+        }
+
+        self.input_len = self.window_spec.input_len if self.window_spec is not None else None
+
         # Compute dimensions
         self.in_dim = len(sensor_names) if sensor_names else None
         self.out_dim = len(self.target_sensors) if self.target_sensors else None
@@ -65,38 +86,29 @@ class SensorWindowDataset(Dataset):
         """
         row = self.index_df.iloc[idx]
 
-        # Get all columns needed (sensors + targets)
-        all_columns = list(set(self.sensor_names) | set(self.target_sensors))
-
         # Get full window from data store (no splitting)
         window_data, meta = self.data_store.get_full_window(
             flight_id=row.flight_id,
             start_idx=row.start_idx,
             end_idx=row.end_idx,
-            column_names=all_columns
+            column_names=self.all_columns
         )
 
         # Dataset handles splitting using WindowSpec
-        if self.window_spec is not None:
-            input_len = self.window_spec.input_len
+        if self.input_len is not None:
+            input_len = self.input_len
         else:
             # Fallback: use heuristic (this maintains backward compatibility)
             # Assume 90% input, 10% target
             total_len = len(window_data)
             input_len = int(total_len * 0.9)
 
-        # Get column indices for sensors and targets
-        sensor_indices = [all_columns.index(s) for s in self.sensor_names]
-        target_indices = [all_columns.index(s) for s in self.target_sensors]
-
         # Split window data
-        x = window_data[:input_len, sensor_indices]
-        y = window_data[input_len:, target_indices]
+        x = window_data[:input_len, self.sensor_indices]
+        y = window_data[input_len:, self.target_indices]
 
         # Add sensor mapping to metadata for models to use
-        meta["sensor_names"] = self.sensor_names
-        meta["target_sensors"] = self.target_sensors
-        meta["input_sensor_indices"] = {name: i for i, name in enumerate(self.sensor_names)}
+        meta.update(self._cached_meta)
 
         # Apply transforms
         if self.transforms is not None:
