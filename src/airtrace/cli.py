@@ -48,10 +48,17 @@ def train(cfg: DictConfig):
     # Set random seed
     set_seed(cfg.seed)
 
+    cli_flags = cfg.get("cli", {})
+    is_data_check = cli_flags.get("data_check")
+    is_dry_run = cli_flags.get("dry_run")
+
     # Validate data presence before constructing the pipeline
     missing_assets = _missing_data_assets(cfg.data, require_test=False)
     if missing_assets:
         _print_data_guidance(cfg.data, missing_assets)
+        if is_dry_run:
+            print("\nDry run requested: missing data assets will be skipped; data setup and training will not run.")
+            return
         sys.exit(1)
 
     # Build transforms
@@ -77,11 +84,11 @@ def train(cfg: DictConfig):
         print("Check that the index parquet files match the configured sensors and window specs.")
         sys.exit(1)
 
-    if cfg.cli.get("data_check"):
+    if is_data_check:
         print("\nData check complete. Training was not started because --data-check was supplied.")
         return
 
-    if cfg.cli.get("dry_run"):
+    if is_dry_run:
         print("\nDry run complete. Configuration and data checks passed; training skipped by request.")
         return
 
@@ -335,7 +342,7 @@ def _print_run_summary(cfg: DictConfig, heading: str) -> None:
     if cfg.cli.get("data_check"):
         print("Data check:  enabled (will exit after validation)")
     if cfg.cli.get("dry_run"):
-        print("Dry run:     enabled (will skip training)")
+        print("Dry run:     enabled (data files optional; will skip training)")
     print("=" * 80)
     print(OmegaConf.to_yaml(cfg, resolve=True))
     print("=" * 80)
