@@ -1,0 +1,301 @@
+================================================================================
+                    AirTrace Training Pipeline - Visual Map
+================================================================================
+
+ENTRY POINT
+===========
+
+        airtrace train exp=exp_001_gru_zscore
+                     |
+                     v
+        ┌────────────────────────────────┐
+        │ cli.py:cli()                   │
+        │ Parse command-line arguments   │
+        └────────────────┬───────────────┘
+                         |
+                         v
+        ┌────────────────────────────────┐
+        │ cli.py:prepare_hydra_overrides()
+        │ Convert CLI to Hydra format    │
+        └────────────────┬───────────────┘
+                         |
+                         v
+        ┌────────────────────────────────┐
+        │ @hydra.main() decorator        │
+        │ Load & compose YAML configs    │
+        │ (config.yaml + exp_001_...)    │
+        └────────────────┬───────────────┘
+                         |
+                         v
+        ┌────────────────────────────────┐
+        │ cli.py:main(cfg: DictConfig)   │
+        │ Route to train() or eval()     │
+        └────────────────┬───────────────┘
+                         |
+                         v
+        ┌────────────────────────────────┐
+        │ cli.py:train(cfg)              │
+        │ MAIN ORCHESTRATOR              │
+        └────────────────┬───────────────┘
+                         |
+                    +----+----+
+                    |         |
+          Phase 1   v         v    Phase 2
+        ┌──────────────────────────────────┐
+        │ Build Transform Pipeline         │
+        │ build_transforms(cfg.transforms) │
+        │  └─> TRANSFORM_REGISTRY lookup   │
+        └──────────┬───────────────────────┘
+                   |
+        Phase 3    v
+        ┌──────────────────────────────────┐
+        │ Build DataModule                 │
+        │ SensorDataModule(cfg.data, ...)  │
+        │  ├─ Load index parquets          │
+        │  ├─ Create SensorWindowDataset   │
+        │  ├─ Initialize DataStore (cache) │
+        │  └─ Fit transforms (with cache)  │
+        └──────────┬───────────────────────┘
+                   |
+        Phase 4    v
+        ┌──────────────────────────────────┐
+        │ Build Model & Task               │
+        │ build_model(cfg.model, ...)      │
+        │ build_task(cfg.task)             │
+        │  ├─> MODEL_REGISTRY lookup       │
+        │  └─> TASK_REGISTRY lookup        │
+        └──────────┬───────────────────────┘
+                   |
+        Phase 5    v
+        ┌──────────────────────────────────┐
+        │ Create DataLoaders               │
+        │ train_loader = ...               │
+        │ val_loader = ...                 │
+        └──────────┬───────────────────────┘
+                   |
+        Phase 6    v
+        ┌──────────────────────────────────┐
+        │ Initialize Trainer               │
+        │ Trainer(model, task, cfg, ...)   │
+        │  ├─ Build optimizer (Adam/SGD)   │
+        │  ├─ Build scheduler (Cosine)     │
+        │  ├─ Setup checkpointing          │
+        │  └─ Setup TensorBoard logging    │
+        └──────────┬───────────────────────┘
+                   |
+        Phase 7    v
+        ┌───────────────────────────────────────────┐
+        │ START MAIN TRAINING LOOP                  │
+        │ for epoch in range(epochs):               │
+        │                                            │
+        │  ┌─────────────────────────────────────┐  │
+        │  │ TRAINING EPOCH                      │  │
+        │  │ for batch in train_loader:          │  │
+        │  │   ├─ batch = {x, y, meta}           │  │
+        │  │   ├─ outputs = task.training_step() │  │
+        │  │   ├─ loss = outputs["loss"]         │  │
+        │  │   ├─ loss.backward()                │  │
+        │  │   ├─ clip_grad_norm()               │  │
+        │  │   ├─ optimizer.step()               │  │
+        │  │   └─ Log to TensorBoard             │  │
+        │  └─────────────────────────────────────┘  │
+        │                 |                          │
+        │                 v                          │
+        │  ┌─────────────────────────────────────┐  │
+        │  │ VALIDATION EPOCH                    │  │
+        │  │ for batch in val_loader:            │  │
+        │  │   ├─ outputs = task.validation_step()
+        │  │   ├─ Accumulate metrics             │  │
+        │  │   └─ Log to TensorBoard             │  │
+        │  └─────────────────────────────────────┘  │
+        │                 |                          │
+        │                 v                          │
+        │  ┌─────────────────────────────────────┐  │
+        │  │ POST-EPOCH                          │  │
+        │  │ ├─ scheduler.step()                 │  │
+        │  │ ├─ save_checkpoint(val_loss)        │  │
+        │  │ ├─ Check early stopping             │  │
+        │  │ └─ Update best_val_loss             │  │
+        │  └─────────────────────────────────────┘  │
+        │                 |                          │
+        │       [repeat for next epoch]              │
+        │                 |                          │
+        └─────────────────┬─────────────────────────┘
+                          |
+        Phase 8           v
+        ┌───────────────────────────────────┐
+        │ CLEANUP                           │
+        │ ├─ Save best.ckpt                 │
+        │ ├─ Print training summary         │
+        │ └─ Close TensorBoard writer       │
+        └───────────────────────────────────┘
+
+
+DATA FLOW (Per Sample)
+======================
+
+        index_df[idx]
+        flight_id, start_idx, end_idx
+                |
+                v
+        ┌─────────────────────────────┐
+        │ DataStore.__init__()        │
+        │ LRU Cache (maxsize=128)      │
+        │ Loads: {flight_id}.parquet  │
+        └────────┬────────────────────┘
+                 |
+        [T_total, D] array
+                 |
+                 v
+        ┌─────────────────────────────┐
+        │ Window Slicing              │
+        │ x = [:input_len, sensors]   │
+        │ y = [input_len:, targets]   │
+        │                             │
+        │ x: [256, 5]  y: [32, 2]     │
+        └────────┬────────────────────┘
+                 |
+                 v
+        ┌──────────────────────────────┐
+        │ Transform Pipeline           │
+        │ Compose([...transforms...])  │
+        │                              │
+        │ 1. ZScoreTransform           │
+        │    (x - mean) / std          │
+        │                              │
+        │ 2. DifferenceTransform       │
+        │    First-order diff          │
+        │                              │
+        │ 3. ContextTransform          │
+        │    Add static features       │
+        │                              │
+        │ Output: x: [256, 7]          │
+        └────────┬─────────────────────┘
+                 |
+                 v
+        ┌──────────────────────────────┐
+        │ Convert to Tensors           │
+        │ x = torch.float32            │
+        │ y = torch.float32            │
+        │ meta = dict                  │
+        │                              │
+        │ Return {"x", "y", "meta"}    │
+        └────────┬─────────────────────┘
+                 |
+                 v
+        [Batch Collation via DataLoader]
+        Collate N samples into batch
+        x: [B, 256, 7]  y: [B, 32, 2]
+                 |
+                 v
+        ┌──────────────────────────────┐
+        │ Model Forward Pass           │
+        │ model(x, meta={...})         │
+        │                              │
+        │ Returns:                     │
+        │ {"preds": [B, T_out, D_out], │
+        │  "extras": {...}}            │
+        └────────┬─────────────────────┘
+                 |
+                 v
+        ┌──────────────────────────────┐
+        │ Task Execution               │
+        │ task.training_step(          │
+        │   batch, model)              │
+        │                              │
+        │ - Compute loss               │
+        │ - Compute metrics            │
+        │ - Return {"loss": ..., ...}  │
+        └────────┬─────────────────────┘
+                 |
+                 v
+        ┌──────────────────────────────┐
+        │ Backward & Optimization      │
+        │ loss.backward()              │
+        │ optimizer.step()             │
+        │ scheduler.step()             │
+        └──────────────────────────────┘
+
+
+CONFIGURATION STRUCTURE
+=======================
+
+        configs/config.yaml (base)
+        ├─ defaults:
+        │   ├─ data: qantas_737 ──────> data config
+        │   ├─ model: gru_ar ────────> model config
+        │   ├─ transforms: zscore_diff -> transform config
+        │   ├─ task: one_step ──────> task config
+        │   └─ train: default ──────> training config
+        │
+        └─ exp/exp_001_gru_zscore.yaml (experiment override)
+           └─ overrides all defaults above
+
+
+OUTPUT DIRECTORY
+================
+
+        runs/
+        └── 20240516/
+            └── exp_001_gru_zscore/
+                ├── .hydra/
+                │   ├── config.yaml (resolved config snapshot)
+                │   └── overrides.yaml
+                ├── checkpoints/
+                │   ├── best.ckpt (lowest val_loss)
+                │   ├── epoch_0.ckpt
+                │   ├── epoch_1.ckpt
+                │   └── epoch_2.ckpt (top-k=3)
+                └── events.out.tfevents... (TensorBoard logs)
+                    ├─ train/loss, train/rmse, train/mae
+                    ├─ val/loss, val/rmse, val/mae
+                    └─ lr (learning rate per epoch)
+
+
+KEY COMPONENT INTERFACES
+=========================
+
+        Model (ARBaseModel)
+        │
+        ├─ __init__(input_dim, output_dim, **params)
+        ├─ forward(x, context, **kwargs) -> {"preds": ..., "extras": ...}
+        └─ get_num_params() -> int
+
+        Task (Task)
+        │
+        ├─ __init__(config)
+        ├─ training_step(batch, model) -> {"loss": ..., "rmse": ..., ...}
+        ├─ validation_step(batch, model) -> {...}
+        └─ compute_metrics(preds, targets) -> {...}
+
+        Transform (Transform)
+        │
+        ├─ fit(dataset) -> self
+        ├─ __call__(x, y, meta) -> (x, y, meta)
+        └─ inverse(x, y) -> (x, y)
+
+        DataModule (SensorDataModule)
+        │
+        ├─ __init__(data_config, transforms, batch_size, ...)
+        ├─ setup()
+        ├─ train_dataloader() -> DataLoader
+        ├─ val_dataloader() -> DataLoader
+        ├─ test_dataloader() -> DataLoader
+        ├─ in_dim -> int (computed)
+        └─ out_dim -> int (computed)
+
+
+REGISTRY PATTERN
+================
+
+        Define:  @register("name")
+                 class ComponentClass(...):
+                     ...
+
+        Look up: cls = REGISTRY["name"]
+                 instance = cls(**params)
+
+        Used by: models, tasks, transforms
+
+
+================================================================================

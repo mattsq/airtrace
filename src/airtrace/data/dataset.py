@@ -50,6 +50,15 @@ class SensorWindowDataset(Dataset):
         self.in_dim = len(sensor_names) if sensor_names else None
         self.out_dim = len(self.target_sensors) if self.target_sensors else None
 
+        # Precompute column mappings to avoid repeated computation in __getitem__
+        # This optimization prevents creating sets/lists on every sample access
+        self._all_columns = list(set(self.sensor_names) | set(self.target_sensors))
+        self._sensor_indices = [self._all_columns.index(s) for s in self.sensor_names]
+        self._target_indices = [self._all_columns.index(s) for s in self.target_sensors]
+
+        # Precompute sensor index mapping dictionary (used in metadata)
+        self._input_sensor_indices = {name: i for i, name in enumerate(self.sensor_names)}
+
     def __len__(self) -> int:
         """Return number of windows in dataset."""
         return len(self.index_df)
@@ -65,15 +74,13 @@ class SensorWindowDataset(Dataset):
         """
         row = self.index_df.iloc[idx]
 
-        # Get all columns needed (sensors + targets)
-        all_columns = list(set(self.sensor_names) | set(self.target_sensors))
-
+        # Use precomputed all_columns instead of recomputing
         # Get full window from data store (no splitting)
         window_data, meta = self.data_store.get_full_window(
             flight_id=row.flight_id,
             start_idx=row.start_idx,
             end_idx=row.end_idx,
-            column_names=all_columns
+            column_names=self._all_columns
         )
 
         # Dataset handles splitting using WindowSpec
@@ -85,18 +92,15 @@ class SensorWindowDataset(Dataset):
             total_len = len(window_data)
             input_len = int(total_len * 0.9)
 
-        # Get column indices for sensors and targets
-        sensor_indices = [all_columns.index(s) for s in self.sensor_names]
-        target_indices = [all_columns.index(s) for s in self.target_sensors]
-
+        # Use precomputed indices instead of recomputing
         # Split window data
-        x = window_data[:input_len, sensor_indices]
-        y = window_data[input_len:, target_indices]
+        x = window_data[:input_len, self._sensor_indices]
+        y = window_data[input_len:, self._target_indices]
 
-        # Add sensor mapping to metadata for models to use
+        # Add sensor mapping to metadata for models to use (using precomputed dict)
         meta["sensor_names"] = self.sensor_names
         meta["target_sensors"] = self.target_sensors
-        meta["input_sensor_indices"] = {name: i for i, name in enumerate(self.sensor_names)}
+        meta["input_sensor_indices"] = self._input_sensor_indices
 
         # Apply transforms
         if self.transforms is not None:

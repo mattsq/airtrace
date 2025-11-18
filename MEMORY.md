@@ -239,11 +239,61 @@ using NumPy 1.x cannot be run in NumPy 2.x` when running `airtrace` commands. Pi
 
 ---
 
+### 2025-11-18 Performance: Dataset __getitem__ Repeated Computations
+
+**Discovered by**: Performance optimization analysis
+**Impact**: Training speed, data loading efficiency
+
+The `SensorWindowDataset.__getitem__` method was recomputing several values on **every sample access** (potentially 10,000+ times per epoch):
+
+1. **Column list creation**: `list(set(self.sensor_names) | set(self.target_sensors))` - creates new sets and list every call
+2. **Index mapping**: `[all_columns.index(s) for s in self.sensor_names]` - recomputes column indices every call
+3. **Metadata dict**: `{name: i for i, name in enumerate(self.sensor_names)}` - rebuilds dict every call
+
+**Solution**: Precompute these in `__init__` and store as instance variables:
+- `self._all_columns` - precomputed column list
+- `self._sensor_indices` - precomputed sensor indices
+- `self._target_indices` - precomputed target indices
+- `self._input_sensor_indices` - precomputed metadata dict
+
+**Impact**: Eliminates repeated set operations, list comprehensions, and dictionary creations from the hot path. For a dataset with 10,000 samples and 10 epochs, this saves ~100,000 redundant computations.
+
+**Code Reference**: `src/airtrace/data/dataset.py:53-60` (precomputation in __init__), `src/airtrace/data/dataset.py:66-103` (usage in __getitem__)
+
+**Related**: Data Pipeline learning (windowing and loading)
+
+---
+
+### 2025-11-18 Performance: Transform Fit Batching and Caching
+
+**Discovered by**: Performance optimization analysis
+**Impact**: Transform fitting speed, experiment startup time
+
+Two optimization opportunities in transform fitting:
+
+1. **RobustScalerTransform**: Was loading samples one-by-one during fit (1000 sequential I/O operations)
+   - **Solution**: Added batch loading (10 samples at a time) like ZScoreTransform
+   - **Impact**: Reduces I/O overhead during transform fitting
+
+2. **RobustScalerTransform**: Lacked caching support (refit on every run)
+   - **Solution**: Added `get_stats()` and `set_stats()` methods for caching
+   - **Impact**: Subsequent training runs can load cached statistics instead of refitting
+
+3. **Sample count reduction**: Both scalers reduced from 1000 to 200 samples for fitting
+   - **Rationale**: Statistical stability typically achieved with 200 samples, reduces fitting time 5x
+   - **Trade-off**: Acceptable for typical sensor distributions
+
+**Code Reference**: `src/airtrace/transforms/scaling.py:204-238` (RobustScaler fit with batching), `src/airtrace/transforms/scaling.py:240-272` (caching methods)
+
+**Related**: Data Pipeline learning (transform caching in datamodule.py:98-131)
+
+---
+
 ## Current State
 
-**Total learnings**: 7
-**Last updated**: 2026-03-10
-**Most active areas**: Project structure, configuration system, data pipeline, synthetic data, baseline models, model validation, dependency management
+**Total learnings**: 9
+**Last updated**: 2025-11-18
+**Most active areas**: Project structure, configuration system, data pipeline, synthetic data, baseline models, model validation, dependency management, performance optimization
 
 ---
 
