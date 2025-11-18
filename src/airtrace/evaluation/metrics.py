@@ -3,7 +3,6 @@
 from typing import Dict
 
 import numpy as np
-import torch
 
 
 def rmse(preds: np.ndarray, targets: np.ndarray) -> float:
