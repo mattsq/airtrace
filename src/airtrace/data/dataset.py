@@ -1,5 +1,6 @@
 """PyTorch Dataset implementations for sensor timeseries."""
 
+import functools
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -129,7 +130,7 @@ class DataStore:
         """
         self.data_root = Path(data_root)
         self.format = format
-        self._cache = {}  # Simple in-memory cache
+        self._load_flight = functools.lru_cache(maxsize=128)(self._load_flight)
 
         # Load flight metadata
         metadata_path = self.data_root / "metadata" / "q400_flight_metadata.csv"
@@ -161,10 +162,7 @@ class DataStore:
                 meta: Metadata dict
         """
         # Load flight data (with caching)
-        if flight_id not in self._cache:
-            self._cache[flight_id] = self._load_flight(flight_id)
-
-        flight_data = self._cache[flight_id]
+        flight_data = self._load_flight(flight_id)
 
         # Validate columns exist
         missing_cols = set(column_names) - set(flight_data.columns)
@@ -258,5 +256,5 @@ class DataStore:
             raise NotImplementedError(f"Format {self.format} not yet implemented")
 
     def clear_cache(self):
-        """Clear the in-memory cache."""
-        self._cache.clear()
+        """Clear the in-memory cache of the decorated _load_flight method."""
+        self._load_flight.cache_clear()
