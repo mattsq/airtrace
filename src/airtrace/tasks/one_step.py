@@ -32,7 +32,7 @@ class OneStepTask(Task):
         """Execute one training step.
 
         Args:
-            batch: Batch with 'x' [B, T_in, D], 'y' [B, T_out, D]
+            batch: Batch with 'x' [B, T_in, D], 'y' [B, T_out, D], 'meta' (optional)
             model: Model to train
 
         Returns:
@@ -41,8 +41,8 @@ class OneStepTask(Task):
         x = batch["x"]  # [B, T_in, D]
         y = batch["y"]  # [B, T_out, D]
 
-        # Get model predictions
-        output = model(x)
+        # Get model predictions (pass metadata if available)
+        output = model(x, meta=batch.get("meta", {}))
         preds = output["preds"]  # [B, 1, D_out]
 
         # For one-step, we predict the first timestep of y
@@ -67,7 +67,7 @@ class OneStepTask(Task):
         """Execute one validation step.
 
         Args:
-            batch: Batch with 'x', 'y'
+            batch: Batch with 'x', 'y', 'meta' (optional)
             model: Model to evaluate
 
         Returns:

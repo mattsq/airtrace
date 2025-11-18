@@ -126,6 +126,9 @@ class ContextTransform(Transform):
             if len(env_vars) == T_in:
                 context_features.append(env_vars)
 
+        # Track original sensor dimension before adding context
+        meta["original_sensor_dim"] = x.shape[1]
+
         # Concatenate context to input
         if context_features:
             context_array = np.concatenate(context_features, axis=1)
