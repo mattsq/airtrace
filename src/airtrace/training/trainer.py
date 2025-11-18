@@ -146,12 +146,12 @@ class Trainer:
         metric_sums = {}
         num_batches = 0
 
-        pbar = tqdm(self.train_loader, desc=f"Epoch {self.current_epoch}", disable=True)
-
-        for batch in pbar:
+        for batch in self.train_loader:
             # Move batch to device
-            batch = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v
-                    for k, v in batch.items()}
+            batch = {
+                k: v.to(self.device, non_blocking=True) if isinstance(v, torch.Tensor) else v
+                for k, v in batch.items()
+            }
 
             # Forward pass
             outputs = self.task.training_step(batch, self.model)
@@ -171,12 +171,13 @@ class Trainer:
                 # Optimizer step
                 self.optimizer.step()
 
-            # Accumulate metrics
+            # Accumulate metrics without keeping computation graphs alive
             for k, v in outputs.items():
-                if k != "loss":
-                    metric_sums[k] = metric_sums.get(k, 0.0) + v
-                else:
-                    metric_sums[k] = metric_sums.get(k, 0.0) + v.item()
+                if isinstance(v, torch.Tensor):
+                    v = v.detach()
+
+                metric_value = v.item() if hasattr(v, "item") else v
+                metric_sums[k] = metric_sums.get(k, 0.0) + metric_value
 
             num_batches += 1
             self.global_step += 1
@@ -186,9 +187,6 @@ class Trainer:
                 for k, v in outputs.items():
                     val = v.item() if isinstance(v, torch.Tensor) else v
                     self.writer.add_scalar(f"train/{k}", val, self.global_step)
-
-            # Update progress bar
-            pbar.set_postfix(loss=outputs["loss"].item())
 
         # Compute epoch averages
         for k, v in metric_sums.items():
@@ -206,20 +204,24 @@ class Trainer:
         metric_sums = {}
         num_batches = 0
 
-        for batch in tqdm(self.val_loader, desc="Validation", disable=True):
-            batch = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v
-                    for k, v in batch.items()}
+        with torch.inference_mode():
+            for batch in self.val_loader:
+                batch = {
+                    k: v.to(self.device, non_blocking=True) if isinstance(v, torch.Tensor) else v
+                    for k, v in batch.items()
+                }
 
-            outputs = self.task.validation_step(batch, self.model)
+                outputs = self.task.validation_step(batch, self.model)
 
-            # Accumulate metrics
-            for k, v in outputs.items():
-                if k != "loss":
-                    metric_sums[k] = metric_sums.get(k, 0.0) + v
-                else:
-                    metric_sums[k] = metric_sums.get(k, 0.0) + v.item()
+                # Accumulate metrics without tracking gradients
+                for k, v in outputs.items():
+                    if isinstance(v, torch.Tensor):
+                        v = v.detach()
 
-            num_batches += 1
+                    metric_value = v.item() if hasattr(v, "item") else v
+                    metric_sums[k] = metric_sums.get(k, 0.0) + metric_value
+
+                num_batches += 1
 
         # Compute averages
         val_metrics = {}
@@ -250,25 +252,36 @@ class Trainer:
         if self.scheduler is not None:
             checkpoint["scheduler_state_dict"] = self.scheduler.state_dict()
 
-        # Save checkpoint
+        # Save best checkpoint (separate from top-k tracking)
         if is_best:
             checkpoint_path = self.checkpoint_dir / "best.ckpt"
             torch.save(checkpoint, checkpoint_path)
             print(f"Saved best checkpoint: {checkpoint_path}")
 
-        # Save epoch checkpoint
-        checkpoint_path = self.checkpoint_dir / f"epoch_{self.current_epoch}.ckpt"
-        torch.save(checkpoint, checkpoint_path)
+        # Only write epoch checkpoints if they would be kept in the top-k set
+        should_consider_top_k = self.save_top_k and self.save_top_k > 0
+        qualifies_for_top_k = False
 
-        # Manage top-k checkpoints
-        self.saved_checkpoints.append((val_loss, checkpoint_path))
-        self.saved_checkpoints.sort(key=lambda x: x[0])
+        if should_consider_top_k:
+            if len(self.saved_checkpoints) < self.save_top_k:
+                qualifies_for_top_k = True
+            else:
+                worst_loss = self.saved_checkpoints[-1][0]
+                qualifies_for_top_k = val_loss < worst_loss
 
-        # Remove worst checkpoints
-        while len(self.saved_checkpoints) > self.save_top_k:
-            _, path_to_remove = self.saved_checkpoints.pop()
-            if path_to_remove.exists() and "best" not in path_to_remove.name:
-                path_to_remove.unlink()
+        if should_consider_top_k and qualifies_for_top_k:
+            checkpoint_path = self.checkpoint_dir / f"epoch_{self.current_epoch}.ckpt"
+            torch.save(checkpoint, checkpoint_path)
+
+            # Manage top-k checkpoints
+            self.saved_checkpoints.append((val_loss, checkpoint_path))
+            self.saved_checkpoints.sort(key=lambda x: x[0])
+
+            # Remove worst checkpoints
+            while len(self.saved_checkpoints) > self.save_top_k:
+                _, path_to_remove = self.saved_checkpoints.pop()
+                if path_to_remove.exists() and "best" not in path_to_remove.name:
+                    path_to_remove.unlink()
 
     def train(self):
         """Run full training loop."""
