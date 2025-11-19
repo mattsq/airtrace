@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from airtrace.transforms import (
+    Compose,
     ClipTransform,
     ContextTransform,
     DetrendTransform,
@@ -15,6 +16,7 @@ from airtrace.transforms import (
     MinMaxTransform,
     NoOpTransform,
     RobustScalerTransform,
+    Transform,
     SmoothTransform,
     TemporalFeaturesTransform,
     ZScoreTransform,
@@ -111,6 +113,27 @@ def test_difference_transform():
     # Check shapes (may be padded)
     assert x_diff.shape[0] == x.shape[0]
     assert x_diff.shape[1] == x.shape[1]
+
+
+def test_difference_transform_inverse_and_meta():
+    """DifferenceTransform should store initial values and invert with cumulative sum."""
+    transform = DifferenceTransform(order=1, sensors=["sensor_a"])
+    transform.fit(MockDataset())
+
+    x = np.array([[1.0, 2.0], [3.0, 5.0], [6.0, 9.0]])
+    y = np.array([[0.5, 1.5], [1.5, 2.5]])
+    meta: Dict[str, Any] = {}
+
+    x_diff, y_diff, meta_out = transform(x, y, meta)
+
+    # Initial values should be stored for both x and y
+    assert np.array_equal(meta_out["diff_initial_x"], x[0])
+    assert np.array_equal(meta_out["diff_initial_y"], y[0])
+
+    # Inverse should reconstruct the original sequences
+    x_inv, y_inv = transform.inverse(x_diff, y_diff)
+    assert np.allclose(x_inv, x)
+    assert np.allclose(y_inv, y)
 
 
 def test_context_transform():
@@ -545,6 +568,34 @@ def test_detrend_methods():
         assert x_det.shape == x.shape
 
 
+def test_detrend_inverse_restores_trend():
+    """DetrendTransform inverse should restore the original linear trend."""
+    transform = DetrendTransform(method="linear")
+    transform.fit(MockDataset())
+
+    time = np.arange(20, dtype=np.float32)[:, None]
+    # Simple linear trend: y = 2t + 3
+    x = np.hstack([2 * time + 3, 2 * time + 5])
+    y = np.vstack([np.array([[1.0, 1.0]], dtype=np.float32), np.array([[2.0, 2.0]], dtype=np.float32)])
+
+    x_det, y_det, meta = transform(x, y, {})
+    x_inv, y_inv = transform.inverse(x_det, y_det, meta)
+
+    assert np.allclose(x_inv, x)
+    assert np.allclose(y_inv, y)
+
+
+def test_detrend_requires_fit_and_valid_method():
+    """DetrendTransform should enforce fitting and validate methods."""
+    transform = DetrendTransform(method="linear")
+
+    with pytest.raises(RuntimeError):
+        transform(np.ones((3, 2)), np.ones((1, 2)), {})
+
+    with pytest.raises(ValueError):
+        DetrendTransform(method="unknown").fit(MockDataset())._fit_trend(np.ones((3, 1)))
+
+
 def test_temporal_features_transform():
     """Test temporal features transform."""
     dataset = MockDataset()
@@ -568,6 +619,86 @@ def test_temporal_features_transform():
     assert y.shape == sample["y"].shape  # y unchanged
     assert "temporal_features_dim" in meta
     assert meta["temporal_features_dim"] > 0
+
+
+def test_clip_transform_variants_and_inverse():
+    """ClipTransform should compute bounds and raise for invalid configuration."""
+    dataset = MockDataset()
+
+    # Percentile with global bounds
+    percentile_transform = ClipTransform(method="percentile", per_sensor=False)
+    percentile_transform.fit(dataset)
+    x, y, meta = percentile_transform(dataset[0]["x"], dataset[0]["y"], {})
+    assert meta["clipped"] is True
+    assert meta["clip_method"] == "percentile"
+
+    # Absolute bounds and inverse no-op
+    absolute_transform = ClipTransform(method="absolute", lower=-1.0, upper=1.0)
+    absolute_transform.fit(dataset)
+    clipped_x, clipped_y, _ = absolute_transform(dataset[0]["x"], dataset[0]["y"], {})
+    restored_x, restored_y = absolute_transform.inverse(clipped_x, clipped_y)
+    assert np.array_equal(clipped_x, restored_x)
+    assert np.array_equal(clipped_y, restored_y)
+
+    # Invalid method should raise
+    with pytest.raises(ValueError):
+        ClipTransform(method="invalid").fit(dataset)
+
+    # Transform must be fitted before use
+    unfitted = ClipTransform()
+    with pytest.raises(RuntimeError):
+        unfitted(dataset[0]["x"], dataset[0]["y"], {})
+
+
+def test_transform_compose_inverse_order():
+    """Compose should apply inverse transforms in reverse order."""
+
+    class AddOneTransform(Transform):
+        def fit(self, dataset):
+            self.is_fitted = True
+            return self
+
+        def __call__(self, x, y, meta):
+            return x + 1, y + 1, meta
+
+        def inverse(self, x, y=None):
+            return x - 1, y - 1 if y is not None else None
+
+    class MultiplyTransform(Transform):
+        def fit(self, dataset):
+            self.is_fitted = True
+            return self
+
+        def __call__(self, x, y, meta):
+            return x * 2, y * 2, meta
+
+        def inverse(self, x, y=None):
+            return x / 2, y / 2 if y is not None else None
+
+    compose = Compose([AddOneTransform(), MultiplyTransform()])
+    compose.fit(MockDataset())
+
+    x, y = np.array([[1.0]]), np.array([[2.0]])
+    x_out, y_out, _ = compose(x, y, {})
+    x_inv, y_inv = compose.inverse(x_out, y_out)
+
+    assert np.allclose(x_out, (x + 1) * 2)
+    assert np.allclose(y_out, (y + 1) * 2)
+    assert np.allclose(x_inv, x)
+    assert np.allclose(y_inv, y)
+
+    class NoInverseTransform(Transform):
+        def fit(self, dataset):
+            self.is_fitted = True
+            return self
+
+        def __call__(self, x, y, meta):
+            return x, y, meta
+
+    base_transform = NoInverseTransform().fit(MockDataset())
+    base_transform(np.array([[1.0]]), np.array([[2.0]]), {})
+    with pytest.raises(NotImplementedError):
+        base_transform.inverse(np.array([[1.0]]))
 
 
 def test_temporal_features_with_phase():
