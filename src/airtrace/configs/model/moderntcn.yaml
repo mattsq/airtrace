@@ -4,7 +4,7 @@ model:
   name: moderntcn
   params:
     num_blocks: 6
-    hidden_channels: 64
+    hidden_channels: 128  # Increased from 64 for ~250K params
     kernel_size: 3
     large_kernel_size: 51
     dilation_growth: 2

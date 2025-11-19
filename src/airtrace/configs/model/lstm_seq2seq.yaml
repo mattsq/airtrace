@@ -3,7 +3,7 @@
 model:
   name: lstm_seq2seq
   params:
-    hidden_size: 128
+    hidden_size: 112  # Reduced from 128 for ~300K params
     num_layers: 2
     dropout: 0.1
     use_attention: false

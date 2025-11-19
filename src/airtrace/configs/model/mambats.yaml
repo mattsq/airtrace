@@ -19,13 +19,13 @@ model:
                                  # - 50% overlap (stride = patch_len // 2) often works well
 
     # Architecture dimensions
-    embed_dim: 128               # Patch embedding dimension
+    embed_dim: 80                # Reduced from 96 for ~250K params
                                  # - Controls model capacity and memory usage
                                  # - Typical: 64-256 for most tasks
     state_dim: 16                # Selective scan internal state dimension
                                  # - Controls state space capacity (typical: 8-32)
                                  # - Smaller than embed_dim for efficiency
-    num_layers: 4                # Number of stacked Temporal Mamba Blocks
+    num_layers: 3                # Reduced from 4 for parameter alignment
                                  # - More layers = deeper model, longer-range dependencies
                                  # - Typical: 2-8 layers
 

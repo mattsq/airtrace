@@ -6,11 +6,11 @@ model:
     seg_len: 16           # Temporal patch length
     seg_stride: 8         # Stride between patches
     dim_seg_size: 4       # Number of variates per dimension segment
-    d_model: 128          # Embedding dimension
+    d_model: 96           # Reduced from 128 for ~250K params
     nhead: 8              # Attention heads
     temporal_depth: 2     # Layers for temporal attention
     spatial_depth: 1      # Layers for cross-dimension attention
-    dim_feedforward: 256  # Feedforward dimension
+    dim_feedforward: 192  # Reduced from 256
     dropout: 0.1          # Dropout rate
     pred_len: 1           # Forecast horizon
     pooling: "last"       # Pooling strategy over temporal tokens (last or mean)

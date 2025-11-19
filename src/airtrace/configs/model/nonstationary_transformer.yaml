@@ -3,10 +3,10 @@
 model:
   name: nonstationary_transformer
   params:
-    d_model: 128
+    d_model: 96   # Reduced from 128 for ~250K params
     nhead: 8
     num_layers: 3
-    dim_feedforward: 256
+    dim_feedforward: 192  # Reduced from 256
     dropout: 0.1
     activation: "gelu"
     pred_len: 1

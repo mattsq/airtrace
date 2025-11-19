@@ -3,7 +3,7 @@
 model:
   name: tcn
   params:
-    num_channels: [64, 128, 128, 256]
+    num_channels: [48, 96, 96, 128]  # Reduced from [64, 128, 128, 256] for ~250K params
     kernel_size: 3
     dropout: 0.2
     causal: true

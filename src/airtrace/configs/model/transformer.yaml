@@ -3,11 +3,11 @@
 model:
   name: transformer
   params:
-    d_model: 128
+    d_model: 96   # Reduced from 128 for ~300K params
     nhead: 8
-    num_encoder_layers: 4
-    num_decoder_layers: 4
-    dim_feedforward: 512
+    num_encoder_layers: 3  # Reduced from 4
+    num_decoder_layers: 3  # Reduced from 4
+    dim_feedforward: 384   # Reduced from 512
     dropout: 0.1
     activation: "gelu"
     causal: true

@@ -3,11 +3,11 @@
 model:
   name: informer
   params:
-    d_model: 128
+    d_model: 96  # Reduced from 128 for ~250K params
     nhead: 4
     e_layers: 2
     d_layers: 1
-    ff_dim: 256
+    ff_dim: 192  # Reduced from 256
     factor: 5
     dropout: 0.1
     pred_len: 1
