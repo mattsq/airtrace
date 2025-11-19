@@ -6,7 +6,9 @@ import pandas as pd
 import pytest
 import torch
 
+from airtrace.tasks.anomaly import AnomalyTask
 from airtrace.tasks.base import Task
+from airtrace.tasks.multi_step import MultiStepTask
 from airtrace.tasks.one_step import OneStepTask
 from airtrace.tasks import registry
 
@@ -105,3 +107,102 @@ def test_one_step_task_training_and_validation(monkeypatch):
     assert validation["loss"] == output["loss"]
     assert validation["rmse"] == output["rmse"]
     assert validation["mae"] == output["mae"]
+
+
+def test_multi_step_task_training_without_teacher_forcing():
+    class CounterModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.calls = 0
+
+        def forward(self, x):
+            self.calls += 1
+            value = torch.full_like(x, float(self.calls))
+            return {"preds": value}
+
+    batch = {
+        "x": torch.zeros(1, 3, 1),
+        "y": torch.tensor([[[0.0], [10.0], [20.0]]]),
+    }
+
+    task = MultiStepTask(
+        {"loss": "mse", "metrics": ["rmse"], "horizon": 2, "teacher_forcing_ratio": 0.0}
+    )
+    model = CounterModel()
+    result = task.training_step(batch, model)
+
+    expected_preds = torch.tensor([[[1.0], [2.0]]])
+    expected_targets = batch["y"][:, :2, :]
+    expected_mse = torch.mean((expected_preds - expected_targets) ** 2)
+
+    assert model.calls == 2
+    assert torch.isclose(result["loss"], expected_mse)
+    assert result["rmse"] == pytest.approx(torch.sqrt(expected_mse).item())
+
+
+def test_multi_step_task_teacher_forcing_uses_ground_truth():
+    class EchoModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.inputs = []
+
+        def forward(self, x):
+            self.inputs.append(x[:, -1:, :].detach())
+            return {"preds": x}
+
+    batch = {
+        "x": torch.tensor([[[1.0], [2.0], [3.0]]]),
+        "y": torch.tensor([[[10.0], [20.0], [30.0]]]),
+    }
+
+    task = MultiStepTask(
+        {"loss": "mse", "metrics": [], "horizon": 3, "teacher_forcing_ratio": 1.0}
+    )
+    model = EchoModel()
+    result = task.training_step(batch, model)
+
+    recorded = torch.cat(model.inputs, dim=1)
+    assert torch.allclose(recorded[0, :, 0], torch.tensor([3.0, 10.0, 20.0]))
+    assert isinstance(result["loss"], torch.Tensor)
+
+
+def test_anomaly_task_probabilistic_outputs():
+    class IdentityModel(torch.nn.Module):
+        def forward(self, x):
+            return {"preds": x}
+
+    batch = {
+        "x": torch.tensor(
+            [
+                [[0.0], [1.0]],
+                [[2.0], [3.0]],
+            ]
+        ),
+        "y": torch.tensor(
+            [
+                [[1.0], [0.0]],
+                [[2.5], [3.5]],
+            ]
+        ),
+    }
+
+    task = AnomalyTask({"loss": "nll", "metrics": ["rmse"]})
+    train_result = task.training_step(batch, IdentityModel())
+
+    assert isinstance(train_result["loss"], torch.Tensor)
+    assert train_result["loss_value"] == pytest.approx(train_result["loss"].item())
+    assert train_result["nll"] == pytest.approx(train_result["loss"].item())
+    assert "rmse" in train_result
+
+    validation = task.validation_step(batch, IdentityModel())
+    assert isinstance(validation["loss"], torch.Tensor)
+    assert not validation["loss"].requires_grad
+    expected_errors = torch.mean(
+        (batch["x"][:, 0:1, :] - batch["y"][:, 0:1, :]) ** 2, dim=(1, 2)
+    )
+    assert validation["nll"] == pytest.approx(expected_errors.mean().item())
+    assert validation["loss_value"] == pytest.approx(validation["loss"].item())
+    assert torch.allclose(
+        torch.from_numpy(validation["anomaly_scores"]),
+        expected_errors,
+    )

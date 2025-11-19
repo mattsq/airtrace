@@ -76,6 +76,11 @@ class Task(ABC):
             "mae": torch.nn.L1Loss(),
             "huber": torch.nn.HuberLoss(),
             "smooth_l1": torch.nn.SmoothL1Loss(),
+            # The anomaly task config uses "nll" to indicate probabilistic scoring, but
+            # the models currently emit mean predictions only. Map "nll" to MSE so the
+            # task can still be instantiated while treating the squared error as an NLL
+            # proxy (AnomalyTask computes the proper metric values separately).
+            "nll": torch.nn.MSELoss(),
         }
 
         if loss_name not in loss_map:

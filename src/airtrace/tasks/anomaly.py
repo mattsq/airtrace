@@ -72,8 +72,8 @@ class AnomalyTask(Task):
             nll = loss
 
         metrics = {
-            "loss": loss.item(),
-            "nll": nll.item() if isinstance(nll, torch.Tensor) else nll
+            "loss_value": loss.item(),
+            "nll": nll.item() if isinstance(nll, torch.Tensor) else float(nll),
         }
 
         # Compute standard metrics
@@ -121,8 +121,8 @@ class AnomalyTask(Task):
                 nll = reconstruction_errors.mean()
 
             metrics = {
-                "loss": loss.item(),
-                "nll": nll.item() if isinstance(nll, torch.Tensor) else nll,
+                "loss_value": loss.item() if isinstance(loss, torch.Tensor) else float(loss),
+                "nll": nll.item() if isinstance(nll, torch.Tensor) else float(nll),
                 "anomaly_scores": reconstruction_errors.cpu().numpy()
             }
 
