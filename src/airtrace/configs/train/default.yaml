@@ -38,3 +38,6 @@ train:
   log_every_n_steps: 50
   val_check_interval: 1.0  # Validate every epoch
   verbose_progress: false  # Show batch-level progress bars (tqdm) during training
+  shuffle:
+    strategy: block  # Use block-wise shuffling to reduce DataLoader startup stalls
+    block_size: 65536

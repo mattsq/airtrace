@@ -73,7 +73,8 @@ def train(cfg: DictConfig):
         data_config=cfg.data,
         transforms=transform_pipeline,
         batch_size=cfg.train.batch_size,
-        num_workers=cfg.train.num_workers
+        num_workers=cfg.train.num_workers,
+        shuffle=cfg.train.get("shuffle")
     )
 
     try:
@@ -177,7 +178,8 @@ def evaluate(cfg: DictConfig):
         data_config=cfg.data,
         transforms=transform_pipeline,
         batch_size=cfg.train.batch_size,
-        num_workers=cfg.train.num_workers
+        num_workers=cfg.train.num_workers,
+        shuffle=cfg.train.get("shuffle")
     )
 
     try:
