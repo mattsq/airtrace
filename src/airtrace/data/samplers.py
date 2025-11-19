@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import secrets
 from typing import Iterator, Optional, Sized
 
 import torch
@@ -34,7 +33,12 @@ class BlockShuffleSampler(Sampler[int]):
         self.block_size = block_size
         if generator is None:
             generator = torch.Generator()
-            generator.manual_seed(secrets.randbits(63))
+            # ``torch.initial_seed`` reflects the global RNG state that ``set_seed``
+            # configures, so seeding from it preserves the repo's reproducibility
+            # contract of "same config + same seed = same results" while still
+            # letting this sampler advance its own generator state independently of
+            # PyTorch's global RNG.
+            generator.manual_seed(torch.initial_seed())
         self._generator = generator
 
     def __len__(self) -> int:

@@ -26,6 +26,19 @@ def test_block_shuffle_sampler_changes_order_each_epoch() -> None:
     assert sorted(first_epoch) == sorted(second_epoch) == list(range(len(dataset)))
 
 
+def test_block_shuffle_sampler_respects_global_seed() -> None:
+    dataset = list(range(1024))
+    torch.manual_seed(1234)
+    sampler_a = BlockShuffleSampler(dataset, block_size=256)
+    first_epoch = list(iter(sampler_a))
+
+    torch.manual_seed(1234)
+    sampler_b = BlockShuffleSampler(dataset, block_size=256)
+    second_epoch = list(iter(sampler_b))
+
+    assert first_epoch == second_epoch
+
+
 def test_block_shuffle_sampler_validates_block_size() -> None:
     dataset = list(range(10))
     with pytest.raises(ValueError):
