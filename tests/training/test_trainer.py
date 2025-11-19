@@ -1,6 +1,6 @@
 import random
 from pathlib import Path
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Optional
 
 import numpy as np
 import pytest
@@ -90,7 +90,9 @@ def _make_batches(num_batches: int = 2, batch_size: int = 4) -> Iterable[Dict[st
     ]
 
 
-def _build_config(tmp_path: Path, overrides: Dict[str, Dict[str, object]] | None = None) -> Dict[str, object]:
+def _build_config(
+    tmp_path: Path, overrides: Optional[Dict[str, Dict[str, object]]] = None
+) -> Dict[str, object]:
     config: Dict[str, object] = {
         "log_dir": str(tmp_path / "logs"),
         "train": {
@@ -117,11 +119,11 @@ def _make_trainer(
     tmp_path: Path,
     writer_stub: List[_WriterStub],
     *,
-    model: nn.Module | None = None,
-    task: DummyTask | None = None,
-    train_loader: Iterable[Dict[str, torch.Tensor]] | None = None,
-    val_loader: Iterable[Dict[str, torch.Tensor]] | None = None,
-    overrides: Dict[str, Dict[str, object]] | None = None,
+    model: Optional[nn.Module] = None,
+    task: Optional[DummyTask] = None,
+    train_loader: Optional[Iterable[Dict[str, torch.Tensor]]] = None,
+    val_loader: Optional[Iterable[Dict[str, torch.Tensor]]] = None,
+    overrides: Optional[Dict[str, Dict[str, object]]] = None,
 ) -> Trainer:
     model = model or TinyModel()
     task = task or DummyTask()
