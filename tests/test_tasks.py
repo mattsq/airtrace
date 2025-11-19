@@ -166,6 +166,38 @@ def test_multi_step_task_teacher_forcing_uses_ground_truth():
     assert isinstance(result["loss"], torch.Tensor)
 
 
+def test_multi_step_task_validation_autoregressive():
+    class CountingModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.calls = 0
+
+        def forward(self, x):
+            self.calls += 1
+            return {"preds": torch.full_like(x, float(self.calls))}
+
+    batch = {
+        "x": torch.zeros(1, 2, 1),
+        "y": torch.tensor([[[0.0], [1.0], [2.0], [3.0]]]),
+    }
+
+    task = MultiStepTask({"loss": "mse", "metrics": ["rmse", "mae"], "horizon": 3})
+    model = CountingModel()
+    result = task.validation_step(batch, model)
+
+    expected_preds = torch.tensor([[[1.0], [2.0], [3.0]]])
+    expected_targets = batch["y"][:, :3, :]
+    expected_mse = torch.mean((expected_preds - expected_targets) ** 2)
+
+    assert model.calls == 3
+    assert torch.isclose(result["loss"], expected_mse)
+    assert result["rmse"] == pytest.approx(torch.sqrt(expected_mse).item())
+    assert result["mae"] == pytest.approx(
+        torch.mean(torch.abs(expected_preds - expected_targets)).item()
+    )
+    assert not result["loss"].requires_grad
+
+
 def test_anomaly_task_probabilistic_outputs():
     class IdentityModel(torch.nn.Module):
         def forward(self, x):
