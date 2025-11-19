@@ -1,6 +1,7 @@
 """Training loop implementation."""
 
 import random
+import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -46,6 +47,7 @@ class Trainer:
         train_config = config.get("train", {})
         self.epochs = train_config.get("epochs", 50)
         self.log_every_n_steps = train_config.get("log_every_n_steps", 50)
+        self.verbose_progress = train_config.get("verbose_progress", False)
 
         # Check if model has trainable parameters
         self.has_trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad) > 0
@@ -146,7 +148,16 @@ class Trainer:
         metric_sums = {}
         num_batches = 0
 
-        for batch in self.train_loader:
+        # Conditionally wrap with tqdm for verbose progress
+        train_iter = tqdm(
+            self.train_loader,
+            desc=f"Epoch {self.current_epoch + 1}/{self.epochs} [Train]",
+            leave=False,
+            file=sys.stdout,
+            disable=not self.verbose_progress
+        ) if self.verbose_progress else self.train_loader
+
+        for batch in train_iter:
             # Move batch to device
             batch = {
                 k: v.to(self.device, non_blocking=True) if isinstance(v, torch.Tensor) else v
@@ -182,6 +193,11 @@ class Trainer:
             num_batches += 1
             self.global_step += 1
 
+            # Update progress bar with current loss
+            if self.verbose_progress and hasattr(train_iter, 'set_postfix'):
+                loss_val = loss.item() if isinstance(loss, torch.Tensor) else loss
+                train_iter.set_postfix({'loss': f'{loss_val:.4f}'}, refresh=True)
+
             # Logging
             if self.global_step % self.log_every_n_steps == 0:
                 for k, v in outputs.items():
@@ -204,8 +220,17 @@ class Trainer:
         metric_sums = {}
         num_batches = 0
 
+        # Conditionally wrap with tqdm for verbose progress
+        val_iter = tqdm(
+            self.val_loader,
+            desc=f"Epoch {self.current_epoch + 1}/{self.epochs} [Val]",
+            leave=False,
+            file=sys.stdout,
+            disable=not self.verbose_progress
+        ) if self.verbose_progress else self.val_loader
+
         with torch.inference_mode():
-            for batch in self.val_loader:
+            for batch in val_iter:
                 batch = {
                     k: v.to(self.device, non_blocking=True) if isinstance(v, torch.Tensor) else v
                     for k, v in batch.items()
@@ -222,6 +247,12 @@ class Trainer:
                     metric_sums[k] = metric_sums.get(k, 0.0) + metric_value
 
                 num_batches += 1
+
+                # Update progress bar with current loss
+                if self.verbose_progress and hasattr(val_iter, 'set_postfix'):
+                    if 'loss' in outputs:
+                        loss_val = outputs['loss'].item() if isinstance(outputs['loss'], torch.Tensor) else outputs['loss']
+                        val_iter.set_postfix({'loss': f'{loss_val:.4f}'}, refresh=True)
 
         # Compute averages
         val_metrics = {}
