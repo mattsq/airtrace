@@ -75,7 +75,11 @@ class RawDataLoader:
                 values="value"
             )
 
-        # Ensure timestamp index
+        # Ensure timestamp is the index
+        if "timestamp" in raw_df.columns:
+            raw_df = raw_df.set_index("timestamp")
+
+        # Ensure timestamp index is DatetimeIndex
         if not isinstance(raw_df.index, pd.DatetimeIndex):
             raw_df.index = pd.to_datetime(raw_df.index)
 

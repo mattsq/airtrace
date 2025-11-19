@@ -1,18 +1,26 @@
-"""Generate synthetic aircraft cruise sensor dataset.
+"""Generate synthetic aircraft sensor dataset.
 
 This script generates a complete synthetic dataset with train/val/test splits
 that can be used for experimentation and testing.
 
 Usage:
-    airtrace-generate-synthetic --n-flights 20 --output data/
-    airtrace-generate-synthetic --use-config data=synthetic_cruise
+    # Generate using the default synthetic_cruise config
+    airtrace-generate-synthetic
+
+    # Generate with a specific data config
+    airtrace-generate-synthetic data=synthetic_cruise
+
+    # Override specific generation parameters
+    airtrace-generate-synthetic data=synthetic_cruise data.generation.n_flights=50
+
+    # Use a different seed
+    airtrace-generate-synthetic data=synthetic seed=123
 """
 
 from __future__ import annotations
 
-import argparse
+import sys
 from pathlib import Path
-from typing import Optional
 
 import hydra
 from omegaconf import DictConfig
@@ -29,8 +37,16 @@ def generate_from_config(config: DictConfig) -> None:
         config: Hydra configuration with data.generation section
     """
     data_root = Path(config.data.root)
+    dataset_name = config.data.get("dataset_name", "synthetic")
 
     # Extract generation config
+    if not hasattr(config.data, "generation"):
+        print(f"Error: Config '{dataset_name}' is missing a 'generation' section.")
+        print("\nTo generate synthetic data, use a config with generation parameters, e.g.:")
+        print("  airtrace-generate-synthetic data=synthetic_cruise")
+        print("\nOr add a 'generation' section to your data config.")
+        sys.exit(1)
+
     gen_cfg = config.data.generation
     profile_cfg = gen_cfg.cruise_profile
 
@@ -54,13 +70,14 @@ def generate_from_config(config: DictConfig) -> None:
     )
 
     # Generate flights
-    print(f"Generating {gen_cfg.n_flights} synthetic cruise flights...")
+    print(f"Generating {gen_cfg.n_flights} synthetic flights for '{dataset_name}'...")
     splits = create_synthetic_dataset(
         data_root=data_root,
         n_flights=gen_cfg.n_flights,
         profile=profile,
         seed=gen_cfg.seed,
-        train_val_test_split=tuple(gen_cfg.train_val_test_split)
+        train_val_test_split=tuple(gen_cfg.train_val_test_split),
+        flight_id_prefix=dataset_name,
     )
 
     print("Generated:")
@@ -69,15 +86,13 @@ def generate_from_config(config: DictConfig) -> None:
     print(f"  Test:  {len(splits['test'])} flights")
 
     # Process to interim
-    print("\nProcessing raw → interim...")
+    print("\nProcessing raw -> interim...")
     raw_loader = RawDataLoader(data_root)
-    all_flights = splits['train'] + splits['val'] + splits['test']
+    all_flights = splits["train"] + splits["val"] + splits["test"]
 
     for flight_id in all_flights:
         raw_loader.process_to_interim(
-            flight_id=flight_id,
-            resample_rate="1S",
-            sensor_list=config.data.sensors.use
+            flight_id=flight_id, resample_rate="1S", sensor_list=config.data.sensors.use
         )
     print(f"Processed {len(all_flights)} flights to interim format")
 
@@ -90,123 +105,40 @@ def generate_from_config(config: DictConfig) -> None:
         input_len=window_cfg.input_len,
         pred_len=window_cfg.pred_len,
         stride=window_cfg.stride,
-        target_sensors=window_cfg.target_sensors
+        target_sensors=window_cfg.target_sensors,
     )
 
     for split_name, flight_ids in splits.items():
         index_df = processor.create_windows(
             flight_ids=flight_ids,
             window_spec=window_spec,
-            output_name=f"synthetic_cruise_{split_name}"
+            output_name=f"{dataset_name}_{split_name}",
         )
         print(f"  {split_name}: {len(index_df)} windows")
 
-    print(f"\n✓ Synthetic dataset ready in {data_root}")
-    print("  Use config: configs/data/synthetic_cruise.yaml")
-
-
-def generate_standalone(
-    output_dir: Path,
-    n_flights: int = 20,
-    duration_hours: float = 1.0,
-    seed: Optional[int] = 42
-) -> None:
-    """Generate synthetic dataset with standalone parameters.
-
-    Args:
-        output_dir: Output directory for data
-        n_flights: Number of flights to generate
-        duration_hours: Duration of each cruise in hours
-        seed: Random seed
-    """
-    output_dir = Path(output_dir)
-    output_dir.mkdir(exist_ok=True, parents=True)
-
-    # Create default profile
-    profile = CruiseProfile(
-        cruise_duration=int(duration_hours * 3600),
-    )
-
-    # Generate
-    print(f"Generating {n_flights} synthetic cruise flights...")
-    splits = create_synthetic_dataset(
-        data_root=output_dir,
-        n_flights=n_flights,
-        profile=profile,
-        seed=seed
-    )
-
-    print("Generated:")
-    print(f"  Train: {len(splits['train'])} flights")
-    print(f"  Val:   {len(splits['val'])} flights")
-    print(f"  Test:  {len(splits['test'])} flights")
-
-    # Process to interim
-    print("\nProcessing to interim format...")
-    raw_loader = RawDataLoader(output_dir)
-    all_flights = splits['train'] + splits['val'] + splits['test']
-
-    for flight_id in all_flights:
-        raw_loader.process_to_interim(flight_id=flight_id, resample_rate="1S")
-
-    print(f"\n✓ Synthetic dataset ready in {output_dir}")
+    print(f"\nSynthetic dataset ready in {data_root}")
+    print(f"  Dataset: {dataset_name}")
+    print(f"  Config: configs/data/{dataset_name}.yaml")
 
 
 @hydra.main(version_base=None, config_path="pkg://airtrace.configs", config_name="config")
-def main_hydra(cfg: DictConfig) -> None:
+def main(cfg: DictConfig) -> None:
     """Main entry point using Hydra config."""
     generate_from_config(cfg)
 
 
-def main_cli() -> None:
-    """Main entry point with CLI arguments."""
-    parser = argparse.ArgumentParser(
-        description="Generate synthetic aircraft cruise sensor dataset"
-    )
-    parser.add_argument(
-        "--output",
-        type=Path,
-        default="data/",
-        help="Output directory for data (default: data/)"
-    )
-    parser.add_argument(
-        "--n-flights",
-        type=int,
-        default=20,
-        help="Number of flights to generate (default: 20)"
-    )
-    parser.add_argument(
-        "--duration",
-        type=float,
-        default=1.0,
-        help="Duration of each cruise in hours (default: 1.0)"
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=42,
-        help="Random seed (default: 42)"
-    )
-    parser.add_argument(
-        "--use-config",
-        action="store_true",
-        help="Use Hydra config instead of CLI args"
-    )
+def cli() -> None:
+    """Entry point for the airtrace-generate-synthetic console script.
 
-    args = parser.parse_args()
+    This processes sys.argv and delegates to the Hydra main function,
+    allowing users to pass Hydra overrides directly on the command line.
+    """
+    # Default to synthetic_cruise if no data config is specified
+    if len(sys.argv) == 1 or not any(arg.startswith("data=") for arg in sys.argv[1:]):
+        sys.argv.append("data=synthetic_cruise")
 
-    if args.use_config:
-        # Delegate to Hydra
-        main_hydra()
-    else:
-        # Use CLI arguments
-        generate_standalone(
-            output_dir=args.output,
-            n_flights=args.n_flights,
-            duration_hours=args.duration,
-            seed=args.seed
-        )
+    main()
 
 
 if __name__ == "__main__":
-    main_cli()
+    cli()
