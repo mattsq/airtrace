@@ -1,6 +1,5 @@
 """PyTorch Dataset implementations for sensor timeseries."""
 
-import functools
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -142,7 +141,8 @@ class DataStore:
         """
         self.data_root = Path(data_root)
         self.format = format
-        self._load_flight = functools.lru_cache(maxsize=128)(self._load_flight)
+        self._flight_cache: Dict[str, Tuple[np.ndarray, Tuple[str, ...]]] = {}
+        self._cache_maxsize = 128
         self._column_index_cache: Dict[Tuple[str, Tuple[str, ...]], List[int]] = {}
         self._column_positions_cache: Dict[str, Dict[str, int]] = {}
 
@@ -270,6 +270,11 @@ class DataStore:
         Returns:
             Tuple of (numpy array, column names)
         """
+        # Check cache first
+        if flight_id in self._flight_cache:
+            return self._flight_cache[flight_id]
+
+        # Load from disk
         if self.format == "parquet":
             file_path = self.data_root / "processed" / f"{flight_id}.parquet"
             flight_df = pd.read_parquet(file_path)
@@ -280,10 +285,17 @@ class DataStore:
         flight_array = np.ascontiguousarray(flight_df.to_numpy(dtype=np.float32))
         columns = tuple(flight_df.columns)
         self._column_positions_cache[flight_id] = {name: idx for idx, name in enumerate(columns)}
+
+        # Cache with LRU-like behavior
+        if len(self._flight_cache) >= self._cache_maxsize:
+            # Remove oldest entry (first key in dict)
+            self._flight_cache.pop(next(iter(self._flight_cache)))
+
+        self._flight_cache[flight_id] = (flight_array, columns)
         return flight_array, columns
 
     def clear_cache(self):
-        """Clear the in-memory cache of the decorated _load_flight method."""
-        self._load_flight.cache_clear()
+        """Clear the in-memory cache of flight data."""
+        self._flight_cache.clear()
         self._column_index_cache.clear()
         self._column_positions_cache.clear()
