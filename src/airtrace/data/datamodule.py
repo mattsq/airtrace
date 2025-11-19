@@ -8,6 +8,7 @@ import pandas as pd
 from torch.utils.data import DataLoader
 
 from .dataset import DataStore, SensorWindowDataset
+from .samplers import BlockShuffleSampler
 from .windows import WindowSpec
 
 
@@ -32,7 +33,8 @@ class SensorDataModule:
         transforms: Optional[Any] = None,
         batch_size: int = 32,
         num_workers: int = 4,
-        max_samples: Optional[int] = None
+        max_samples: Optional[int] = None,
+        shuffle: Optional[Dict[str, Any]] = None,
     ):
         """Initialize data module.
 
@@ -42,12 +44,14 @@ class SensorDataModule:
             batch_size: Batch size for dataloaders
             num_workers: Number of worker processes
             max_samples: Max samples to use for each dataset (for quick tests)
+            shuffle: Optional shuffle configuration (e.g., block shuffling)
         """
         self.data_config = data_config
         self.transforms = transforms
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.max_samples = max_samples
+        self.shuffle_config = shuffle or {}
 
         # Extract config
         self.data_root = Path(data_config["root"])
@@ -165,10 +169,19 @@ class SensorDataModule:
         if self.train_dataset is None:
             raise RuntimeError("Call setup() before creating dataloaders")
 
+        shuffle_flag = True
+        sampler = None
+        strategy = self.shuffle_config.get("strategy")
+        if strategy == "block":
+            buffer_size = int(self.shuffle_config.get("block_size", 65536))
+            sampler = BlockShuffleSampler(self.train_dataset, block_size=buffer_size)
+            shuffle_flag = False
+
         return DataLoader(
             self.train_dataset,
             batch_size=self.batch_size,
-            shuffle=True,
+            shuffle=shuffle_flag,
+            sampler=sampler,
             num_workers=self.num_workers,
             pin_memory=torch.cuda.is_available(),
             persistent_workers=self.num_workers > 0

@@ -1,5 +1,7 @@
 """Tests for transform implementations."""
 
+from typing import Any, Dict
+
 import numpy as np
 import pytest
 
@@ -20,19 +22,35 @@ from airtrace.transforms import (
 
 
 class MockDataset:
-    """Mock dataset for testing transforms."""
+    """Mock dataset for testing transforms with deterministic samples."""
 
-    def __init__(self, num_samples=100, seq_len=50, dim=5):
+    def __init__(
+        self,
+        num_samples: int = 100,
+        seq_len: int = 50,
+        dim: int = 5,
+        target_len: int = 10,
+        seed: int = 0,
+    ) -> None:
         self.num_samples = num_samples
         self.seq_len = seq_len
         self.dim = dim
+        self.target_len = target_len
 
-    def __len__(self):
+        rng = np.random.default_rng(seed)
+        self._x_data = rng.standard_normal(
+            size=(num_samples, seq_len, dim), dtype=np.float32
+        )
+        self._y_data = rng.standard_normal(
+            size=(num_samples, target_len, dim), dtype=np.float32
+        )
+
+    def __len__(self) -> int:
         return self.num_samples
 
-    def __getitem__(self, idx):
-        x = np.random.randn(self.seq_len, self.dim).astype(np.float32)
-        y = np.random.randn(10, self.dim).astype(np.float32)
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        x = self._x_data[idx].copy()
+        y = self._y_data[idx].copy()
         meta = {"flight_id": f"flight_{idx}"}
         return {"x": x, "y": y, "meta": meta}
 

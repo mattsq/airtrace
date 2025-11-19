@@ -239,10 +239,34 @@ using NumPy 1.x cannot be run in NumPy 2.x` when running `airtrace` commands. Pi
 
 ---
 
+### 2025-11-19 Training Loop: Verbose progress stalls from RandomSampler
+
+**Discovered by**: gpt-5-codex session
+**Impact**: CLI training UX, Trainer `verbose_progress`
+
+`SensorDataModule.train_dataloader()` always instantiates the training `DataLoader`
+with `shuffle=True`, which means PyTorch attaches a `RandomSampler` that creates a
+`torch.randperm(len(dataset))` tensor every time a new epoch begins. When
+`train.verbose_progress=true`, the trainer wraps the loader in `tqdm` and waits for
+the sampler to finish generating that permutation before the progress bar can
+render, so any dataset with tens or hundreds of thousands of windows can appear
+to "hang" for a noticeable period at the start of each training/validation epoch.
+
+To confirm this, I replicated the synthetic cruise dataset 200× (≈291k windows)
+and measured the time to fetch the first batch with and without shuffling. The
+shuffled loader (which builds the `randperm`) took ~0.205s before the first batch
+arrived, while the ordered loader started in ~0.069s – the extra delay aligns with
+the sampler cost and matches the pause seen before tqdm renders in verbose mode.
+
+**Example/Code Reference**: `src/airtrace/data/datamodule.py` lines 168-193,
+shuffle timing script output `89a1ae†L1-L7`
+
+---
+
 ## Current State
 
-**Total learnings**: 7
-**Last updated**: 2026-03-10
+**Total learnings**: 8
+**Last updated**: 2025-11-19
 **Most active areas**: Project structure, configuration system, data pipeline, synthetic data, baseline models, model validation, dependency management
 
 ---
