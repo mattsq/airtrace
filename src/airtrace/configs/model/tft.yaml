@@ -3,7 +3,7 @@
 model:
   name: tft
   params:
-    hidden_size: 128
+    hidden_size: 80  # Reduced from 96 for ~300K params
     lstm_layers: 2
     num_heads: 4
     dropout: 0.1

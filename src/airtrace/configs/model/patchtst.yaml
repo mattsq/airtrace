@@ -5,9 +5,9 @@ model:
   params:
     patch_len: 16        # Length of each patch (subseries segment)
     stride: 8            # Stride between patches (overlap = patch_len - stride)
-    d_model: 128         # Model dimension
+    d_model: 96          # Reduced from 128 for ~250K params
     nhead: 8             # Number of attention heads (must divide d_model)
     num_layers: 3        # Number of transformer encoder layers
-    dim_feedforward: 256 # Dimension of feedforward network
+    dim_feedforward: 192 # Reduced from 256
     dropout: 0.1         # Dropout probability
     activation: "gelu"   # Activation function (relu, gelu)

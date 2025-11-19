@@ -6,10 +6,10 @@ model:
     exog_dim: 0              # Dimension of exogenous features (0 = no exogenous vars)
     patch_len: 16            # Length of each patch (subseries segment)
     stride: 8                # Stride between patches (overlap = patch_len - stride)
-    d_model: 128             # Model dimension
+    d_model: 64              # Reduced from 80 for ~300K params
     nhead: 8                 # Number of attention heads (must divide d_model)
-    num_layers: 3            # Number of transformer encoder layers
-    dim_feedforward: 512     # Dimension of feedforward network
+    num_layers: 2            # Reduced from 3
+    dim_feedforward: 192     # Reduced from 256
     dropout: 0.1             # Dropout probability
     activation: "gelu"       # Activation function (relu, gelu)
     num_global_tokens: 1     # Number of global endogenous tokens

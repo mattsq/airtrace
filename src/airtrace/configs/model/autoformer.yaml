@@ -3,12 +3,12 @@
 model:
   name: autoformer
   params:
-    d_model: 128
+    d_model: 96   # Reduced from 128 for ~250K params
     n_heads: 8
     e_layers: 2
     d_layers: 1
     moving_avg: 25
-    d_ff: 256
+    d_ff: 192  # Reduced from 256
     dropout: 0.1
     activation: "gelu"
     label_len: 24
