@@ -55,9 +55,15 @@ This guide walks you through training a timeseries model on your own data in Air
 If you want to test AirTrace before preparing your data:
 
 ```bash
-# Generate synthetic data
-airtrace train data=synthetic --dry-run  # Verify setup
-airtrace train data=synthetic  # Train a model
+# Generate synthetic cruise dataset (creates 20 flights by default)
+airtrace-generate-synthetic
+
+# Or generate with a specific config
+airtrace-generate-synthetic data=synthetic
+
+# Train a model on synthetic data
+airtrace train data=synthetic_cruise model=gru_ar --dry-run  # Verify setup
+airtrace train data=synthetic_cruise model=gru_ar train.epochs=10  # Quick training
 ```
 
 ### Working with Your Own Data
@@ -405,6 +411,11 @@ airtrace train exp=my_experiment
 airtrace --help
 airtrace --version
 
+# Generate synthetic data
+airtrace-generate-synthetic                           # Default config
+airtrace-generate-synthetic data=synthetic_cruise     # Specific config
+airtrace-generate-synthetic data=synthetic data.generation.n_flights=50
+
 # Validate data only
 airtrace train --data-check data=my_dataset
 
@@ -501,28 +512,58 @@ window:
 
 ### Synthetic Data Generation
 
-For testing and experimentation, AirTrace includes a physics-based synthetic data generator:
+For testing and experimentation, AirTrace includes a physics-based synthetic data generator that creates realistic aircraft cruise sensor readings:
 
 ```bash
-# Generate 20 synthetic cruise flights
-python src/scripts/generate_synthetic_data.py --n-flights 20 --output data/
+# Generate with default config (20 flights, synthetic_cruise)
+airtrace-generate-synthetic
 
-# Or use the Python API
+# Generate with specific data config
+airtrace-generate-synthetic data=synthetic_cruise
+
+# Override generation parameters
+airtrace-generate-synthetic data=synthetic_cruise data.generation.n_flights=50
+
+# Use different random seed
+airtrace-generate-synthetic data=synthetic seed=123
+
+# Combine multiple overrides
+airtrace-generate-synthetic \
+  data=synthetic_cruise \
+  data.generation.n_flights=100 \
+  data.generation.seed=42
+```
+
+**What gets created:**
+- `data/raw/` - Raw synthetic flight data
+- `data/interim/` - Cleaned, resampled timeseries
+- `data/processed/` - Flight data ready for windowing
+- `data/metadata/*_index.parquet` - Train/val/test window indices
+
+**Two available configs:**
+- `synthetic_cruise` - Long flights (1 hour), realistic cruise parameters
+- `synthetic` - Shorter flights (30 min), simpler parameters
+
+The generator produces physically plausible sensor relationships:
+- Fuel flow ↔ engine thrust (N1) ↔ aircraft weight
+- ISA standard atmosphere temperature model
+- Configurable turbulence and noise levels
+- Deterministic generation from seed for reproducibility
+
+**Python API (for custom scripts):**
+```python
 from airtrace.data.synthetic import create_synthetic_dataset
+from pathlib import Path
+
 splits = create_synthetic_dataset(
-    data_root="data/",
+    data_root=Path("data/"),
     n_flights=20,
-    seed=42
+    seed=42,
+    flight_id_prefix="my_synthetic"
 )
 ```
 
-The generator produces realistic aircraft cruise sensor readings with:
-- Physically plausible sensor relationships (fuel flow ↔ thrust ↔ weight)
-- ISA temperature model
-- Configurable turbulence and noise levels
-- Deterministic generation from seed
-
-See [Synthetic Data Documentation](docs/synthetic_data.md) for details.
+See [Synthetic Data Documentation](docs/synthetic_data.md) for details on the physics model.
 
 ## Model Registry
 

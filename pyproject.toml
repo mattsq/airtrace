@@ -53,7 +53,7 @@ dev = [
 
 [project.scripts]
 airtrace = "airtrace.cli:cli"
-airtrace-generate-synthetic = "airtrace.scripts.generate_synthetic_data:main_cli"
+airtrace-generate-synthetic = "airtrace.scripts.generate_synthetic_data:cli"
 
 [tool.setuptools.packages.find]
 where = ["src"]

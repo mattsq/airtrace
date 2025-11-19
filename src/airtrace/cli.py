@@ -377,22 +377,19 @@ def _print_data_guidance(data_config: DictConfig, missing_assets: List[Path]) ->
     if str(dataset_name).startswith("synthetic"):
         print(
             "\nSynthetic configs expect generated parquet index files. "
-            "Create them with the helper script, e.g.\n"
-            "  airtrace-generate-synthetic --use-config "
-            f"data={dataset_name}\n"
+            "Create them with the helper script:\n"
+            f"  airtrace-generate-synthetic data={dataset_name}\n"
             "  # or when running from a repo checkout:\n"
-            "  python src/scripts/generate_synthetic_data.py --use-config "
-            f"data={dataset_name}"
+            f"  python -m airtrace.scripts.generate_synthetic_data data={dataset_name}"
         )
     else:
         print(
             "\nPopulate the expected parquet index files under your data root. "
             "If you don't have real data on disk, generate the bundled synthetic "
             "cruise dataset with:\n"
-            "  airtrace-generate-synthetic --use-config data=synthetic_cruise\n"
-            "  # or when running from a repo checkout:\n"
-            "  python src/scripts/generate_synthetic_data.py --use-config "
-            "data=synthetic_cruise"
+            "  airtrace-generate-synthetic\n"
+            "  # or specify a specific synthetic config:\n"
+            "  airtrace-generate-synthetic data=synthetic_cruise"
         )
     print("Run with --data-check after updating your data to verify the configuration.")
 

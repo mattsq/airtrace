@@ -373,7 +373,8 @@ def create_synthetic_dataset(
     n_flights: int = 20,
     profile: Optional[CruiseProfile] = None,
     seed: Optional[int] = 42,
-    train_val_test_split: Tuple[float, float, float] = (0.7, 0.15, 0.15)
+    train_val_test_split: Tuple[float, float, float] = (0.7, 0.15, 0.15),
+    flight_id_prefix: str = "synthetic_cruise"
 ) -> Dict[str, List[str]]:
     """Create a complete synthetic dataset with train/val/test splits.
 
@@ -388,6 +389,7 @@ def create_synthetic_dataset(
         profile: CruiseProfile to use (None for defaults)
         seed: Random seed for reproducibility
         train_val_test_split: Tuple of (train, val, test) fractions
+        flight_id_prefix: Prefix for flight IDs (default: "synthetic_cruise")
 
     Returns:
         Dictionary with keys 'train', 'val', 'test' mapping to flight ID lists
@@ -400,7 +402,7 @@ def create_synthetic_dataset(
     flight_ids = generator.generate_dataset(
         n_flights=n_flights,
         profile=profile,
-        flight_id_prefix="synthetic_cruise"
+        flight_id_prefix=flight_id_prefix
     )
 
     # Split into train/val/test

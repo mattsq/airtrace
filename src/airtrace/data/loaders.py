@@ -75,7 +75,11 @@ class RawDataLoader:
                 values="value"
             )
 
-        # Ensure timestamp index
+        # Ensure timestamp is the index
+        if "timestamp" in raw_df.columns:
+            raw_df = raw_df.set_index("timestamp")
+
+        # Ensure timestamp index is DatetimeIndex
         if not isinstance(raw_df.index, pd.DatetimeIndex):
             raw_df.index = pd.to_datetime(raw_df.index)
 
@@ -164,8 +168,12 @@ class InterimDataProcessor:
 
             all_windows.append(windows_df)
 
-        # Combine all windows
-        index_df = pd.concat(all_windows, ignore_index=True)
+        # Combine all windows (handle empty case)
+        if all_windows:
+            index_df = pd.concat(all_windows, ignore_index=True)
+        else:
+            # Create empty index with correct schema
+            index_df = pd.DataFrame(columns=["flight_id", "start_idx", "end_idx"])
 
         # Save index
         index_path = self.metadata_dir / f"{output_name}_index.parquet"
