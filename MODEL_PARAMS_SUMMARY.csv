@@ -1,0 +1,29 @@
+Model Name,File Location,Config File,Model Class,Primary Params,Current Param Count (est),Target Tier,Target Param Count
+GRUARModel,src/airtrace/models/gru_ar.py,configs/model/gru_ar.yaml,GRUARModel,"hidden_size=128, num_layers=2",~100K,Tier 1,200-300K
+LSTMARModel,src/airtrace/models/lstm_ar.py,configs/model/lstm_ar.yaml,LSTMARModel,"hidden_size=128, num_layers=2",~200K,Tier 1,200-300K
+GRUSeq2SeqModel,src/airtrace/models/seq2seq.py,configs/model/gru_seq2seq.yaml,GRUSeq2SeqModel,"hidden_size=128, num_layers=2",~200K,Tier 1,200-300K
+LSTMSeq2SeqModel,src/airtrace/models/seq2seq.py,configs/model/lstm_seq2seq.yaml,LSTMSeq2SeqModel,"hidden_size=128, num_layers=2",~400K,Tier 2,500K-5M
+TCNModel,src/airtrace/models/tcn.py,configs/model/tcn.yaml,TCNModel,"num_channels=[64,128,128,256]",~105K,Tier 1,200-300K
+ModernTCNModel,src/airtrace/models/moderntcn.py,configs/model/moderntcn.yaml,ModernTCNModel,"hidden_channels=64, num_blocks=6",~30-40K,Tier 1,200-300K
+TransformerModel,src/airtrace/models/transformer.py,configs/model/transformer.yaml,TransformerModel,"d_model=128, nhead=8, num_layers=4, dim_ff=512",~270K,Tier 1,200-300K
+PatchTSTModel,src/airtrace/models/patchtst.py,configs/model/patchtst.yaml,PatchTSTModel,"d_model=128, nhead=8, num_layers=3, dim_ff=256",~170K,Tier 1,200-300K
+InformerModel,src/airtrace/models/informer.py,configs/model/informer.yaml,InformerModel,"d_model=128, nhead=4, e_layers=2, d_layers=1, ff_dim=256",~197K,Tier 1,200-300K
+AutoformerModel,src/airtrace/models/autoformer.py,configs/model/autoformer.yaml,AutoformerModel,"d_model=128, n_heads=8, e_layers=2, d_layers=1, d_ff=256",~230K,Tier 1,200-300K
+FEDformerModel,src/airtrace/models/fedformer.py,configs/model/fedformer.yaml,FEDformerModel,"d_model=128, n_heads=8, e_layers=2, d_layers=1, d_ff=256",~230K,Tier 1,200-300K
+CrossformerModel,src/airtrace/models/crossformer.py,configs/model/crossformer.yaml,CrossformerModel,"d_model=128, nhead=8, temporal_depth=2, spatial_depth=1",~160K,Tier 1,200-300K
+iTransformerModel,src/airtrace/models/itransformer.py,configs/model/itransformer.yaml,iTransformerModel,"d_model=512, nhead=8, num_layers=3, dim_ff=2048",~3.6M,Tier 2,500K-5M
+NonStationaryTransformerModel,src/airtrace/models/nonstationary_transformer.py,configs/model/nonstationary_transformer.yaml,NonStationaryTransformerModel,"d_model=128, nhead=8, num_layers=3, dim_ff=256",~287K,Tier 1,200-300K
+DLinearModel,src/airtrace/models/dlinear.py,configs/model/dlinear.yaml,DLinearModel,"seq_len dependent",~170,Tier 0,<50K
+NLinearModel,src/airtrace/models/dlinear.py,configs/model/nlinear.yaml,NLinearModel,"seq_len dependent",~600,Tier 0,<50K
+TimeMixerModel,src/airtrace/models/timemixer.py,configs/model/timemixer.yaml,TimeMixerModel,"d_model=64, num_layers=2, down_sampling_layers=3",~35K,Tier 1,200-300K
+NBeatsModel,src/airtrace/models/nbeats.py,configs/model/nbeats.yaml,NBeatsModel,"hidden_size=256, num_layers=4",~400-800K,Tier 1,200-300K
+CycleNetModel,src/airtrace/models/cyclenet.py,configs/model/cyclenet.yaml,CycleNetModel,"period_len=32, hidden_dim=256",~2M,Tier 2,500K-5M
+TimesNetModel,src/airtrace/models/timesnet.py,configs/model/timesnet.yaml,TimesNetModel,"d_model=64, num_layers=2, num_kernels=6",variable,Tier 1,200-300K
+TimeXerModel,src/airtrace/models/timexer.py,configs/model/timexer.yaml,TimeXerModel,"d_model=128, nhead=8, num_layers=3, dim_ff=512",variable,Tier 1,200-300K
+SOFTSModel,src/airtrace/models/softs.py,configs/model/softs.yaml,SOFTS,"hidden_dim=512, d_ff=512, e_layers=3",variable,Tier 1,200-300K
+TemporalFusionTransformer,src/airtrace/models/tft.py,configs/model/tft.yaml,TemporalFusionTransformer,"hidden_size=128, lstm_layers=2, num_heads=4",~150K,Tier 1,200-300K
+Mamba2Model,src/airtrace/models/mamba2.py,configs/model/mamba2.yaml,Mamba2Model,"embed_dim=512, state_dim=256, num_layers=8, ff_expansion=4",~16M,Tier 2,500K-5M
+MambaTSModel,src/airtrace/models/mambats.py,configs/model/mambats.yaml,MambaTSModel,"embed_dim=128, state_dim=16, num_layers=4, expand_factor=2",~145K,Tier 1,200-300K
+ChronosBoltModel,src/airtrace/models/chronos_bolt.py,configs/model/chronos_bolt.yaml,ChronosBoltModel,"Foundation model (frozen),embed_dim=512,num_blocks=8",~700M,Tier 3,Transfer Learning
+MoiraiModel,src/airtrace/models/moirai.py,configs/model/moirai.yaml,MoiraiModel,"Foundation model (frozen),embed_dim=256,num_layers=6",~700M,Tier 3,Transfer Learning
+LagLlamaModel,src/airtrace/models/lag_llama.py,configs/model/lag_llama.yaml,LagLlamaModel,"Foundation model (frozen),embed_dim=256,num_layers=6",~700M,Tier 3,Transfer Learning
