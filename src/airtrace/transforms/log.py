@@ -68,7 +68,19 @@ class LogTransform(Transform):
         self.is_fitted = True
         return self
 
-    def _apply_log(self, data: np.ndarray) -> np.ndarray:
+    def _get_min_values(self, data: np.ndarray, sensor_idx: Optional[int] = None) -> np.ndarray:
+        """Return minimum values aligned with the provided data slice."""
+
+        if self.min_values is None:
+            raise RuntimeError("Transform not fitted. Call fit() first.")
+
+        if sensor_idx is None:
+            return self.min_values
+
+        end_idx = sensor_idx + data.shape[1]
+        return self.min_values[sensor_idx:end_idx]
+
+    def _apply_log(self, data: np.ndarray, sensor_idx: Optional[int] = None) -> np.ndarray:
         """Apply logarithm with appropriate base.
 
         Args:
@@ -79,7 +91,8 @@ class LogTransform(Transform):
         """
         # Ensure positive values by subtracting min and adding offset
         # If data is already positive, min_values will be <= 0
-        adjusted = data - np.minimum(self.min_values, 0) + self.offset
+        min_values = np.minimum(self._get_min_values(data, sensor_idx), 0)
+        adjusted = data - min_values + self.offset
 
         if self.base == "natural":
             return np.log(adjusted)
@@ -90,7 +103,7 @@ class LogTransform(Transform):
         else:
             raise ValueError(f"Unknown base: {self.base}")
 
-    def _apply_exp(self, data: np.ndarray) -> np.ndarray:
+    def _apply_exp(self, data: np.ndarray, sensor_idx: Optional[int] = None) -> np.ndarray:
         """Apply exponential (inverse of log).
 
         Args:
@@ -109,7 +122,8 @@ class LogTransform(Transform):
             raise ValueError(f"Unknown base: {self.base}")
 
         # Reverse the offset adjustment
-        result = result - self.offset + np.minimum(self.min_values, 0)
+        min_values = np.minimum(self._get_min_values(data, sensor_idx), 0)
+        result = result - self.offset + min_values
         return result
 
     def __call__(
@@ -136,9 +150,13 @@ class LogTransform(Transform):
             x_copy = x.copy()
             y_copy = y.copy()
             for sensor_idx in self.sensors:
-                x_copy[:, sensor_idx] = self._apply_log(x[:, sensor_idx:sensor_idx+1]).squeeze()
+                x_copy[:, sensor_idx] = self._apply_log(
+                    x[:, sensor_idx : sensor_idx + 1], sensor_idx
+                ).squeeze()
                 if y.shape[1] > sensor_idx:
-                    y_copy[:, sensor_idx] = self._apply_log(y[:, sensor_idx:sensor_idx+1]).squeeze()
+                    y_copy[:, sensor_idx] = self._apply_log(
+                        y[:, sensor_idx : sensor_idx + 1], sensor_idx
+                    ).squeeze()
             x = x_copy
             y = y_copy
 
@@ -164,14 +182,18 @@ class LogTransform(Transform):
         else:
             x_copy = x.copy()
             for sensor_idx in self.sensors:
-                x_copy[:, sensor_idx] = self._apply_exp(x[:, sensor_idx:sensor_idx+1]).squeeze()
+                x_copy[:, sensor_idx] = self._apply_exp(
+                    x[:, sensor_idx : sensor_idx + 1], sensor_idx
+                ).squeeze()
             x = x_copy
 
             if y is not None:
                 y_copy = y.copy()
                 for sensor_idx in self.sensors:
                     if y.shape[1] > sensor_idx:
-                        y_copy[:, sensor_idx] = self._apply_exp(y[:, sensor_idx:sensor_idx+1]).squeeze()
+                        y_copy[:, sensor_idx] = self._apply_exp(
+                            y[:, sensor_idx : sensor_idx + 1], sensor_idx
+                        ).squeeze()
                 y = y_copy
 
         return x, y

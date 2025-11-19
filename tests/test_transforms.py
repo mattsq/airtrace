@@ -300,6 +300,110 @@ def test_log_invertibility():
     np.testing.assert_allclose(y_inv, y_orig, rtol=1e-3, atol=1e-3)
 
 
+def test_log_transform_global_min_values():
+    """LogTransform should use a single global minimum when per_sensor=False."""
+
+    class DeterministicDataset:
+        def __init__(self) -> None:
+            self._samples = [
+                {
+                    "x": np.array(
+                        [[-5.0, 2.0], [-4.0, -3.0], [1.0, 5.0]], dtype=np.float32
+                    ),
+                    "y": np.zeros((2, 2), dtype=np.float32),
+                    "meta": {},
+                }
+            ]
+
+        def __len__(self) -> int:
+            return len(self._samples)
+
+        def __getitem__(self, idx: int) -> Dict[str, Any]:
+            return self._samples[idx]
+
+    transform = LogTransform(base="10", per_sensor=False)
+    transform.fit(DeterministicDataset())
+
+    # All sensors should track the same minimum (-5.0)
+    np.testing.assert_allclose(transform.min_values, [-5.0, -5.0])
+
+    x = np.array([[0.0, 1.0], [2.0, 3.0]], dtype=np.float32)
+    y = np.array([[4.0, 5.0]], dtype=np.float32)
+    x_trans, y_trans, meta = transform(x, y, {})
+
+    assert meta["log_base"] == "10"
+    assert x_trans.shape == x.shape
+    assert y_trans.shape == y.shape
+
+
+def test_log_transform_selected_sensors_and_inverse_handles_missing_targets():
+    """Selected sensor paths should only touch available channels and invert cleanly."""
+
+    transform = LogTransform(base="2", sensors=[0, 2])
+    transform.fit(MockDataset(dim=3))
+
+    # Use deterministic minima to simplify validation
+    transform.min_values = np.array([-1.0, -0.5, -2.0], dtype=np.float32)
+
+    x = np.array(
+        [
+            [-0.5, 0.1, -1.5],
+            [0.0, -0.2, -1.0],
+            [0.5, 0.3, -0.75],
+            [0.75, 0.0, 0.5],
+        ],
+        dtype=np.float32,
+    )
+    # Target has only two sensors, so sensor index 2 should be ignored
+    y = np.array(
+        [[0.0, -0.25], [0.5, 0.25], [1.0, 0.0], [1.5, 0.5]], dtype=np.float32
+    )
+
+    x_trans, y_trans, meta = transform(x, y, {})
+
+    # Sensor 1 untouched, sensor 2 unchanged in y because it doesn't exist
+    np.testing.assert_allclose(x_trans[:, 1], x[:, 1])
+    np.testing.assert_allclose(y_trans[:, 1], y[:, 1])
+
+    # Inversion should restore original values even when y is omitted
+    x_inv, y_inv = transform.inverse(x_trans, None)
+    np.testing.assert_allclose(x_inv, x, rtol=1e-6, atol=1e-6)
+    assert y_inv is None
+
+
+def test_log_transform_invalid_base_errors_during_forward():
+    """An unknown logarithm base should raise a clear error when applying the transform."""
+
+    dataset = MockDataset()
+    transform = LogTransform(base="invalid")
+    transform.fit(dataset)
+
+    sample = dataset[0]
+    x = np.abs(sample["x"]) + 1.0
+    y = np.abs(sample["y"]) + 1.0
+
+    with pytest.raises(ValueError, match="Unknown base"):
+        transform(x, y, {})
+
+
+def test_log_transform_invalid_base_errors_during_inverse():
+    """Inverse should also guard against unsupported bases."""
+
+    dataset = MockDataset()
+    transform = LogTransform(base="natural")
+    transform.fit(dataset)
+
+    sample = dataset[0]
+    x = np.abs(sample["x"]) + 1.0
+    y = np.abs(sample["y"]) + 1.0
+    x_trans, y_trans, _ = transform(x, y, {})
+
+    transform.base = "mystery"
+
+    with pytest.raises(ValueError, match="Unknown base"):
+        transform.inverse(x_trans, y_trans)
+
+
 def test_smooth_transform():
     """Test smoothing transform."""
     dataset = MockDataset()
