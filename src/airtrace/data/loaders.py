@@ -168,8 +168,12 @@ class InterimDataProcessor:
 
             all_windows.append(windows_df)
 
-        # Combine all windows
-        index_df = pd.concat(all_windows, ignore_index=True)
+        # Combine all windows (handle empty case)
+        if all_windows:
+            index_df = pd.concat(all_windows, ignore_index=True)
+        else:
+            # Create empty index with correct schema
+            index_df = pd.DataFrame(columns=["flight_id", "start_idx", "end_idx"])
 
         # Save index
         index_path = self.metadata_dir / f"{output_name}_index.parquet"
