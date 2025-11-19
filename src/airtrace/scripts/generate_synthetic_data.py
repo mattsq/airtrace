@@ -96,6 +96,19 @@ def generate_from_config(config: DictConfig) -> None:
         )
     print(f"Processed {len(all_flights)} flights to interim format")
 
+    # Copy interim to processed (DataStore loads from processed directory)
+    print("\nCopying interim -> processed...")
+    processed_dir = data_root / "processed"
+    processed_dir.mkdir(exist_ok=True, parents=True)
+    interim_dir = data_root / "interim"
+
+    import shutil
+    for flight_id in all_flights:
+        src = interim_dir / f"{flight_id}.parquet"
+        dst = processed_dir / f"{flight_id}.parquet"
+        shutil.copy2(src, dst)
+    print(f"Copied {len(all_flights)} flights to processed format")
+
     # Create windows
     print("\nCreating sliding windows...")
     processor = InterimDataProcessor(data_root)
