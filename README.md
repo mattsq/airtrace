@@ -115,6 +115,101 @@ data/raw/flight_003.parquet
 
 **⚠️ Important:** If your CSV has timestamp as a regular column (not the index), `process_to_interim` will fail to resample correctly. Always ensure timestamp is the DataFrame index.
 
+#### Step 2: Ingest Your Data (Automated)
+
+**⭐ Recommended:** Use the `airtrace-ingest` CLI to automatically process your data in one command:
+
+```bash
+# Ingest from a directory of parquet files
+airtrace-ingest data/raw/my_flights/ --dataset-name my_dataset
+
+# Ingest from a single file
+airtrace-ingest data/raw/flights.parquet --dataset-name my_dataset
+
+# Customize window parameters and target sensors
+airtrace-ingest data/raw/my_flights/ \
+  --dataset-name my_dataset \
+  --input-len 512 \
+  --pred-len 64 \
+  --stride 16 \
+  --target-sensors fuel_flow,mach,n1
+
+# Resample irregular data to uniform rate
+airtrace-ingest data/raw/my_flights/ \
+  --dataset-name my_dataset \
+  --resample-rate 1S
+
+# Preview without creating files (dry run)
+airtrace-ingest data/raw/my_flights/ \
+  --dataset-name my_dataset \
+  --dry-run
+```
+
+**What `airtrace-ingest` does automatically:**
+1. ✅ Validates your data (detects sensors, timestamps, sampling rate)
+2. ✅ Processes flights (filters sensors, resamples if requested)
+3. ✅ Splits into train/val/test (default 70/15/15, customizable with `--split`)
+4. ✅ Generates sliding window indices
+5. ✅ Creates dataset config YAML → ready for `airtrace train`
+
+**Output:**
+```
+============================================================
+Dataset Ingestion Complete: my_dataset
+============================================================
+
+Files Created:
+  15 processed flight files (data/processed/)
+  3 window index files (data/metadata/)
+  1 config file (src/airtrace/configs/data/my_dataset.yaml)
+
+Data Summary:
+  Total flights: 15
+  Train flights: 10 (3,142 windows)
+  Val flights: 2 (673 windows)
+  Test flights: 3 (1,089 windows)
+
+Sensors (6):
+  fuel_flow, mach, altitude, oat, n1, weight
+
+Next Steps:
+  1. Verify config: src/airtrace/configs/data/my_dataset.yaml
+  2. Run training:
+     airtrace train data=my_dataset model=gru_ar task.name=one_step
+============================================================
+```
+
+**Advanced options:**
+```bash
+# Multi-flight file with flight ID column
+airtrace-ingest data/all_flights.parquet \
+  --dataset-name my_dataset \
+  --flight-id-column flight_number
+
+# Custom train/val/test split ratios
+airtrace-ingest data/raw/my_flights/ \
+  --dataset-name my_dataset \
+  --split 0.8,0.1,0.1 \
+  --seed 42
+
+# Specify timestamp column name (if not auto-detected)
+airtrace-ingest data/raw/my_flights/ \
+  --dataset-name my_dataset \
+  --timestamp-column time
+```
+
+After ingestion, verify your data:
+```bash
+airtrace train --data-check data=my_dataset
+```
+
+**Skip to Step 5** if using `airtrace-ingest`. The manual steps below are only needed for advanced customization.
+
+---
+
+#### Alternative: Manual Data Processing
+
+**Step 2 (Manual): Process Data to Interim Format
 #### Step 2: Process Data to Interim Format
 
 Convert raw data to clean, aligned timeseries:
@@ -165,7 +260,7 @@ for flight_id in ["flight_001", "flight_002"]:
     loader.process_to_interim(flight_id=flight_id, resample_rate="1S")
 ```
 
-#### Step 3: Create Windowed Datasets
+#### Step 3 (Manual): Create Windowed Datasets
 
 Generate sliding windows for model training:
 
@@ -206,7 +301,7 @@ This creates index files in `data/metadata/`:
 - `train_index.parquet` - Training windows
 - `val_index.parquet` - Validation windows
 
-#### Step 4: Create a Data Configuration
+#### Step 4 (Manual): Create a Data Configuration
 
 Create a config file for your dataset at `src/airtrace/configs/data/my_dataset.yaml`:
 
@@ -415,6 +510,10 @@ airtrace --version
 airtrace-generate-synthetic                           # Default config
 airtrace-generate-synthetic data=synthetic_cruise     # Specific config
 airtrace-generate-synthetic data=synthetic data.generation.n_flights=50
+n# Ingest your own data
+airtrace-ingest data/raw/my_flights/ --dataset-name my_dataset
+airtrace-ingest data/raw/flights.parquet --dataset-name my_dataset --target-sensors fuel_flow,mach,n1
+airtrace-ingest data/raw/my_flights/ --dataset-name my_dataset --resample-rate 1S --dry-run
 
 # Validate data only
 airtrace train --data-check data=my_dataset
