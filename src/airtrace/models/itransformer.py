@@ -134,6 +134,7 @@ class iTransformerModel(ARBaseModel):
         input_dim: int,
         output_dim: int,
         pred_len: int = 1,
+        horizon: Optional[int] = None,
         d_model: int = 512,
         nhead: int = 8,
         num_layers: int = 3,
@@ -148,7 +149,8 @@ class iTransformerModel(ARBaseModel):
         Args:
             input_dim: Dimension of input features (number of sensors)
             output_dim: Dimension of output predictions
-            pred_len: Prediction horizon length (1 for one-step, >1 for multi-step)
+            pred_len: Prediction window length (for data windowing)
+            horizon: Actual prediction horizon (defaults to pred_len if not provided)
             d_model: Model dimension (embedding size)
             nhead: Number of attention heads
             num_layers: Number of transformer encoder layers
@@ -161,6 +163,7 @@ class iTransformerModel(ARBaseModel):
         super().__init__(input_dim, output_dim, **kwargs)
 
         self.pred_len = pred_len
+        self.horizon = horizon if horizon is not None else pred_len
         self.d_model = d_model
         self.num_layers = num_layers
 
@@ -194,21 +197,21 @@ class iTransformerModel(ARBaseModel):
         )
 
         # Projection head to output
-        # Maps from (d_model, input_dim) -> (pred_len, output_dim)
+        # Maps from (d_model, input_dim) -> (horizon, output_dim)
         # Two options:
-        # 1. If output_dim == input_dim: project each variate to pred_len
+        # 1. If output_dim == input_dim: project each variate to horizon
         # 2. If output_dim != input_dim: need cross-variate projection
 
         if output_dim == input_dim:
             # Simple case: each input sensor predicts itself
-            # Project each variate's d_model representation to pred_len values
-            self.projection = nn.Linear(d_model, pred_len)
+            # Project each variate's d_model representation to horizon values
+            self.projection = nn.Linear(d_model, self.horizon)
         else:
             # Complex case: need to map input variates to output variates
             # First flatten, then project to output
             self.projection = nn.Sequential(
                 nn.Flatten(start_dim=1),  # [B, D, d_model] -> [B, D*d_model]
-                nn.Linear(input_dim * d_model, output_dim * pred_len)
+                nn.Linear(input_dim * d_model, output_dim * self.horizon)
             )
 
         self.output_dim_equals_input = (output_dim == input_dim)
@@ -264,19 +267,19 @@ class iTransformerModel(ARBaseModel):
 
         # Step 4: Project to output
         if self.output_dim_equals_input:
-            # Project each variate's d_model vector to pred_len predictions
-            # [B, D_in, d_model] -> [B, D_in, pred_len]
+            # Project each variate's d_model vector to horizon predictions
+            # [B, D_in, d_model] -> [B, D_in, horizon]
             out = self.projection(encoder_output)
 
-            # Permute to [B, pred_len, D_in]
+            # Permute to [B, horizon, D_in]
             preds = out.permute(0, 2, 1)
         else:
-            # Flatten and project to output_dim * pred_len
-            # [B, D_in, d_model] -> [B, D_in*d_model] -> [B, output_dim*pred_len]
+            # Flatten and project to output_dim * horizon
+            # [B, D_in, d_model] -> [B, D_in*d_model] -> [B, output_dim*horizon]
             out = self.projection(encoder_output)
 
-            # Reshape to [B, pred_len, output_dim]
-            preds = out.reshape(B, self.pred_len, self.output_dim)
+            # Reshape to [B, horizon, output_dim]
+            preds = out.reshape(B, self.horizon, self.output_dim)
 
         return {
             "preds": preds,

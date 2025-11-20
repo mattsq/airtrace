@@ -4,7 +4,8 @@ model:
   name: softs
   params:
     seq_len: ${data.window.input_len}    # Input sequence length
-    pred_len: ${data.window.pred_len}    # Prediction horizon
+    pred_len: ${data.window.pred_len}    # Prediction window length
+    horizon: ${task.horizon}              # Actual prediction horizon
     hidden_dim: 512                       # Model dimension (d_model)
     d_core: 128                           # STAR core compression dimension
     d_ff: 512                             # Feedforward network dimension
