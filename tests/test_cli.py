@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+import pandas as pd
 import torch
 from omegaconf import OmegaConf
 
@@ -172,3 +173,120 @@ def test_print_data_guidance_for_real_dataset(capsys):
 
     assert "Populate the expected parquet index files" in output
     assert "airtrace-generate-synthetic" in output
+
+
+@pytest.mark.parametrize("data_check", [False, True])
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize("use_checkpoint", [False, True])
+def test_train_accepts_all_flag_combinations(monkeypatch, tmp_path, data_check, dry_run, use_checkpoint):
+    data_root = tmp_path / "tiny-data"
+    processed_dir = data_root / "processed"
+    metadata_dir = data_root / "metadata"
+    processed_dir.mkdir(parents=True)
+    metadata_dir.mkdir(parents=True)
+
+    pd.DataFrame({"flight_id": ["f1"], "start_idx": [0], "end_idx": [3]}).to_parquet(
+        metadata_dir / "train.parquet"
+    )
+    pd.DataFrame({"flight_id": ["f1"], "start_idx": [1], "end_idx": [4]}).to_parquet(
+        metadata_dir / "val.parquet"
+    )
+    pd.DataFrame({"s1": [0.0, 0.1, 0.2, 0.3], "s2": [0.5, 0.4, 0.3, 0.2]}).to_parquet(
+        processed_dir / "f1.parquet"
+    )
+
+    class _TinyDataModule:
+        def __init__(self, data_config, transforms, batch_size, num_workers, shuffle=None):
+            self.data_config = data_config
+            self.transforms = transforms
+            self.batch_size = batch_size
+            self.num_workers = num_workers
+            self.shuffle = shuffle
+            self.in_dim = 2
+            self.out_dim = 1
+
+        def setup(self):
+            return None
+
+        def train_dataloader(self):
+            return [{"inputs": torch.zeros(2, 2), "targets": torch.zeros(2, 1)}]
+
+        def val_dataloader(self):
+            return [{"inputs": torch.zeros(2, 2), "targets": torch.zeros(2, 1)}]
+
+    class _TinyTask:
+        def training_step(self, batch, model):
+            _ = model(batch["inputs"])
+            return {"loss": torch.tensor(0.0)}
+
+        def validation_step(self, batch, model):
+            _ = model(batch["inputs"])
+            return {"loss": torch.tensor(0.0)}
+
+    built_models = []
+
+    def _build_model_stub(config, input_dim, output_dim):
+        model = torch.nn.Linear(input_dim, output_dim)
+        built_models.append(model)
+        return model
+
+    trainers = []
+
+    class _TinyTrainer:
+        def __init__(self, model, task, config, train_loader, val_loader):
+            trainers.append(self)
+            self.model = model
+            self.checkpoint_dir = Path(config.get("log_dir", "runs/debug")) / "checkpoints"
+            self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            self.log_dir = Path(config.get("log_dir", "runs/debug"))
+
+        def train(self):
+            return None
+
+    checkpoint_model = torch.nn.Linear(2, 1)
+    with torch.no_grad():
+        checkpoint_model.weight.fill_(0.5)
+        checkpoint_model.bias.fill_(0.25)
+
+    checkpoint_path = tmp_path / "checkpoint.ckpt"
+    if use_checkpoint:
+        torch.save({"model_state_dict": checkpoint_model.state_dict()}, checkpoint_path)
+
+    monkeypatch.setattr("airtrace.data.datamodule.SensorDataModule", _TinyDataModule)
+    monkeypatch.setattr("airtrace.models.registry.build_model", _build_model_stub)
+    monkeypatch.setattr("airtrace.tasks.registry.build_task", lambda _: _TinyTask())
+    monkeypatch.setattr("airtrace.training.trainer.Trainer", _TinyTrainer)
+
+    cfg = OmegaConf.create(
+        {
+            "mode": "train",
+            "exp_name": "tiny",
+            "seed": 123,
+            "data": {
+                "root": str(data_root),
+                "dataset_name": "tiny",
+                "sensors": {"use": ["s1", "s2"]},
+                "window": {"input_len": 2, "pred_len": 1, "stride": 1, "target_sensors": ["s2"]},
+                "train_index": "metadata/train.parquet",
+                "val_index": "metadata/val.parquet",
+            },
+            "train": {"batch_size": 2, "num_workers": 0, "epochs": 1},
+            "task": {"name": "tiny_task"},
+            "model": {"name": "tiny_model"},
+            "transforms": {},
+            "cli": {"data_check": data_check, "dry_run": dry_run},
+            "checkpoint": str(checkpoint_path) if use_checkpoint else "",
+            "log_dir": str(tmp_path / "logs"),
+        }
+    )
+
+    cli.train(cfg)
+
+    if data_check or dry_run:
+        assert not trainers
+        assert not built_models
+    else:
+        assert len(trainers) == 1
+        assert len(built_models) == 1
+        if use_checkpoint:
+            assert torch.allclose(built_models[-1].weight, checkpoint_model.weight)
