@@ -533,7 +533,7 @@ airtrace train --checkpoint path/to/checkpoint.ckpt exp=my_experiment
 
 ### Next Steps
 
-- **Explore models**: See [Model Registry](#model-registry) for 44+ available models
+- **Explore models**: See [Model Registry](#model-registry) for 45+ available models
 - **Custom components**: See [Adding New Components](#adding-new-components)
 - **Advanced features**: Check `docs/architecture.md` for design details
 - **Experiment tracking**: Review `docs/experiments.md` for best practices
@@ -666,7 +666,7 @@ See [Synthetic Data Documentation](docs/synthetic_data.md) for details on the ph
 
 ## Model Registry
 
-AirTrace includes 44 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
+AirTrace includes 45 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
 
 ### Recurrent Neural Networks
 
@@ -720,6 +720,7 @@ AirTrace includes 44 registered models spanning from simple baselines to sophist
 | Model Name | Class | Description |
 |------------|-------|-------------|
 | `timemixer` | `TimeMixerModel` | TimeMixer - decomposable multiscale mixing for time series forecasting with MLP architecture (ICLR 2024) |
+| `tsmixer` | `TSMixerModel` | TSMixer - all-MLP architecture with alternating time-mixing and feature-mixing operations for efficient multivariate forecasting (KDD 2023) |
 | `softs` | `SOFTS` | SOFTS - pure MLP-based multivariate forecaster using STAR (Aggregate-Redistribute) module with stochastic pooling for efficient channel mixing (NeurIPS 2024) |
 | `nbeats` | `NBeatsModel` | N-BEATS - residual stack of basis expansion blocks with interpretable trend/seasonality components (ICLR 2020) |
 | `cyclenet` | `CycleNetModel` | CycleNet - residual cycle forecasting with learnable periodic patterns for extreme efficiency (NeurIPS 2024 Spotlight) |

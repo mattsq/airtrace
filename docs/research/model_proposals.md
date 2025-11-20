@@ -18,7 +18,7 @@ This document tracks proposals for adding models to AirTrace based on recent lit
 - Baseline models: 16 statistical and simple baselines
 - Convolutions: TCN, ModernTCN (ICLR 2024 Spotlight), **TimesNet (ICLR 2023)**
 
-**Proposed**: ~11 significant architectures spanning 2023-2025, including latest foundation models and efficient architectures
+**Proposed**: ~10 significant architectures spanning 2023-2025, including latest foundation models and efficient architectures
 
 ---
 
@@ -305,39 +305,6 @@ Simple, efficient, non-sequential architectures that surprisingly compete with t
 
 ---
 
-### 7. TSMixer (KDD 2023) ⭐
-
-**Full Title**: TSMixer: An All-MLP Architecture for Time Series Forecasting
-**Venue**: KDD 2023
-**Paper**: https://arxiv.org/abs/2303.06053
-**Code**: https://github.com/google-research/google-research/tree/master/tsmixer
-
-#### Key Innovations
-
-1. **MLP-Mixer for Time Series**: Adapts vision MLP-Mixer to temporal data
-2. **Time-Mixing + Feature-Mixing**: Alternating MLPs for time/channel
-3. **All-MLP**: No attention, convolutions, or recurrence
-
-#### Why for AirTrace
-
-**Note**: Different from TimeMixer (already implemented in AirTrace):
-- TimeMixer = decomposition + multiscale mixing
-- TSMixer = pure MLP-Mixer adaptation from vision
-
-**Simple and Effective**:
-- Google Research backed
-- Competitive with transformers
-- Very efficient (MLP only)
-
-#### Implementation Guidance
-
-**Effort**: Low-Medium (200-300 lines) - MLP blocks with permutations.
-
-**References**:
-- Chen et al. (2023): "TSMixer: An All-MLP Architecture for Time Series Forecasting"
-
----
-
 ## Priority Tier 4: Frequency Domain & Novel Paradigms
 
 ### 8. FreTS (NeurIPS 2023) ⭐
@@ -481,9 +448,8 @@ Simple, efficient, non-sequential architectures that surprisingly compete with t
 **Rationale**: Simple, fast, often competitive
 
 6. **N-HiTS** (AAAI 2023) - Successor to N-BEATS - **Effort**: Medium
-7. **TSMixer** (KDD 2023) - Google-backed MLP-Mixer - **Effort**: Low-Medium
 
-**Recommendation**: **TSMixer** for quickest implementation.
+**Recommendation**: **N-HiTS** for improved N-BEATS baseline.
 
 ### Tier 4: Novel Paradigms (Research Interest)
 **Rationale**: Different inductive biases, worth exploring
@@ -521,9 +487,8 @@ Simple, efficient, non-sequential architectures that surprisingly compete with t
 ### Phase 2: Quick Wins & Baselines
 **Timeline**: 1-2 weeks each
 
-3. **TSMixer** - Quick MLP baseline
-4. **FreTS** - Quick frequency baseline
-5. **N-HiTS** - Successor to N-BEATS
+3. **FreTS** - Quick frequency baseline
+4. **N-HiTS** - Successor to N-BEATS
 
 **Deliverable**: Comprehensive MLP baseline suite
 
@@ -581,7 +546,6 @@ For each new model:
 
 ### MLP and Novel Paradigms (2023)
 - Challu et al. (2023): "N-HiTS: Neural Hierarchical Interpolation for Time Series Forecasting" (AAAI 2023)
-- Chen et al. (2023): "TSMixer: An All-MLP Architecture for Time Series Forecasting" (KDD 2023)
 - Yi et al. (2023): "FreTS: Frequency-domain MLPs are More Effective Learners in Time Series Forecasting" (NeurIPS 2023)
 - Woo et al. (2023): "ETSformer: Exponential Smoothing Transformers for Time-series Forecasting" (ICML 2023)
 
@@ -604,6 +568,7 @@ For each new model:
 
 The following models from previous versions of this document have been successfully implemented in AirTrace:
 
+- **TSMixer** (KDD 2023) - All-MLP architecture with time and feature mixing
 - **TimeXer** (NeurIPS 2024) - Exogenous variable handling
 - **SOFTS** (NeurIPS 2024) - Efficient multivariate with STAR module
 - **MambaTS** - Improved selective state space model
