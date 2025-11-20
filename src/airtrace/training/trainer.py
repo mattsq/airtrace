@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.nn.parameter import UninitializedParameter
 from torch.optim import SGD, Adam, AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR, StepLR
 from torch.utils.tensorboard import SummaryWriter
@@ -50,7 +51,11 @@ class Trainer:
         self.verbose_progress = train_config.get("verbose_progress", False)
 
         # Check if model has trainable parameters
-        self.has_trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad) > 0
+        # Skip UninitializedParameter (used by LazyLinear) - they'll be counted after first forward pass
+        self.has_trainable_params = sum(
+            p.numel() for p in self.model.parameters()
+            if p.requires_grad and not isinstance(p, UninitializedParameter)
+        ) > 0
 
         # Build optimizer and scheduler (only if model has trainable parameters)
         if self.has_trainable_params:

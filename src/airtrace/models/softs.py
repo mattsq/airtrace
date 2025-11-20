@@ -167,6 +167,7 @@ class SOFTS(ARBaseModel):
         output_dim: int,
         seq_len: int,
         pred_len: int,
+        horizon: Optional[int] = None,
         hidden_dim: int = 512,
         d_core: int = 128,
         d_ff: int = 512,
@@ -182,7 +183,8 @@ class SOFTS(ARBaseModel):
             input_dim: Number of input channels (D)
             output_dim: Number of output channels (typically same as input_dim)
             seq_len: Input sequence length (T)
-            pred_len: Prediction horizon
+            pred_len: Prediction window length (for data windowing)
+            horizon: Actual prediction horizon (defaults to pred_len if not provided)
             hidden_dim: Model dimension (d_model)
             d_core: STAR core compression dimension
             d_ff: Feedforward network dimension
@@ -195,6 +197,7 @@ class SOFTS(ARBaseModel):
 
         self.seq_len = seq_len
         self.pred_len = pred_len
+        self.horizon = horizon if horizon is not None else pred_len
         self.use_norm = use_norm
 
         # Channel-as-token embedding: [B, T, D] -> [B, D, d_model]
@@ -215,8 +218,8 @@ class SOFTS(ARBaseModel):
             ]
         )
 
-        # Projection head: [B, D, d_model] -> [B, D, pred_len] -> [B, pred_len, D]
-        self.projection = nn.Linear(hidden_dim, pred_len)
+        # Projection head: [B, D, d_model] -> [B, D, horizon] -> [B, horizon, D]
+        self.projection = nn.Linear(hidden_dim, self.horizon)
 
     def forward(
         self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
@@ -230,7 +233,7 @@ class SOFTS(ARBaseModel):
 
         Returns:
             Dictionary containing:
-                - preds: Predictions [B, pred_len, D_out]
+                - preds: Predictions [B, horizon, D_out]
                 - extras: Dictionary with normalization statistics
         """
         batch_size, seq_len, num_channels = x.shape
@@ -255,11 +258,11 @@ class SOFTS(ARBaseModel):
         for layer in self.encoder_layers:
             x = layer(x)
 
-        # Projection: [B, D, d_model] -> [B, D, pred_len]
-        x = self.projection(x)  # [B, D, pred_len]
+        # Projection: [B, D, d_model] -> [B, D, horizon]
+        x = self.projection(x)  # [B, D, horizon]
 
-        # Permute to output format: [B, pred_len, D]
-        x = x.permute(0, 2, 1)  # [B, pred_len, D]
+        # Permute to output format: [B, horizon, D]
+        x = x.permute(0, 2, 1)  # [B, horizon, D]
 
         # Ensure output matches expected channels
         x = x[:, :, : self.output_dim]
