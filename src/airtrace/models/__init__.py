@@ -48,6 +48,7 @@ from .timesnet import TimesNetModel
 from .timexer import TimeXerModel
 from .transformer import TransformerModel
 from .tft import TemporalFusionTransformer
+from .tsmixer import TSMixerModel
 
 __all__ = [
     "ARBaseModel",
@@ -68,6 +69,7 @@ __all__ = [
     "TimeMixerModel",
     "TimesNetModel",
     "TimeXerModel",
+    "TSMixerModel",
     "SOFTS",
     "NBeatsModel",
     "AutoformerModel",

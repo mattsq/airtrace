@@ -1,0 +1,10 @@
+# @package _global_
+
+model:
+  name: tsmixer
+  params:
+    seq_len: ${data.window.input_len}
+    pred_len: ${data.window.pred_len}
+    num_blocks: 4
+    hidden_dim: 256
+    dropout: 0.1
