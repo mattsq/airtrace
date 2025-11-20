@@ -27,6 +27,7 @@ from .crossformer import CrossformerModel
 from .cyclenet import CycleNetModel
 from .dlinear import DLinearModel, NLinearModel
 from .fedformer import FEDformerModel
+from .frets import FreTSModel
 from .gru_ar import GRUARModel
 from .itransformer import iTransformerModel
 from .lag_llama import LagLlamaModel
@@ -74,6 +75,7 @@ __all__ = [
     "NBeatsModel",
     "AutoformerModel",
     "FEDformerModel",
+    "FreTSModel",
     "CycleNetModel",
     "CrossformerModel",
     "ChronosBoltModel",

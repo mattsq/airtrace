@@ -9,16 +9,16 @@ This document tracks proposals for adding models to AirTrace based on recent lit
 
 ## Current Status
 
-**Implemented**: 44 models including:
+**Implemented**: 46 models including:
 - Modern attention architectures: PatchTST (ICLR 2023), iTransformer (ICLR 2024), Crossformer (ICLR 2023), TimeMixer (ICLR 2024), CycleNet (NeurIPS 2024), TFT, **TimeXer (NeurIPS 2024)**
 - Classic transformers: Informer (AAAI 2021), Autoformer (NeurIPS 2021), FEDformer (ICML 2022), Non-stationary Transformer (NeurIPS 2022)
 - Foundation models: Chronos-Bolt, Moirai, Mamba2, Lag-Llama, **MambaTS**
-- MLP/Basis expansion: N-BEATS (ICLR 2020), DLinear, NLinear, **SOFTS (NeurIPS 2024)**
+- MLP/Basis expansion: N-BEATS (ICLR 2020), DLinear, NLinear, **SOFTS (NeurIPS 2024)**, **FreTS (NeurIPS 2023)**
 - RNNs/Seq2Seq: GRU, LSTM variants
 - Baseline models: 16 statistical and simple baselines
 - Convolutions: TCN, ModernTCN (ICLR 2024 Spotlight), **TimesNet (ICLR 2023)**
 
-**Proposed**: ~10 significant architectures spanning 2023-2025, including latest foundation models and efficient architectures
+**Proposed**: ~9 significant architectures spanning 2023-2025, including latest foundation models and efficient architectures
 
 ---
 
@@ -307,37 +307,7 @@ Simple, efficient, non-sequential architectures that surprisingly compete with t
 
 ## Priority Tier 4: Frequency Domain & Novel Paradigms
 
-### 8. FreTS (NeurIPS 2023) ⭐
-
-**Full Title**: FreTS: Frequency-domain MLPs are More Effective Learners in Time Series Forecasting
-**Venue**: NeurIPS 2023
-**Paper**: https://arxiv.org/abs/2311.06184
-**Code**: https://github.com/aikunyi/FreTS
-
-#### Key Innovations
-
-1. **Frequency-domain MLPs**: Apply MLPs to Fourier coefficients
-2. **Low-Frequency Focus**: Most signal in low frequencies
-3. **Efficient**: FFT is fast, fewer parameters needed
-
-#### Why for Aircraft
-
-- Periodic engine/rotation signals
-- Efficient for smooth sensor data
-- Complements FEDformer (already implemented, uses frequency attention)
-
-#### Implementation Guidance
-
-**Effort**: Low-Medium (200-300 lines) - FFT + MLPs.
-
-**Note**: AirTrace already has FEDformer (frequency domain transformer). FreTS is simpler MLP alternative.
-
-**References**:
-- Yi et al. (2023): "FreTS: Frequency-domain MLPs are More Effective Learners in Time Series Forecasting"
-
----
-
-### 9. ETSformer (ICML 2023) ⭐
+### 8. ETSformer (ICML 2023) ⭐
 
 **Full Title**: ETSformer: Exponential Smoothing Transformers for Time-series Forecasting
 **Venue**: ICML 2023
@@ -454,10 +424,9 @@ Simple, efficient, non-sequential architectures that surprisingly compete with t
 ### Tier 4: Novel Paradigms (Research Interest)
 **Rationale**: Different inductive biases, worth exploring
 
-8. **FreTS** (NeurIPS 2023) - Frequency-domain MLPs - **Effort**: Low-Medium
-9. **ETSformer** (ICML 2023) - Classical + DL hybrid - **Effort**: Medium-High
+8. **ETSformer** (ICML 2023) - Classical + DL hybrid - **Effort**: Medium-High
 
-**Recommendation**: **FreTS** for quick frequency-domain baseline (complements FEDformer).
+**Recommendation**: **ETSformer** for interpretable classical-DL hybrid approach.
 
 ### Tier 5: Future Research (Long-term)
 **Rationale**: Requires significant infrastructure or immature tooling
@@ -487,16 +456,15 @@ Simple, efficient, non-sequential architectures that surprisingly compete with t
 ### Phase 2: Quick Wins & Baselines
 **Timeline**: 1-2 weeks each
 
-3. **FreTS** - Quick frequency baseline
-4. **N-HiTS** - Successor to N-BEATS
+3. **N-HiTS** - Successor to N-BEATS
 
 **Deliverable**: Comprehensive MLP baseline suite
 
 ### Phase 3: Research Exploration (Optional)
 **Timeline**: Variable
 
-6. **S-Mamba** - Simple Mamba variant
-7. **ETSformer** - Classical-DL hybrid
+4. **S-Mamba** - Simple Mamba variant
+5. **ETSformer** - Classical-DL hybrid
 
 **Deliverable**: Research papers, novel approaches
 
@@ -546,7 +514,6 @@ For each new model:
 
 ### MLP and Novel Paradigms (2023)
 - Challu et al. (2023): "N-HiTS: Neural Hierarchical Interpolation for Time Series Forecasting" (AAAI 2023)
-- Yi et al. (2023): "FreTS: Frequency-domain MLPs are More Effective Learners in Time Series Forecasting" (NeurIPS 2023)
 - Woo et al. (2023): "ETSformer: Exponential Smoothing Transformers for Time-series Forecasting" (ICML 2023)
 
 ### LLM-Based (2024)
@@ -568,6 +535,7 @@ For each new model:
 
 The following models from previous versions of this document have been successfully implemented in AirTrace:
 
+- **FreTS** (NeurIPS 2023) - Frequency-domain MLP with low-frequency focus
 - **TSMixer** (KDD 2023) - All-MLP architecture with time and feature mixing
 - **TimeXer** (NeurIPS 2024) - Exogenous variable handling
 - **SOFTS** (NeurIPS 2024) - Efficient multivariate with STAR module
