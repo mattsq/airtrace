@@ -421,7 +421,7 @@ def test_tsmixer_time_mixing():
 
     # Check that time-mixing MLP exists and has correct dimensions
     assert block.time_mlp[0].in_features == seq_len
-    assert block.time_mlp[2].out_features == seq_len
+    assert block.time_mlp[3].out_features == seq_len
 
 
 def test_tsmixer_feature_mixing():
@@ -444,7 +444,7 @@ def test_tsmixer_feature_mixing():
 
     # Check that feature-mixing MLP exists and has correct dimensions
     assert block.feature_mlp[0].in_features == feature_dim
-    assert block.feature_mlp[2].out_features == feature_dim
+    assert block.feature_mlp[3].out_features == feature_dim
 
 
 def test_tsmixer_temporal_projection():
