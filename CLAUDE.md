@@ -187,7 +187,10 @@ Example: `exp_001_gru_zscore_onestep`
 | Evaluation metrics | `src/airtrace/evaluation/` | `metrics.py` |
 | Entry point (CLI) | `src/scripts/` | `train.py`, `eval.py` |
 | Dependencies | Root | `pyproject.toml` |
-| Documentation | `docs/` | `architecture.md`, `data_format.md` |
+| Documentation | `docs/` | `index.md`, `architecture.md`, `data_format.md` |
+| Model-specific docs | `docs/models/` | `chronos_bolt.md`, `softs_*.md` |
+| Research/proposals | `docs/research/` | `model_proposals.md` |
+| Archived docs | `docs/archive/` | Completed implementation reports |
 
 ### "How do I...?"
 

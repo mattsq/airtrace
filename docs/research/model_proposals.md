@@ -2,25 +2,23 @@
 
 This document tracks proposals for adding models to AirTrace based on recent literature and identified gaps in the model registry.
 
-**Last Updated**: 2025-11-17
-**Status**: Proposed, awaiting implementation decision
+**Last Updated**: 2025-11-20
+**Status**: Active research proposals
 
 ---
 
 ## Current Status
 
-**Implemented**: 41 models including:
-- Modern attention architectures: PatchTST (ICLR 2023), iTransformer (ICLR 2024), Crossformer (ICLR 2023), TimeMixer (ICLR 2024), CycleNet (NeurIPS 2024), TFT
+**Implemented**: 44 models including:
+- Modern attention architectures: PatchTST (ICLR 2023), iTransformer (ICLR 2024), Crossformer (ICLR 2023), TimeMixer (ICLR 2024), CycleNet (NeurIPS 2024), TFT, **TimeXer (NeurIPS 2024)**
 - Classic transformers: Informer (AAAI 2021), Autoformer (NeurIPS 2021), FEDformer (ICML 2022), Non-stationary Transformer (NeurIPS 2022)
-- Foundation models: Chronos-Bolt, Moirai, Mamba2, Lag-Llama
-- MLP/Basis expansion: N-BEATS (ICLR 2020), DLinear, NLinear
+- Foundation models: Chronos-Bolt, Moirai, Mamba2, Lag-Llama, **MambaTS**
+- MLP/Basis expansion: N-BEATS (ICLR 2020), DLinear, NLinear, **SOFTS (NeurIPS 2024)**
 - RNNs/Seq2Seq: GRU, LSTM variants
 - Baseline models: 16 statistical and simple baselines
-- Convolutions: TCN, ModernTCN (ICLR 2024 Spotlight)
+- Convolutions: TCN, ModernTCN (ICLR 2024 Spotlight), **TimesNet (ICLR 2023)**
 
-**Recent Additions** (since last update): TFT, ModernTCN, DLinear, NLinear, Informer, Autoformer, FEDformer, Non-stationary Transformer, Crossformer, N-BEATS
-
-**Missing**: ~20 significant architectures spanning 2023-2025, including latest foundation models and efficient architectures
+**Proposed**: ~11 significant architectures spanning 2023-2025, including latest foundation models and efficient architectures
 
 ---
 
@@ -193,8 +191,6 @@ class TimerModel(ARBaseModel):
 
 ---
 
-## Priority Tier 2: Recent NeurIPS/ICML Models (2024)
-
 ### 4. MOMENT (ICML 2024) ⭐⭐
 
 **Full Title**: MOMENT: A Family of Open Time-series Foundation Models
@@ -238,142 +234,9 @@ class TimerModel(ARBaseModel):
 
 ---
 
-### 5. TimeXer (NeurIPS 2024) ⭐⭐
+## Priority Tier 2: State Space Models (Mamba Variants)
 
-**Full Title**: TimeXer: Empowering Transformers for Time Series Forecasting with Exogenous Variables
-**Venue**: NeurIPS 2024
-**Paper**: https://arxiv.org/abs/2402.19072
-**Code**: https://github.com/thuml/TimeXer
-**OpenReview**: https://openreview.net/forum?id=INAeUQ04lT
-
-#### Key Innovations
-
-1. **Exogenous Variable Handling**: Explicit architecture for external/contextual features
-2. **Dual Representation**: Patch-level for endogenous, variate-level for exogenous
-3. **Global Endogenous Tokens**: Bridge between endogenous and exogenous information
-4. **SOTA Performance**: Consistent state-of-the-art on 12 benchmarks
-
-#### Why for Aircraft Sensors
-
-**Perfect for Aircraft Context**:
-- **Endogenous**: Sensor readings we want to predict (fuel flow, thrust, temperature)
-- **Exogenous**: Known external factors (flight plan, weather, altitude schedule, weight)
-- Many aircraft forecasting problems inherently involve exogenous inputs
-- TimeXer explicitly models this distinction (unlike models that treat all as endogenous)
-
-**Architecture Fit**:
-- Patch-wise self-attention for temporal sensor patterns
-- Variate-wise cross-attention for exogenous context
-- Interpretable bridging mechanism
-
-#### Implementation Guidance
-
-**Effort**: Medium-High (500-600 lines)
-
-**Key Components**:
-1. Patch embedding for endogenous time series
-2. Variate embedding for exogenous variables
-3. Global endogenous token mechanism
-4. Dual attention: self-attention + cross-attention
-
-**Integration**:
-- Extend dataset to provide exogenous features (flight plan, weather)
-- Modify task interface to pass both endogenous and exogenous inputs
-- Store attention patterns for interpretability
-
-**References**:
-- Wang et al. (2024): "TimeXer: Empowering Transformers for Time Series Forecasting with Exogenous Variables"
-
----
-
-### 6. SOFTS (NeurIPS 2024) ⭐⭐
-
-**Full Title**: SOFTS: Efficient Multivariate Time Series Forecasting with Series-Core Fusion
-**Venue**: NeurIPS 2024
-**Paper**: https://arxiv.org/abs/2404.14197
-**Code**: https://github.com/Secilia-Cxy/SOFTS
-**OpenReview**: https://openreview.net/forum?id=89AUi5L1uA
-
-#### Key Innovations
-
-1. **STar Aggregate-Redistribute (STAR) Module**: Novel channel mixing mechanism
-2. **Global Core Representation**: Aggregates all series into shared representation
-3. **Linear Complexity**: Efficient MLP-based architecture
-4. **Channel Interaction**: Balances independence (for drift) with correlation modeling
-
-#### Why for AirTrace
-
-**Efficient Multivariate**:
-- Addresses weakness of channel-independent models (ignores correlations)
-- Addresses weakness of attention models (quadratic complexity, noise)
-- STAR module: aggregate → global core → redistribute to series
-- Perfect for aircraft sensors with known physical correlations
-
-**Computational Efficiency**:
-- Pure MLP (no attention)
-- Linear complexity
-- Fast training and inference
-
-#### Implementation Guidance
-
-**Effort**: Medium (300-400 lines)
-
-**Key Components**:
-1. STAR module (aggregate, core, redistribute)
-2. Temporal mixing blocks
-3. Residual connections
-
-**References**:
-- Han et al. (2024): "SOFTS: Efficient Multivariate Time Series Forecasting with Series-Core Fusion"
-
----
-
-## Priority Tier 3: State Space Models (Mamba Variants)
-
-### 7. MambaTS ⭐⭐
-
-**Full Title**: MambaTS: Improved Selective State Space Models for Long-term Time Series Forecasting
-**Venue**: arXiv 2024 (May)
-**Paper**: https://arxiv.org/abs/2405.16440
-**Code**: Available on GitHub
-
-#### Key Innovations
-
-1. **Variable Scan along Time (VST)**: Segments variables into patches, organizes tokens at same timestep
-2. **Temporal Mamba Block (TMB)**: Removes causal convolution (unnecessary for LTSF)
-3. **Linear Complexity**: Global dependency modeling with O(L) complexity
-4. **SOTA Results**: New state-of-the-art on multiple long-term forecasting benchmarks
-
-#### Why for AirTrace
-
-**Efficiency**:
-- Linear complexity vs. quadratic for transformers
-- Suitable for long flight sequences
-- Global dependency modeling (like attention) without the cost
-
-**Mamba Advantages**:
-- Selective state space model (S6)
-- Hardware-efficient implementation
-- Captures long-range dependencies better than RNNs
-
-#### Implementation Guidance
-
-**Effort**: Medium-High (400-500 lines)
-
-**Key Components**:
-1. Variable scanning mechanism
-2. Temporal Mamba blocks (based on Mamba2 architecture)
-3. Patching logic
-4. Integration with existing Mamba2 in AirTrace
-
-**Note**: AirTrace already has Mamba2; MambaTS is a time-series-specific adaptation.
-
-**References**:
-- MambaTS Authors (2024): "MambaTS: Improved Selective State Space Models for Long-term Time Series Forecasting"
-
----
-
-### 8. S-Mamba (Simple-Mamba) ⭐
+### 5. S-Mamba (Simple-Mamba) ⭐
 
 **Full Title**: Is Mamba Effective for Time Series Forecasting?
 **Venue**: Neurocomputing, Volume 619 (February 2025)
@@ -390,12 +253,12 @@ class TimerModel(ARBaseModel):
 #### Why for AirTrace
 
 **Simplicity**:
-- Easier to implement than MambaTS
+- Easier to implement than MambaTS (already implemented)
 - Good baseline for Mamba-based approaches
 - Demonstrates Mamba effectiveness empirically
 
 **Comparison Point**:
-- Simpler than AirTrace's current Mamba2
+- Simpler than AirTrace's current Mamba2 and MambaTS
 - Could be faster for some tasks
 - Different design philosophy (simple vs. complex)
 
@@ -408,11 +271,11 @@ class TimerModel(ARBaseModel):
 
 ---
 
-## Priority Tier 4: Pure MLP Models
+## Priority Tier 3: Pure MLP Models
 
 Simple, efficient, non-sequential architectures that surprisingly compete with transformers.
 
-### 9. N-HiTS (AAAI 2023) ⭐
+### 6. N-HiTS (AAAI 2023) ⭐
 
 **Full Title**: N-HiTS: Neural Hierarchical Interpolation for Time Series Forecasting
 **Venue**: AAAI 2023
@@ -442,7 +305,7 @@ Simple, efficient, non-sequential architectures that surprisingly compete with t
 
 ---
 
-### 10. TSMixer (KDD 2023) ⭐
+### 7. TSMixer (KDD 2023) ⭐
 
 **Full Title**: TSMixer: An All-MLP Architecture for Time Series Forecasting
 **Venue**: KDD 2023
@@ -475,37 +338,9 @@ Simple, efficient, non-sequential architectures that surprisingly compete with t
 
 ---
 
-## Priority Tier 5: Frequency Domain & Novel Paradigms
+## Priority Tier 4: Frequency Domain & Novel Paradigms
 
-### 11. TimesNet (ICLR 2023)
-
-**Full Title**: TimesNet: Temporal 2D-Variation Modeling for General Time Series Analysis
-**Venue**: ICLR 2023
-**Paper**: https://arxiv.org/abs/2210.02186
-**Code**: https://github.com/thuml/TimesNet
-
-#### Key Innovations
-
-1. **2D Vision Backbone**: Treats time series as 2D images via period-based reshaping
-2. **Intraperiod and Interperiod Variation**: Captures both within-cycle and across-cycle patterns
-3. **Parameter Sharing**: Applies same 2D conv across all periods
-
-#### Why for Aircraft
-
-- Engine cycles, rotation periods
-- Novel inductive bias different from sequential models
-- General architecture (works for forecasting, classification, anomaly detection)
-
-#### Implementation Guidance
-
-**Effort**: Medium-High (400-500 lines) - Period detection + 2D convolutions.
-
-**References**:
-- Wu et al. (2023): "TimesNet: Temporal 2D-Variation Modeling for General Time Series Analysis"
-
----
-
-### 12. FreTS (NeurIPS 2023)
+### 8. FreTS (NeurIPS 2023) ⭐
 
 **Full Title**: FreTS: Frequency-domain MLPs are More Effective Learners in Time Series Forecasting
 **Venue**: NeurIPS 2023
@@ -535,7 +370,7 @@ Simple, efficient, non-sequential architectures that surprisingly compete with t
 
 ---
 
-### 13. ETSformer (ICML 2023)
+### 9. ETSformer (ICML 2023) ⭐
 
 **Full Title**: ETSformer: Exponential Smoothing Transformers for Time-series Forecasting
 **Venue**: ICML 2023
@@ -563,9 +398,9 @@ Simple, efficient, non-sequential architectures that surprisingly compete with t
 
 ---
 
-## Priority Tier 6: LLM-Based Models (Future Research)
+## Priority Tier 5: LLM-Based Models (Future Research)
 
-### 14. TIME-LLM (ICLR 2024)
+### 10. TIME-LLM (ICLR 2024) ⭐
 
 **Full Title**: Time-LLM: Time Series Forecasting by Reprogramming Large Language Models
 **Venue**: ICLR 2024
@@ -601,7 +436,7 @@ Simple, efficient, non-sequential architectures that surprisingly compete with t
 
 ---
 
-### 15. TEMPO (ICLR 2024)
+### 11. TEMPO (ICLR 2024) ⭐
 
 **Full Title**: TEMPO: Prompt-based Generative Pre-trained Transformer for Time Series Forecasting
 **Venue**: ICLR 2024
@@ -637,38 +472,32 @@ Simple, efficient, non-sequential architectures that surprisingly compete with t
 
 **Recommendation**: Start with **Timer** or **TimesFM** for easiest integration, then explore Time-MoE.
 
-### Tier 2: Specialized Architectures (High Value)
-**Rationale**: Address specific needs (exogenous vars, efficiency, multivariate)
+### Tier 2: State Space Models
+**Rationale**: Alternative to existing Mamba2/MambaTS implementations
 
-5. **TimeXer** (NeurIPS 2024) - Exogenous variable handling - **Effort**: Medium-High
-6. **SOFTS** (NeurIPS 2024) - Efficient multivariate, linear complexity - **Effort**: Medium
-7. **MambaTS** - State space alternative to Mamba2 - **Effort**: Medium-High
-8. **S-Mamba** - Simple Mamba baseline - **Effort**: Low-Medium
-
-**Recommendation**: **TimeXer** if planning to use flight plan/weather data. **SOFTS** for efficient multivariate.
+5. **S-Mamba** - Simple Mamba baseline - **Effort**: Low-Medium
 
 ### Tier 3: MLP Baselines (Quick Wins)
 **Rationale**: Simple, fast, often competitive
 
-9. **N-HiTS** (AAAI 2023) - Successor to N-BEATS - **Effort**: Medium
-10. **TSMixer** (KDD 2023) - Google-backed MLP-Mixer - **Effort**: Low-Medium
+6. **N-HiTS** (AAAI 2023) - Successor to N-BEATS - **Effort**: Medium
+7. **TSMixer** (KDD 2023) - Google-backed MLP-Mixer - **Effort**: Low-Medium
 
 **Recommendation**: **TSMixer** for quickest implementation.
 
 ### Tier 4: Novel Paradigms (Research Interest)
 **Rationale**: Different inductive biases, worth exploring
 
-11. **TimesNet** (ICLR 2023) - 2D vision approach - **Effort**: Medium-High
-12. **FreTS** (NeurIPS 2023) - Frequency-domain MLPs - **Effort**: Low-Medium
-13. **ETSformer** (ICML 2023) - Classical + DL hybrid - **Effort**: Medium-High
+8. **FreTS** (NeurIPS 2023) - Frequency-domain MLPs - **Effort**: Low-Medium
+9. **ETSformer** (ICML 2023) - Classical + DL hybrid - **Effort**: Medium-High
 
 **Recommendation**: **FreTS** for quick frequency-domain baseline (complements FEDformer).
 
 ### Tier 5: Future Research (Long-term)
 **Rationale**: Requires significant infrastructure or immature tooling
 
-14. **TIME-LLM** (ICLR 2024) - LLM-based forecasting
-15. **TEMPO** (ICLR 2024) - Prompt-based foundation model
+10. **TIME-LLM** (ICLR 2024) - LLM-based forecasting
+11. **TEMPO** (ICLR 2024) - Prompt-based foundation model
 
 **Recommendation**: Monitor development, wait for community implementations to mature.
 
@@ -689,36 +518,24 @@ Simple, efficient, non-sequential architectures that surprisingly compete with t
    - Academic rigor, reproducible
    - **Deliverable**: Research comparison point
 
-### Phase 2: Specialized Needs (If Applicable)
-**Timeline**: 2-4 weeks each
-
-3. **TimeXer** - If using exogenous variables (flight plan, weather)
-   - Extend dataset for exogenous features
-   - **Deliverable**: Exogenous-aware forecasting
-
-4. **SOFTS** - If multivariate efficiency is critical
-   - Fast training/inference
-   - **Deliverable**: Efficient multivariate baseline
-
-### Phase 3: Quick Wins & Baselines
+### Phase 2: Quick Wins & Baselines
 **Timeline**: 1-2 weeks each
 
-5. **TSMixer** - Quick MLP baseline
-6. **FreTS** - Quick frequency baseline
-7. **N-HiTS** - Successor to N-BEATS
+3. **TSMixer** - Quick MLP baseline
+4. **FreTS** - Quick frequency baseline
+5. **N-HiTS** - Successor to N-BEATS
 
 **Deliverable**: Comprehensive MLP baseline suite
 
-### Phase 4: Research Exploration (Optional)
+### Phase 3: Research Exploration (Optional)
 **Timeline**: Variable
 
-8. **MambaTS** - Time series-specific Mamba adaptation
-9. **TimesNet** - 2D vision approach
-10. **ETSformer** - Classical-DL hybrid
+6. **S-Mamba** - Simple Mamba variant
+7. **ETSformer** - Classical-DL hybrid
 
 **Deliverable**: Research papers, novel approaches
 
-### Phase 5: Future (Monitor)
+### Phase 4: Future (Monitor)
 **Timeline**: TBD
 
 - **Time-MoE** - When compute infrastructure ready (or use smaller checkpoints)
@@ -759,16 +576,12 @@ For each new model:
 - Das et al. (2024): "A decoder-only foundation model for time-series forecasting" (ICML 2024, Google)
 - Goswami et al. (2024): "MOMENT: A Family of Open Time-series Foundation Models" (ICML 2024)
 
-### Recent Architectures (2024)
-- Wang et al. (2024): "TimeXer: Empowering Transformers for Time Series Forecasting with Exogenous Variables" (NeurIPS 2024)
-- Han et al. (2024): "SOFTS: Efficient Multivariate Time Series Forecasting with Series-Core Fusion" (NeurIPS 2024)
-- MambaTS Authors (2024): "MambaTS: Improved Selective State Space Models for Long-term Time Series Forecasting"
+### State Space Models (2024-2025)
 - S-Mamba Authors (2024): "Is Mamba Effective for Time Series Forecasting?" (Neurocomputing 2025)
 
 ### MLP and Novel Paradigms (2023)
 - Challu et al. (2023): "N-HiTS: Neural Hierarchical Interpolation for Time Series Forecasting" (AAAI 2023)
 - Chen et al. (2023): "TSMixer: An All-MLP Architecture for Time Series Forecasting" (KDD 2023)
-- Wu et al. (2023): "TimesNet: Temporal 2D-Variation Modeling for General Time Series Analysis" (ICLR 2023)
 - Yi et al. (2023): "FreTS: Frequency-domain MLPs are More Effective Learners in Time Series Forecasting" (NeurIPS 2023)
 - Woo et al. (2023): "ETSformer: Exponential Smoothing Transformers for Time-series Forecasting" (ICML 2023)
 
@@ -781,42 +594,28 @@ For each new model:
 - Timer/OpenLTM: https://github.com/thuml/Large-Time-Series-Model
 - TimesFM: https://github.com/google-research/timesfm
 - MOMENT: https://github.com/moment-timeseries-foundation-model/moment
-- TimeXer: https://github.com/thuml/TimeXer
-- SOFTS: https://github.com/Secilia-Cxy/SOFTS
-- Time-Series-Library: https://github.com/thuml/Time-Series-Library
+- S-D-Mamba: https://github.com/wzhwzhwzh0921/S-D-Mamba
 - NeuralForecast: https://github.com/Nixtla/neuralforecast
+- Time-Series-Library: https://github.com/thuml/Time-Series-Library
 
 ---
 
-## Notes
+## Recently Implemented Models
 
-### Models Removed (Now Implemented in AirTrace)
-- TFT (Temporal Fusion Transformer)
-- ModernTCN
-- DLinear / NLinear
-- Informer
-- Autoformer
-- FEDformer
-- Non-stationary Transformer
-- Crossformer
-- N-BEATS
+The following models from previous versions of this document have been successfully implemented in AirTrace:
 
-### Previously Implemented Foundation Models
-- Chronos-Bolt
-- Moirai
-- Mamba2
-- Lag-Llama
+- **TimeXer** (NeurIPS 2024) - Exogenous variable handling
+- **SOFTS** (NeurIPS 2024) - Efficient multivariate with STAR module
+- **MambaTS** - Improved selective state space model
+- **TimesNet** (ICLR 2023) - 2D vision backbone for time series
+- **TFT** (Temporal Fusion Transformer)
+- **ModernTCN** (ICLR 2024 Spotlight)
+- **DLinear / NLinear**
+- **Informer** (AAAI 2021)
+- **Autoformer** (NeurIPS 2021)
+- **FEDformer** (ICML 2022)
+- **Non-stationary Transformer** (NeurIPS 2022)
+- **Crossformer** (ICLR 2023)
+- **N-BEATS** (ICLR 2020)
 
-### Key Priorities
-1. **Foundation Models First**: Timer, TimesFM, MOMENT offer immediate value with pre-trained checkpoints
-2. **Interpretability**: Essential for safety-critical aviation applications
-3. **Efficiency**: Consider computational constraints for potential onboard deployment
-4. **Reproducibility**: All proposed models have public code and reproducible results
-5. **Exogenous Variables**: TimeXer is unique in handling external contextual features (flight plan, weather)
-
-### Implementation Philosophy
-- Start with foundation models (zero-shot baseline)
-- Add specialized architectures as needed (exogenous vars, efficiency)
-- Fill gaps with quick MLP baselines
-- Explore novel paradigms for research
-- Monitor LLM-based approaches for future integration
+See [Model Registry](../../README.md#model-registry) for complete list of implemented models.
