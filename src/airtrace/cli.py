@@ -228,6 +228,71 @@ def evaluate(cfg: DictConfig):
     print("=" * 80)
 
 
+def export_onnx(cfg: DictConfig):
+    """Export a trained model to ONNX format.
+
+    Args:
+        cfg: Hydra configuration
+    """
+    from airtrace.export import ONNXExporter
+
+    print("=" * 80)
+    print("ONNX Export")
+    print("=" * 80)
+
+    # Get checkpoint path
+    checkpoint_path = _require_checkpoint(cfg)
+
+    # Get export options from CLI or config
+    cli_opts = cfg.get("cli", {})
+    output_path = Path(cli_opts.get("output", "model.onnx"))
+    end_to_end = cli_opts.get("end_to_end", False)
+    batch_size = cli_opts.get("batch_size", 1)
+    sequence_length = cli_opts.get("sequence_length", None)
+    verify = cli_opts.get("verify", True)
+    opset_version = cli_opts.get("opset_version", 14)
+
+    print(f"Checkpoint: {checkpoint_path}")
+    print(f"Output: {output_path}")
+
+    # Create exporter from checkpoint
+    print("\nLoading checkpoint...")
+    try:
+        exporter = ONNXExporter.from_checkpoint(checkpoint_path)
+    except Exception as e:
+        print(f"Error loading checkpoint: {e}")
+        sys.exit(1)
+
+    # Export model
+    try:
+        exported_files = exporter.export(
+            output_path=output_path,
+            end_to_end=end_to_end,
+            batch_size=batch_size,
+            sequence_length=sequence_length,
+            opset_version=opset_version,
+            verbose=True,
+        )
+    except Exception as e:
+        print(f"Error during export: {e}")
+        sys.exit(1)
+
+    # Verify export if requested
+    if verify:
+        try:
+            exporter.verify_export(
+                onnx_path=exported_files["onnx_model"],
+                end_to_end=end_to_end,
+                verbose=True,
+            )
+        except Exception as e:
+            print(f"Warning: Could not verify export: {e}")
+
+    print("\n" + "=" * 80)
+    print("Export Complete!")
+    print("=" * 80)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     description = textwrap.dedent(
         """AirTrace command-line interface. Subcommands map to Hydra overrides and
@@ -269,6 +334,26 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_eval_flags(eval_parser)
 
+    export_parser = subparsers.add_parser(
+        "export",
+        help="Export a trained model to various formats",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
+    # Add subcommands for export (currently only ONNX)
+    export_subparsers = export_parser.add_subparsers(
+        dest="export_format",
+        title="export formats",
+        metavar="format",
+    )
+
+    onnx_parser = export_subparsers.add_parser(
+        "onnx",
+        help="Export to ONNX format",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    _add_export_onnx_flags(onnx_parser)
+
     parser.set_defaults(command="train")
     return parser
 
@@ -300,6 +385,48 @@ def _add_eval_flags(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_export_onnx_flags(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--checkpoint",
+        type=str,
+        required=True,
+        help="Path to the checkpoint file to export",
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default="model.onnx",
+        help="Output path for the ONNX model (default: model.onnx)",
+    )
+    parser.add_argument(
+        "--end-to-end",
+        action="store_true",
+        help="Export end-to-end model with preprocessing and postprocessing",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=1,
+        help="Batch size for dummy input (default: 1)",
+    )
+    parser.add_argument(
+        "--sequence-length",
+        type=int,
+        help="Sequence length for input (inferred from config if not specified)",
+    )
+    parser.add_argument(
+        "--no-verify",
+        action="store_true",
+        help="Skip verification of ONNX export",
+    )
+    parser.add_argument(
+        "--opset-version",
+        type=int,
+        default=14,
+        help="ONNX opset version (default: 14)",
+    )
+
+
 def prepare_hydra_overrides(argv: Iterable[str]) -> List[str]:
     """Convert CLI arguments into Hydra override strings."""
 
@@ -307,16 +434,44 @@ def prepare_hydra_overrides(argv: Iterable[str]) -> List[str]:
     args, overrides = parser.parse_known_args(list(argv))
 
     command = args.command or "train"
-    hydra_overrides = [f"mode={command}"]
 
-    if getattr(args, "checkpoint", None):
-        hydra_overrides.append(f"checkpoint={args.checkpoint}")
+    # Handle export command specially
+    if command == "export":
+        export_format = getattr(args, "export_format", None)
+        if not export_format:
+            print("Error: No export format specified. Use 'airtrace export onnx ...'")
+            sys.exit(1)
+        hydra_overrides = [f"mode=export"]
+        hydra_overrides.append(f"cli.export_format={export_format}")
 
-    if getattr(args, "data_check", False):
-        hydra_overrides.append("cli.data_check=true")
+        # Add export-specific flags
+        if getattr(args, "checkpoint", None):
+            hydra_overrides.append(f"checkpoint={args.checkpoint}")
+        if getattr(args, "output", None):
+            hydra_overrides.append(f"cli.output={args.output}")
+        if getattr(args, "end_to_end", False):
+            hydra_overrides.append("cli.end_to_end=true")
+        if getattr(args, "batch_size", None):
+            hydra_overrides.append(f"cli.batch_size={args.batch_size}")
+        if getattr(args, "sequence_length", None):
+            hydra_overrides.append(f"cli.sequence_length={args.sequence_length}")
+        if getattr(args, "no_verify", False):
+            hydra_overrides.append("cli.verify=false")
+        else:
+            hydra_overrides.append("cli.verify=true")
+        if getattr(args, "opset_version", None):
+            hydra_overrides.append(f"cli.opset_version={args.opset_version}")
+    else:
+        hydra_overrides = [f"mode={command}"]
 
-    if getattr(args, "dry_run", False):
-        hydra_overrides.append("cli.dry_run=true")
+        if getattr(args, "checkpoint", None):
+            hydra_overrides.append(f"checkpoint={args.checkpoint}")
+
+        if getattr(args, "data_check", False):
+            hydra_overrides.append("cli.data_check=true")
+
+        if getattr(args, "dry_run", False):
+            hydra_overrides.append("cli.dry_run=true")
 
     hydra_overrides.extend(overrides)
     return hydra_overrides
@@ -432,8 +587,15 @@ def main(cfg: DictConfig):
         train(cfg)
     elif mode == "eval":
         evaluate(cfg)
+    elif mode == "export":
+        export_format = cfg.cli.get("export_format", "onnx")
+        if export_format == "onnx":
+            export_onnx(cfg)
+        else:
+            print(f"Error: Unknown export format '{export_format}'.")
+            sys.exit(1)
     else:
-        print(f"Error: Unknown mode '{mode}'. Use 'train' or 'eval'.")
+        print(f"Error: Unknown mode '{mode}'. Use 'train', 'eval', or 'export'.")
         sys.exit(1)
 
 
