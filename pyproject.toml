@@ -49,6 +49,8 @@ dev = [
     "ipython>=8.14.0",
     "jupyter>=1.0.0",
     "jupyterlab>=4.0.0",
+    "onnxscript>=0.1.0",  # Required for torch.onnx.export
+    "onnxruntime>=1.16.0",  # Required for ONNX model verification
 ]
 
 [project.scripts]
