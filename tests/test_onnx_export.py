@@ -22,6 +22,21 @@ from airtrace.export.end_to_end_model import (
 )
 
 
+# Check if ONNX export is available
+try:
+    import onnxscript  # noqa: F401
+    ONNX_AVAILABLE = True
+except ImportError:
+    ONNX_AVAILABLE = False
+
+
+# Skip marker for tests that require ONNX
+requires_onnx = pytest.mark.skipif(
+    not ONNX_AVAILABLE,
+    reason="onnxscript not installed (required for torch.onnx.export)"
+)
+
+
 class DummyModel(nn.Module):
     """Dummy model for testing."""
 
@@ -481,6 +496,7 @@ class TestModelOnlyWrapper:
 class TestONNXExport:
     """Tests for ONNX export functionality."""
 
+    @requires_onnx
     def test_export_model_only(self):
         """Test exporting model without transforms."""
         from airtrace.export import ONNXExporter
@@ -512,6 +528,7 @@ class TestONNXExport:
             assert "metadata" in exported_files
             assert "config" in exported_files
 
+    @requires_onnx
     def test_export_with_transforms(self):
         """Test exporting model with transforms."""
         from airtrace.export import ONNXExporter
@@ -552,6 +569,7 @@ class TestONNXExport:
             assert output_path.exists()
             assert "onnx_model" in exported_files
 
+    @requires_onnx
     def test_export_metadata(self):
         """Test that metadata is correctly saved."""
         from airtrace.export import ONNXExporter
