@@ -9,7 +9,10 @@ import numpy as np
 from omegaconf import DictConfig, OmegaConf
 
 from .end_to_end_model import EndToEndModel, ModelOnlyWrapper
-from .transform_wrappers import create_inverse_transform_pipeline
+from .transform_wrappers import (
+    create_forward_transform_pipeline,
+    create_inverse_transform_pipeline,
+)
 
 
 class ONNXExporter:
@@ -206,18 +209,21 @@ class ONNXExporter:
 
         # Prepare model for export
         if end_to_end and self.transform_stats:
+            # Create forward transform pipeline for preprocessing
+            forward_transforms = create_forward_transform_pipeline(self.transform_stats)
+
             # Create inverse transform pipeline for postprocessing
             inverse_transforms = create_inverse_transform_pipeline(self.transform_stats)
 
             # Wrap model with transforms
             export_model = EndToEndModel(
                 model=self.model,
-                preprocess=None,  # Currently we don't export preprocessing
+                preprocess=forward_transforms,
                 postprocess=inverse_transforms,
             )
 
             if verbose:
-                print("  Mode: End-to-end (model + inverse transforms)")
+                print("  Mode: End-to-end (preprocessing + model + postprocessing)")
         else:
             # Export model only, wrapped to return tensor instead of dict
             export_model = ModelOnlyWrapper(self.model)

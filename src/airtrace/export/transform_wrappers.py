@@ -132,12 +132,17 @@ class TransformCompose(nn.Module):
         return x
 
 
-def create_transform_wrapper(transform_stats: Dict[str, Any], transform_class_name: str) -> Optional[nn.Module]:
+def create_transform_wrapper(
+    transform_stats: Dict[str, Any],
+    transform_class_name: str,
+    use_x_scaler: bool = False
+) -> Optional[nn.Module]:
     """Create a PyTorch wrapper for a transform from its statistics.
 
     Args:
         transform_stats: Dictionary containing transform statistics
         transform_class_name: Name of the transform class (e.g., 'ZScoreTransform_0')
+        use_x_scaler: If True, use scaler_x (for preprocessing inputs), else scaler_y (for postprocessing outputs)
 
     Returns:
         PyTorch nn.Module wrapper or None if transform is not supported
@@ -146,9 +151,10 @@ def create_transform_wrapper(transform_stats: Dict[str, Any], transform_class_na
     base_name = transform_class_name.rsplit('_', 1)[0]
 
     if base_name == 'ZScoreTransform':
-        # For y-only transforms (typical for predictions), we only need the y scaler
-        mean = transform_stats.get('scaler_y_mean')
-        scale = transform_stats.get('scaler_y_scale')
+        # Choose appropriate scaler based on use case
+        prefix = 'scaler_x' if use_x_scaler else 'scaler_y'
+        mean = transform_stats.get(f'{prefix}_mean')
+        scale = transform_stats.get(f'{prefix}_scale')
 
         if mean is None or scale is None:
             return None
@@ -157,10 +163,9 @@ def create_transform_wrapper(transform_stats: Dict[str, Any], transform_class_na
 
     elif base_name == 'RobustScalerTransform':
         # For robust scaler, sklearn stores center_ and scale_
-        # We need to extract these from the transform stats
-        # Note: This may need adjustment based on actual stats structure
-        center = transform_stats.get('scaler_y_center')
-        scale = transform_stats.get('scaler_y_scale')
+        prefix = 'scaler_x' if use_x_scaler else 'scaler_y'
+        center = transform_stats.get(f'{prefix}_center')
+        scale = transform_stats.get(f'{prefix}_scale')
 
         if center is None or scale is None:
             return None
@@ -172,22 +177,65 @@ def create_transform_wrapper(transform_stats: Dict[str, Any], transform_class_na
         return None
 
 
-def create_inverse_transform_pipeline(transform_stats: Dict[str, Any]) -> nn.Module:
-    """Create a PyTorch module that applies inverse transforms.
+def _extract_transform_index(transform_name: str) -> int:
+    """Extract the numeric index from a transform name.
+
+    Args:
+        transform_name: Transform name like 'ZScoreTransform_0'
+
+    Returns:
+        The numeric index
+    """
+    try:
+        return int(transform_name.rsplit('_', 1)[1])
+    except (ValueError, IndexError):
+        return 0
+
+
+def create_forward_transform_pipeline(transform_stats: Dict[str, Any]) -> nn.Module:
+    """Create a PyTorch module that applies forward transforms for preprocessing.
 
     Args:
         transform_stats: Dictionary mapping transform names to their statistics
+                        (keys should be in the format 'TransformName_N' where N is the order)
 
     Returns:
-        PyTorch nn.Module that applies inverse transforms in reverse order
+        PyTorch nn.Module that applies forward transforms in pipeline order
     """
     wrappers = []
 
-    # Sort transform keys to maintain order
-    sorted_keys = sorted(transform_stats.keys())
+    # Sort by the numeric index to preserve pipeline order (not alphabetically!)
+    sorted_keys = sorted(transform_stats.keys(), key=_extract_transform_index)
 
     for key in sorted_keys:
-        wrapper = create_transform_wrapper(transform_stats[key], key)
+        wrapper = create_transform_wrapper(transform_stats[key], key, use_x_scaler=True)
+        if wrapper is not None:
+            wrappers.append(wrapper)
+
+    if not wrappers:
+        # Return identity module if no transforms
+        return nn.Identity()
+
+    return TransformCompose(wrappers)
+
+
+def create_inverse_transform_pipeline(transform_stats: Dict[str, Any]) -> nn.Module:
+    """Create a PyTorch module that applies inverse transforms for postprocessing.
+
+    Args:
+        transform_stats: Dictionary mapping transform names to their statistics
+                        (keys should be in the format 'TransformName_N' where N is the order)
+
+    Returns:
+        PyTorch nn.Module that applies inverse transforms in reverse pipeline order
+    """
+    wrappers = []
+
+    # Sort by the numeric index to preserve pipeline order (not alphabetically!)
+    sorted_keys = sorted(transform_stats.keys(), key=_extract_transform_index)
+
+    for key in sorted_keys:
+        wrapper = create_transform_wrapper(transform_stats[key], key, use_x_scaler=False)
         if wrapper is not None:
             wrappers.append(wrapper)
 

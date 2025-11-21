@@ -31,16 +31,21 @@ airtrace export onnx --checkpoint runs/exp_001/checkpoints/best.ckpt --output mo
 
 ### 2. End-to-End Export
 
-Exports a complete pipeline including the model AND inverse transforms for postprocessing.
+Exports a complete pipeline including preprocessing, the model, AND postprocessing (inverse transforms).
 
-**Use case**: When you want predictions automatically converted back to the original scale.
+**Use case**: When you want a standalone model that accepts raw sensor data and returns predictions in the original scale.
 
 ```bash
 airtrace export onnx --checkpoint runs/exp_001/checkpoints/best.ckpt --output model.onnx --end-to-end
 ```
 
+**Pipeline flow:**
+1. **Preprocessing**: Applies forward transforms (e.g., z-score normalization) to raw inputs
+2. **Model inference**: Runs the PyTorch model on preprocessed data
+3. **Postprocessing**: Applies inverse transforms to convert predictions back to original scale
+
 **Outputs**:
-- `model.onnx` - Complete ONNX model (includes model + inverse transforms)
+- `model.onnx` - Complete ONNX model (preprocessing + model + postprocessing)
 - `model.config.yaml` - Full training configuration
 - `model.metadata.json` - Input/output shape information
 
@@ -140,12 +145,16 @@ import numpy as np
 # Load ONNX model
 session = ort.InferenceSession("model.onnx")
 
-# Your input data [batch_size, sequence_length, n_features]
-# No preprocessing needed - model handles everything!
-input_data = np.random.randn(1, 100, 15).astype(np.float32)
+# Your RAW input data [batch_size, sequence_length, n_features]
+# No preprocessing needed - model handles normalization internally!
+raw_sensor_data = np.random.randn(1, 100, 15).astype(np.float32)
 
 # Run inference
-outputs = session.run(None, {"input": input_data, "context": None})
+# The ONNX model will:
+# 1. Apply preprocessing (e.g., z-score normalization)
+# 2. Run the model
+# 3. Apply inverse transforms to get predictions in original scale
+outputs = session.run(None, {"input": raw_sensor_data, "context": None})
 predictions = outputs[0]  # Already in original scale!
 ```
 

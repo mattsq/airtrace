@@ -1,5 +1,13 @@
 """Export utilities for AirTrace models."""
 
 from .onnx_exporter import ONNXExporter
+from .transform_wrappers import (
+    create_forward_transform_pipeline,
+    create_inverse_transform_pipeline,
+)
 
-__all__ = ["ONNXExporter"]
+__all__ = [
+    "ONNXExporter",
+    "create_forward_transform_pipeline",
+    "create_inverse_transform_pipeline",
+]

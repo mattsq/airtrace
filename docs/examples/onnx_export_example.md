@@ -145,18 +145,22 @@ def main():
 
     print(f"Expected input shape: {metadata['input_shape']}")
 
-    # Create sample input (replace with your actual data)
+    # Create sample RAW input (replace with your actual sensor data)
+    # This should be your raw, unnormalized sensor readings
     batch_size = 1
     seq_length = 100
     n_features = 15
-    input_data = np.random.randn(batch_size, seq_length, n_features).astype(np.float32)
+    raw_sensor_data = np.random.randn(batch_size, seq_length, n_features).astype(np.float32)
 
-    print(f"\nInput shape: {input_data.shape}")
+    print(f"\nInput shape: {raw_sensor_data.shape}")
 
-    # Run inference (no preprocessing needed!)
+    # Run inference - the model handles ALL preprocessing internally!
+    # 1. Applies z-score normalization (or other transforms)
+    # 2. Runs the model
+    # 3. Applies inverse transforms
     outputs = session.run(
         None,
-        {"input": input_data, "context": None}
+        {"input": raw_sensor_data, "context": None}
     )
     predictions = outputs[0]
 
