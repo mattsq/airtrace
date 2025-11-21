@@ -59,7 +59,11 @@ class EndToEndModel(nn.Module):
             preds = model_output
 
         # Postprocess predictions back to original scale
-        preds_original_scale = self.postprocess(preds)
+        # Use inverse method for denormalization, fallback to forward if not available
+        if hasattr(self.postprocess, 'inverse'):
+            preds_original_scale = self.postprocess.inverse(preds)
+        else:
+            preds_original_scale = self.postprocess(preds)
 
         return preds_original_scale
 

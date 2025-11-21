@@ -408,6 +408,47 @@ class TestEndToEndModel:
 
         assert not torch.allclose(e2e_output, no_preprocess_output, atol=1e-5)
 
+    def test_postprocessing_calls_inverse_not_forward(self):
+        """Test that postprocessing uses inverse() method for denormalization, not forward()."""
+        model = DummyModel(input_dim=3, output_dim=3)
+
+        # Create postprocessing with specific mean/std
+        output_mean = np.array([10.0, 20.0, 30.0])
+        output_std = np.array([2.0, 4.0, 6.0])
+        postprocess = ZScoreWrapper(mean=output_mean, std=output_std)
+
+        end_to_end = EndToEndModel(
+            model=model,
+            preprocess=None,
+            postprocess=postprocess,
+        )
+
+        # Use a simple input
+        x = torch.zeros(1, 1, 3)  # All zeros
+
+        # Get model output (with all-zero input, the linear layer will produce some output)
+        model.eval()
+        with torch.no_grad():
+            model_preds = model(x, None)["preds"]
+
+        # Get end-to-end output
+        end_to_end.eval()
+        with torch.no_grad():
+            e2e_output = end_to_end(x, None)
+
+        # The end-to-end output should be: model_preds * std + mean (inverse transform)
+        # NOT: (model_preds - mean) / std (forward transform)
+        expected_inverse = model_preds * torch.from_numpy(output_std).float() + torch.from_numpy(output_mean).float()
+        wrong_forward = (model_preds - torch.from_numpy(output_mean).float()) / (torch.from_numpy(output_std).float() + 1e-8)
+
+        # Verify it matches inverse transform
+        assert torch.allclose(e2e_output, expected_inverse, atol=1e-5), \
+            "Postprocessing should apply inverse transform (denormalization)"
+
+        # Verify it does NOT match forward transform (would be the bug)
+        assert not torch.allclose(e2e_output, wrong_forward, atol=1e-5), \
+            "Postprocessing should NOT apply forward transform (normalization)"
+
 
 class TestModelOnlyWrapper:
     """Tests for ModelOnlyWrapper."""

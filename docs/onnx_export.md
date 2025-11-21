@@ -253,16 +253,18 @@ def load_transform_stats(stats_path):
         return json.load(f)
 
 def apply_zscore_transform(data, stats):
-    """Apply z-score normalization."""
+    """Apply z-score normalization with numerical stability."""
     mean = np.array(stats['scaler_x_mean'])
     std = np.array(stats['scaler_x_scale'])
-    return (data - mean) / std
+    epsilon = 1e-8  # Matches ZScoreWrapper.epsilon for numerical stability
+    return (data - mean) / (std + epsilon)
 
 def apply_inverse_zscore(data, stats):
-    """Apply inverse z-score normalization."""
+    """Apply inverse z-score normalization with numerical stability."""
     mean = np.array(stats['scaler_y_mean'])
     std = np.array(stats['scaler_y_scale'])
-    return data * std + mean
+    epsilon = 1e-8  # Matches ZScoreWrapper.epsilon for numerical stability
+    return data * (std + epsilon) + mean
 
 # Usage
 stats = load_transform_stats("model.transform_stats.json")

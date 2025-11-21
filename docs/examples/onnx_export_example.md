@@ -66,19 +66,21 @@ def load_transform_stats(path):
 
 
 def preprocess(data, stats):
-    """Apply z-score normalization."""
+    """Apply z-score normalization with numerical stability."""
     transform = stats.get('ZScoreTransform_0', {})
     mean = np.array(transform['scaler_x_mean'])
     std = np.array(transform['scaler_x_scale'])
-    return (data - mean) / (std + 1e-8)
+    epsilon = 1e-8  # Matches ZScoreWrapper.epsilon for numerical stability
+    return (data - mean) / (std + epsilon)
 
 
 def postprocess(predictions, stats):
-    """Apply inverse z-score normalization."""
+    """Apply inverse z-score normalization with numerical stability."""
     transform = stats.get('ZScoreTransform_0', {})
     mean = np.array(transform['scaler_y_mean'])
     std = np.array(transform['scaler_y_scale'])
-    return predictions * (std + 1e-8) + mean
+    epsilon = 1e-8  # Matches ZScoreWrapper.epsilon for numerical stability
+    return predictions * (std + epsilon) + mean
 
 
 def main():

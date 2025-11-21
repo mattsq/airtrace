@@ -282,6 +282,7 @@ def export_onnx(cfg: DictConfig):
         try:
             exporter.verify_export(
                 onnx_path=exported_files["onnx_model"],
+                end_to_end=end_to_end,
                 verbose=True,
             )
         except Exception as e:

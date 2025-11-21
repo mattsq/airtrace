@@ -340,6 +340,7 @@ class ONNXExporter:
     def verify_export(
         self,
         onnx_path: Path,
+        end_to_end: bool = False,
         num_samples: int = 5,
         tolerance: float = 1e-5,
         verbose: bool = True,
@@ -348,6 +349,7 @@ class ONNXExporter:
 
         Args:
             onnx_path: Path to the exported ONNX model
+            end_to_end: Whether the export was end-to-end (with transforms)
             num_samples: Number of random samples to test
             tolerance: Numerical tolerance for comparison
             verbose: Whether to print verification results
@@ -373,18 +375,31 @@ class ONNXExporter:
         data_config = self.config.get("data", {})
         sequence_length = data_config.get("window_size_in", 100)
 
+        # Create the same wrapped model that was exported for fair comparison
+        if end_to_end and self.transform_stats:
+            # Recreate the end-to-end wrapped model
+            forward_transforms = create_forward_transform_pipeline(self.transform_stats)
+            inverse_transforms = create_inverse_transform_pipeline(self.transform_stats)
+            pytorch_model = EndToEndModel(
+                model=self.model,
+                preprocess=forward_transforms,
+                postprocess=inverse_transforms,
+            )
+        else:
+            # Use ModelOnlyWrapper (extracts "preds" from dict)
+            pytorch_model = ModelOnlyWrapper(self.model)
+
+        pytorch_model.eval()
+
         # Test with multiple random inputs
         passed = True
         for i in range(num_samples):
             # Generate random input
             dummy_input = torch.randn(1, sequence_length, input_dim)
 
-            # PyTorch inference
-            self.model.eval()
+            # PyTorch inference with wrapped model
             with torch.no_grad():
-                torch_output = self.model(dummy_input, None)
-                if isinstance(torch_output, dict):
-                    torch_output = torch_output["preds"]
+                torch_output = pytorch_model(dummy_input, None)
                 torch_output = torch_output.numpy()
 
             # ONNX inference
