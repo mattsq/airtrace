@@ -478,10 +478,6 @@ class TestModelOnlyWrapper:
         assert isinstance(output, torch.Tensor)
 
 
-@pytest.mark.skipif(
-    not torch.onnx.is_onnx_available(),
-    reason="ONNX export not available"
-)
 class TestONNXExport:
     """Tests for ONNX export functionality."""
 
