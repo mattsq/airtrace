@@ -1,0 +1,15 @@
+# @package _global_
+
+model:
+  name: frets
+  params:
+    seq_len: ${data.window.input_len}
+    pred_len: ${data.window.pred_len}
+    num_freqs: null  # Auto: seq_len // 2 + 1, or specify lower for efficiency
+    d_model: 64
+    hidden_dim: 128
+    num_layers: 2
+    dropout: 0.1
+    activation: "gelu"
+    channel_independence: false
+    normalize_fft: true

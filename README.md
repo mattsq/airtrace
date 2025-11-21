@@ -666,7 +666,7 @@ See [Synthetic Data Documentation](docs/synthetic_data.md) for details on the ph
 
 ## Model Registry
 
-AirTrace includes 45 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
+AirTrace includes 46 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
 
 ### Recurrent Neural Networks
 
@@ -726,6 +726,7 @@ AirTrace includes 45 registered models spanning from simple baselines to sophist
 | `cyclenet` | `CycleNetModel` | CycleNet - residual cycle forecasting with learnable periodic patterns for extreme efficiency (NeurIPS 2024 Spotlight) |
 | `dlinear` | `DLinearModel` | DLinear - decomposition-based linear forecaster with separate trend and seasonal projections |
 | `nlinear` | `NLinearModel` | NLinear - mean-adjusted linear projection for non-stationary series |
+| `frets` | `FreTSModel` | FreTS - frequency-domain MLP applying learned transformations to low-frequency Fourier coefficients for efficient forecasting (NeurIPS 2023) |
 
 ### Baseline Models
 
