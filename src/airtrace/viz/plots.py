@@ -1,6 +1,6 @@
 """Visualization utilities for timeseries and predictions."""
 
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -12,7 +12,7 @@ def plot_timeseries(
     sensor_names: Optional[List[str]] = None,
     title: str = "Timeseries",
     figsize: tuple = (12, 6)
-):
+) -> plt.Figure:
     """Plot multivariate timeseries.
 
     Args:
@@ -47,7 +47,7 @@ def plot_predictions(
     sensor_names: Optional[List[str]] = None,
     title: str = "Predictions vs Targets",
     figsize: tuple = (12, 8)
-):
+) -> plt.Figure:
     """Plot predictions vs ground truth.
 
     Args:
@@ -84,7 +84,7 @@ def plot_error_distribution(
     sensor_names: Optional[List[str]] = None,
     title: str = "Error Distribution",
     figsize: tuple = (10, 6)
-):
+) -> plt.Figure:
     """Plot error distributions.
 
     Args:
@@ -121,7 +121,7 @@ def plot_scatter_predictions(
     sensor_names: Optional[List[str]] = None,
     title: str = "Prediction Scatter",
     figsize: tuple = (12, 4)
-):
+) -> plt.Figure:
     """Plot scatter of predictions vs targets.
 
     Args:
@@ -160,10 +160,10 @@ def plot_scatter_predictions(
 
 
 def plot_metrics_comparison(
-    metrics_dict: dict,
+    metrics_dict: Dict[str, Dict[str, float]],
     title: str = "Model Comparison",
     figsize: tuple = (10, 6)
-):
+) -> plt.Figure:
     """Plot comparison of metrics across models.
 
     Args:

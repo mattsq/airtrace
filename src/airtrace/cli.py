@@ -7,7 +7,7 @@ import re
 import sys
 import textwrap
 from pathlib import Path
-from typing import Iterable, List, TYPE_CHECKING
+from typing import Any, Iterable, List, Mapping, TYPE_CHECKING
 
 import hydra
 from importlib import metadata
@@ -30,6 +30,35 @@ def _resolve_version() -> str:
 
 
 CLI_VERSION = _resolve_version()
+
+
+def _format_metric_value(value: Any) -> str:
+    if isinstance(value, (int, float)):
+        return f"{value:.4f}"
+    if hasattr(value, "item"):
+        try:
+            return f"{value.item():.4f}"
+        except Exception:
+            return str(value.item())
+    return str(value)
+
+
+def _format_evaluation_results(results: Mapping[str, Any]) -> str:
+    metrics = results.get("metrics", {}) if hasattr(results, "get") else {}
+    num_samples = results.get("num_samples", "unknown") if hasattr(results, "get") else "unknown"
+
+    lines = [
+        "",
+        "=" * 80,
+        "Evaluation Results",
+        "=" * 80,
+    ]
+    for metric, value in metrics.items():
+        lines.append(f"{metric.upper():12s}: {_format_metric_value(value)}")
+    lines.append(f"{'Samples':12s}: {num_samples}")
+    lines.append("=" * 80)
+
+    return "\n".join(lines)
 
 
 def train(cfg: DictConfig):
@@ -218,14 +247,7 @@ def evaluate(cfg: DictConfig):
     # Run evaluation
     print("\nEvaluating...")
     results = evaluator.evaluate(return_predictions=False)
-
-    print("\n" + "=" * 80)
-    print("Evaluation Results")
-    print("=" * 80)
-    for metric, value in results["metrics"].items():
-        print(f"{metric.upper():12s}: {value:.4f}")
-    print(f"{'Samples':12s}: {results['num_samples']}")
-    print("=" * 80)
+    print(_format_evaluation_results(results))
 
 
 def export_onnx(cfg: DictConfig):
