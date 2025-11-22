@@ -92,6 +92,8 @@ def test_gradient_flow_with_frozen_backbone() -> None:
         if param.requires_grad:
             assert "lora" in name, f"Only LoRA params should have gradients, got {name}"
             assert param.grad is not None, f"LoRA param {name} should have gradient"
+            assert torch.isfinite(param.grad).all(), f"LoRA param {name} gradient should be finite"
+            assert torch.any(param.grad != 0), f"LoRA param {name} gradient should be non-zero"
         else:
             # Frozen params might still accumulate gradients in some PyTorch versions
             # but they shouldn't be updated

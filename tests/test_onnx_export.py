@@ -182,8 +182,9 @@ class TestCreateTransformWrapper:
 
         wrapper = create_transform_wrapper(stats, 'ZScoreTransform_0', use_x_scaler=False)
 
-        assert wrapper is not None
         assert isinstance(wrapper, ZScoreWrapper)
+        assert np.array_equal(wrapper.mean, stats['scaler_y_mean'])
+        assert np.array_equal(wrapper.std, stats['scaler_y_scale'])
 
     def test_create_zscore_wrapper_for_preprocessing(self):
         """Test creating a ZScore wrapper for preprocessing (x scaler)."""
@@ -194,8 +195,9 @@ class TestCreateTransformWrapper:
 
         wrapper = create_transform_wrapper(stats, 'ZScoreTransform_0', use_x_scaler=True)
 
-        assert wrapper is not None
         assert isinstance(wrapper, ZScoreWrapper)
+        assert np.array_equal(wrapper.mean, stats['scaler_x_mean'])
+        assert np.array_equal(wrapper.std, stats['scaler_x_scale'])
 
         # Verify it uses the x scaler
         x = torch.tensor([[1.0, 2.0, 3.0]])
