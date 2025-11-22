@@ -38,6 +38,11 @@ These issues mean that:
 **Priority 2 (HIGH):** Strengthen assertions in visualization and model tests
 **Priority 3 (MEDIUM):** Add integration tests for critical workflows
 
+### Remediation Progress (2025-02-09)
+
+- ✅ `tests/test_viz_plots.py` now validates plotted content (lines, labels, counts) instead of relying on `is not None` checks.
+- ✅ CLI tests now target real formatting and data-check/dry-run flows rather than replacing core components with stubs.
+
 **Estimated remediation time:** 16-24 hours
 
 ## How to Use This Audit

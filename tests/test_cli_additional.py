@@ -1,6 +1,7 @@
-import sys
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
 import pytest
 import torch
 from omegaconf import OmegaConf
@@ -46,80 +47,40 @@ def test_prepare_hydra_overrides_export_options(tmp_path):
     assert overrides[-1] == "extra.override=true"
 
 
-def test_evaluate_runs_with_stub_components(monkeypatch, tmp_path, capsys):
-    data_root = tmp_path / "data"
+def test_format_evaluation_results_includes_metrics_and_counts():
+    results = {"metrics": {"mae": 0.1234, "rmse": 0.9876}, "num_samples": 42}
+
+    formatted = cli._format_evaluation_results(results)
+
+    assert "Evaluation Results" in formatted
+    assert "MAE" in formatted
+    assert "0.1234" in formatted
+    assert "Samples" in formatted
+    assert "42" in formatted
+
+
+def _create_minimal_data_root(base_dir: Path) -> Path:
+    data_root = base_dir / "data"
+    processed = data_root / "processed"
     metadata = data_root / "metadata"
+    processed.mkdir(parents=True)
     metadata.mkdir(parents=True)
-    for name in ["train.parquet", "val.parquet", "test.parquet"]:
-        (metadata / name).touch()
 
-    checkpoint_path = tmp_path / "checkpoint.ckpt"
-    model = torch.nn.Linear(2, 1)
-    torch.save({"model_state_dict": model.state_dict()}, checkpoint_path)
-
-    class _TinyDataModule:
-        def __init__(self, data_config, transforms, batch_size, num_workers, shuffle=None):
-            self.data_config = data_config
-            self.transforms = transforms
-            self.batch_size = batch_size
-            self.num_workers = num_workers
-            self.shuffle = shuffle
-            self.in_dim = 2
-            self.out_dim = 1
-
-        def setup(self):
-            return None
-
-        def test_dataloader(self):
-            return [{"inputs": torch.zeros(2, 2), "targets": torch.zeros(2, 1)}]
-
-        def val_dataloader(self):
-            return []
-
-    class _TinyTask:
-        pass
-
-    class _TinyEvaluationRunner:
-        def __init__(self, model, task, test_loader):
-            self.model = model
-            self.task = task
-            self.test_loader = test_loader
-
-        def evaluate(self, return_predictions=False):
-            return {"metrics": {"mae": 0.0}, "num_samples": 1}
-
-    monkeypatch.setattr("airtrace.data.datamodule.SensorDataModule", _TinyDataModule)
-    monkeypatch.setattr("airtrace.models.registry.build_model", lambda config, input_dim, output_dim: torch.nn.Linear(input_dim, output_dim))
-    monkeypatch.setattr("airtrace.tasks.registry.build_task", lambda cfg: _TinyTask())
-    monkeypatch.setattr("airtrace.evaluation.eval_runner.EvaluationRunner", _TinyEvaluationRunner)
-    monkeypatch.setattr("airtrace.training.trainer.set_seed", lambda seed: None)
-    monkeypatch.setattr("airtrace.transforms.registry.build_transforms", lambda pipeline: pipeline)
-
-    cfg = OmegaConf.create(
+    # Minimal flight with two sensors.
+    flight_id = "f1"
+    flight_df = pd.DataFrame(
         {
-            "mode": "eval",
-            "exp_name": "demo_eval",
-            "seed": 0,
-            "data": {
-                "root": str(data_root),
-                "dataset_name": "synthetic_cruise",
-                "train_index": "metadata/train.parquet",
-                "val_index": "metadata/val.parquet",
-                "test_index": "metadata/test.parquet",
-            },
-            "train": {"batch_size": 1, "num_workers": 0},
-            "task": {"name": "tiny_task"},
-            "model": {"name": "tiny_model"},
-            "transforms": {"pipeline": []},
-            "cli": {"data_check": False},
-            "checkpoint": str(checkpoint_path),
+            "s1": np.linspace(0.0, 1.0, num=5),
+            "s2": np.linspace(1.0, 2.0, num=5),
         }
     )
+    flight_df.to_parquet(processed / f"{flight_id}.parquet")
 
-    cli.evaluate(cfg)
-    output = capsys.readouterr().out
-    assert "Evaluation Results" in output
-    assert "MAE" in output
+    index_df = pd.DataFrame({"flight_id": [flight_id], "start_idx": [0], "end_idx": [4]})
+    index_df.to_parquet(metadata / "train.parquet")
+    index_df.to_parquet(metadata / "val.parquet")
+
+    return data_root
 
 
 def test_export_onnx_uses_exporter(monkeypatch, tmp_path, capsys):
@@ -187,3 +148,63 @@ def test_main_unknown_modes_exit(capsys):
     with pytest.raises(SystemExit):
         cli.main.__wrapped__(cfg_export)
     assert "Unknown export format" in capsys.readouterr().out
+
+
+def test_train_dry_run_allows_missing_data(tmp_path, capsys):
+    cfg = OmegaConf.create(
+        {
+            "mode": "train",
+            "exp_name": "demo",
+            "seed": 0,
+            "data": {
+                "root": str(tmp_path / "missing"),
+                "dataset_name": "synthetic_cruise",
+                "train_index": "metadata/train.parquet",
+                "val_index": "metadata/val.parquet",
+            },
+            "train": {"batch_size": 1, "num_workers": 0},
+            "task": {"name": "tiny_task"},
+            "model": {"name": "tiny_model"},
+            "transforms": {"pipeline": []},
+            "cli": {"data_check": False, "dry_run": True},
+            "checkpoint": "",
+            "log_dir": str(tmp_path / "logs"),
+        }
+    )
+
+    cli.train(cfg)
+    output = capsys.readouterr().out
+    assert "missing data assets" in output.lower()
+    assert "Dry run requested" in output
+
+
+def test_train_data_check_runs_setup_and_skips_training(tmp_path, capsys):
+    data_root = _create_minimal_data_root(tmp_path)
+
+    cfg = OmegaConf.create(
+        {
+            "mode": "train",
+            "exp_name": "demo",
+            "seed": 0,
+            "data": {
+                "root": str(data_root),
+                "dataset_name": "tiny",
+                "sensors": {"use": ["s1", "s2"]},
+                "window": {"input_len": 3, "pred_len": 1, "stride": 1, "target_sensors": ["s2"]},
+                "train_index": "metadata/train.parquet",
+                "val_index": "metadata/val.parquet",
+            },
+            "train": {"batch_size": 1, "num_workers": 0},
+            "task": {"name": "tiny_task"},
+            "model": {"name": "tiny_model"},
+            "transforms": {"pipeline": []},
+            "cli": {"data_check": True, "dry_run": False},
+            "checkpoint": "",
+            "log_dir": str(tmp_path / "logs"),
+        }
+    )
+
+    cli.train(cfg)
+    output = capsys.readouterr().out
+    assert "Data check complete" in output
+    assert "Starting Training" not in output

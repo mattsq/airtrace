@@ -26,6 +26,11 @@ This audit identified **significant test integrity issues** across multiple cate
 **Confidence Level:** 🟡 MODERATE (many tests don't validate behavior)
 **Risk Level:** 🔴 HIGH (critical paths may not be properly tested)
 
+### Remediation Progress (2025-02-09)
+
+- ✅ Strengthened visualization assertions in `tests/test_viz_plots.py` to verify plotted data, labels, and guides instead of only checking for figure existence.
+- ✅ Replaced over-mocked CLI evaluation/training coverage with focused checks that exercise real CLI formatting and data-check/dry-run flows.
+
 ---
 
 ## Category 1: Weak Assertions (⚠️ MEDIUM-HIGH Risk)
