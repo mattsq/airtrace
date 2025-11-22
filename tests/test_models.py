@@ -2,6 +2,7 @@
 
 import pytest
 import torch
+from typing import Iterable, List
 
 from airtrace.models import (
     CycleNetModel,
@@ -48,6 +49,20 @@ def batch():
     B, T_in, D_in = 4, 32, 5
     x = torch.randn(B, T_in, D_in)
     return x
+
+
+def assert_nonzero_gradients(parameters: Iterable[torch.nn.Parameter]) -> None:
+    """Assert that all trainable parameters have finite, non-zero gradients."""
+
+    grad_norms: List[float] = []
+    for param in parameters:
+        if param.requires_grad:
+            assert param.grad is not None
+            assert torch.isfinite(param.grad).all()
+            grad_norms.append(param.grad.detach().abs().sum().item())
+
+    assert grad_norms, "No trainable parameters were checked for gradients"
+    assert any(norm > 0 for norm in grad_norms), "Expected at least one non-zero gradient"
 
 
 def test_gru_ar_model_forward(batch):
@@ -97,7 +112,11 @@ def test_informer_model_forward(batch):
     output = model(batch)
 
     assert output["preds"].shape == (4, 2, 3)
-    assert output["extras"]["sparse_attention"] is not None
+    attn_map = output["extras"]["sparse_attention"]
+    assert isinstance(attn_map, torch.Tensor)
+    assert attn_map.shape[0] == batch.shape[0]
+    assert attn_map.shape[-1] == batch.shape[1]
+    assert torch.isfinite(attn_map).all()
 
 
 def test_dlinear_model_forward(batch):
@@ -274,10 +293,8 @@ def test_model_gradient_flow():
     loss = preds.mean()
     loss.backward()
 
-    # Check that parameters have gradients
-    for param in model.parameters():
-        if param.requires_grad:
-            assert param.grad is not None
+    # Check that parameters have gradients with non-zero magnitude
+    assert_nonzero_gradients(model.parameters())
 
 
 @pytest.mark.parametrize(
@@ -1058,9 +1075,7 @@ def test_linear_ar_model_gradient_flow():
     loss.backward()
 
     # Check that model parameters have gradients
-    for param in model.parameters():
-        if param.requires_grad:
-            assert param.grad is not None
+    assert_nonzero_gradients(model.parameters())
 
 
 # ============================================================================
@@ -1121,9 +1136,7 @@ def test_mlp_ar_model_gradient_flow():
     loss.backward()
 
     # Check that model parameters have gradients
-    for param in model.parameters():
-        if param.requires_grad:
-            assert param.grad is not None
+    assert_nonzero_gradients(model.parameters())
 
 
 def test_mlp_ar_model_activation():
@@ -1186,9 +1199,7 @@ def test_lstm_ar_model_gradient_flow():
     loss.backward()
 
     # Check that parameters have gradients
-    for param in model.parameters():
-        if param.requires_grad:
-            assert param.grad is not None
+    assert_nonzero_gradients(model.parameters())
 
 
 def test_gru_seq2seq_model_forward(batch):
@@ -1257,9 +1268,7 @@ def test_gru_seq2seq_model_gradient_flow():
     loss.backward()
 
     # Check that parameters have gradients
-    for param in model.parameters():
-        if param.requires_grad:
-            assert param.grad is not None
+    assert_nonzero_gradients(model.parameters())
 
 
 def test_lstm_seq2seq_model_forward(batch):
@@ -1301,9 +1310,7 @@ def test_lstm_seq2seq_model_gradient_flow():
     loss.backward()
 
     # Check that parameters have gradients
-    for param in model.parameters():
-        if param.requires_grad:
-            assert param.grad is not None
+    assert_nonzero_gradients(model.parameters())
 
 
 @pytest.mark.parametrize(
@@ -1394,9 +1401,7 @@ def test_patchtst_model_gradient_flow():
     loss.backward()
 
     # Check that parameters have gradients
-    for param in model.parameters():
-        if param.requires_grad:
-            assert param.grad is not None
+    assert_nonzero_gradients(model.parameters())
 
 
 def test_patchtst_model_num_params():
@@ -1550,9 +1555,7 @@ def test_itransformer_model_gradient_flow():
     loss.backward()
 
     # Check that parameters have gradients
-    for param in model.parameters():
-        if param.requires_grad:
-            assert param.grad is not None
+    assert_nonzero_gradients(model.parameters())
 
 
 def test_itransformer_model_num_params():
@@ -1781,9 +1784,7 @@ def test_timemixer_model_gradient_flow():
     loss.backward()
 
     # Check that parameters have gradients
-    for param in model.parameters():
-        if param.requires_grad:
-            assert param.grad is not None
+    assert_nonzero_gradients(model.parameters())
 
 
 def test_timemixer_model_num_params():
@@ -2090,12 +2091,12 @@ def test_cyclenet_model_gradient_flow():
     loss.backward()
 
     # Check that parameters have gradients
-    for param in model.parameters():
-        if param.requires_grad:
-            assert param.grad is not None
+    assert_nonzero_gradients(model.parameters())
 
     # Check that learnable cycles have gradients
     assert model.learnable_cycles.cycles.grad is not None
+    assert torch.isfinite(model.learnable_cycles.cycles.grad).all()
+    assert model.learnable_cycles.cycles.grad.detach().abs().sum().item() > 0
 
 
 def test_cyclenet_model_num_params():
