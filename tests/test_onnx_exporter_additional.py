@@ -1,4 +1,6 @@
+import builtins
 import json
+import sys
 from pathlib import Path
 from typing import List
 
@@ -117,3 +119,76 @@ def test_export_end_to_end_uses_wrapped_model(tmp_path: Path, monkeypatch):
         metadata = json.load(f)
     assert metadata["end_to_end"] is True
     assert metadata["has_transforms"] is True
+
+
+def test_verify_export_skips_without_onnxruntime(tmp_path: Path, monkeypatch):
+    model = DummyModel()
+    config = DictConfig({"data": {"window_size_in": 3}, "model": {"name": "dummy"}})
+    exporter = ONNXExporter(model=model, config=config)
+
+    onnx_path = tmp_path / "missing_ort.onnx"
+    onnx_path.write_bytes(b"fake")
+
+    original_import = builtins.__import__
+
+    def raising_import(name, *args, **kwargs):
+        if name == "onnxruntime":
+            raise ImportError("onnxruntime not installed")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", raising_import)
+
+    assert exporter.verify_export(onnx_path, verbose=False) is False
+
+
+def test_verify_export_with_stubbed_onnxruntime(tmp_path: Path, monkeypatch):
+    model = DummyModel(output_len=2)
+    config = DictConfig({"data": {"window_size_in": 5}, "model": {"name": "dummy"}})
+    exporter = ONNXExporter(model=model, config=config)
+
+    onnx_path = tmp_path / "stubbed.onnx"
+    onnx_path.write_bytes(b"fake")
+
+    class FakeSession:
+        def __init__(self, _path: str):
+            self.path = _path
+
+        def run(self, _outputs, inputs):
+            input_array = inputs["input"]
+            batch, seq, _ = input_array.shape
+            output_len = exporter.model.output_len or seq
+            return [np.ones((batch, output_len, exporter.model.output_dim), dtype=np.float32)]
+
+    class FakeOrt:
+        InferenceSession = FakeSession
+
+    monkeypatch.setitem(sys.modules, "onnxruntime", FakeOrt)
+
+    assert exporter.verify_export(onnx_path, verbose=False, num_samples=2) is True
+
+
+def test_save_transform_stats_serializes_numpy_scalars(tmp_path: Path):
+    stats = {
+        "CustomTransform": {
+            "array": np.array([1.0, 2.0], dtype=np.float32),
+            "int_value": np.int64(5),
+            "float_value": np.float64(3.5),
+            "label": "ok",
+        }
+    }
+    exporter = ONNXExporter(
+        model=DummyModel(),
+        config=DictConfig({"model": {"name": "dummy"}}),
+        transform_stats=stats,
+    )
+
+    stats_path = tmp_path / "stats.json"
+    exporter._save_transform_stats(stats_path)
+
+    with stats_path.open() as f:
+        saved_stats = json.load(f)
+
+    assert saved_stats["CustomTransform"]["array"] == [1.0, 2.0]
+    assert saved_stats["CustomTransform"]["int_value"] == 5
+    assert saved_stats["CustomTransform"]["float_value"] == pytest.approx(3.5)
+    assert saved_stats["CustomTransform"]["label"] == "ok"
