@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
+from typing import Optional
 
 from airtrace.evaluation import metrics
 from airtrace.evaluation.eval_runner import EvaluationRunner
@@ -63,3 +64,41 @@ def test_evaluation_runner_aggregates_losses_and_metrics():
 
     per_sensor = runner.evaluate_per_sensor(["s1", "s2"])
     assert set(per_sensor.keys()) == {"s1", "s2"}
+
+
+def test_evaluation_runner_loads_from_checkpoint(tmp_path):
+    torch.manual_seed(0)
+
+    class _LinearModel(torch.nn.Module):
+        def __init__(self, input_dim: int = 2, output_dim: int = 2):
+            super().__init__()
+            self.linear = torch.nn.Linear(input_dim, output_dim)
+
+        def forward(self, x: torch.Tensor, context: Optional[torch.Tensor] = None):
+            preds = self.linear(x)
+            return {"preds": preds}
+
+    original_model = _LinearModel()
+    checkpoint_path = tmp_path / "checkpoint.pt"
+
+    torch.save(
+        {
+            "model_state_dict": original_model.state_dict(),
+            "config": {"model": {"params": {"input_dim": 2, "output_dim": 2}}},
+        },
+        checkpoint_path,
+    )
+
+    dataset = _TinyDataset()
+    loader = DataLoader(dataset, batch_size=1)
+    runner = EvaluationRunner.from_checkpoint(
+        checkpoint_path, _LinearModel, _TinyTask({"loss": "mse"}), loader, device="cpu"
+    )
+
+    sample_input = torch.ones(1, 3, 2)
+    with torch.no_grad():
+        expected = original_model(sample_input)["preds"]
+        loaded = runner.model(sample_input)["preds"]
+
+    assert isinstance(runner, EvaluationRunner)
+    assert torch.allclose(loaded, expected)

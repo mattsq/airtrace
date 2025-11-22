@@ -3,6 +3,7 @@
 import json
 import tempfile
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import pytest
@@ -449,6 +450,25 @@ class TestEndToEndModel:
         assert not torch.allclose(e2e_output, wrong_forward, atol=1e-5), \
             "Postprocessing should NOT apply forward transform (normalization)"
 
+    def test_end_to_end_handles_tensor_output_without_inverse(self):
+        """EndToEndModel should postprocess tensor outputs even without inverse support."""
+
+        class _TensorModel(torch.nn.Module):
+            def forward(self, x: torch.Tensor, context: Optional[torch.Tensor] = None) -> torch.Tensor:
+                return x + 1.0
+
+        class _AddOne(torch.nn.Module):
+            def forward(self, preds: torch.Tensor) -> torch.Tensor:
+                return preds + 1.0
+
+        x = torch.randn(2, 3, 4)
+        end_to_end = EndToEndModel(model=_TensorModel(), preprocess=None, postprocess=_AddOne())
+
+        output = end_to_end(x)
+
+        assert torch.allclose(output, x + 2.0)
+        assert output.shape == x.shape
+
 
 class TestModelOnlyWrapper:
     """Tests for ModelOnlyWrapper."""
@@ -476,6 +496,22 @@ class TestModelOnlyWrapper:
         output = wrapper(x, context)
 
         assert isinstance(output, torch.Tensor)
+
+    def test_wrapper_passes_through_tensor_output(self):
+        """ModelOnlyWrapper should return raw tensor outputs unchanged."""
+
+        class _TensorOutputModel(torch.nn.Module):
+            def forward(self, x: torch.Tensor, context: Optional[torch.Tensor] = None) -> torch.Tensor:
+                return x * 2
+
+        model = _TensorOutputModel()
+        wrapper = ModelOnlyWrapper(model)
+
+        x = torch.randn(1, 2, 3)
+        output = wrapper(x)
+
+        assert torch.allclose(output, x * 2)
+        assert output.shape == x.shape
 
 
 class TestONNXExport:
