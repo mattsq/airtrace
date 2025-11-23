@@ -50,16 +50,10 @@ class ARBaseModel(nn.Module, ABC):
         raise NotImplementedError
 
     def get_num_params(self) -> int:
-        """Get total number of trainable parameters.
+        """Get total number of parameters (trainable or frozen)."""
 
-        Returns:
-            Number of trainable parameters
-        """
         total_params = 0
         for param in self.parameters():
-            if not param.requires_grad:
-                continue
-
             if isinstance(param, UninitializedParameter):
                 # Lazy modules register parameters immediately but defer
                 # materialising their shapes until the first forward pass.
