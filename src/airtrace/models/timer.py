@@ -195,8 +195,24 @@ class TimerModel(ARBaseModel):
         model = AutoModelForCausalLM.from_pretrained(
             checkpoint,
             trust_remote_code=trust_remote_code,
-            device_map=self.device_str,
         )
+
+        if self.device_str:
+            try:
+                target_device = torch.device(self.device_str)
+            except (RuntimeError, ValueError) as exc:
+                raise ValueError(
+                    f"Invalid device string for Timer model: {self.device_str}"
+                ) from exc
+
+            if hasattr(model, "to"):
+                model = model.to(target_device)
+            else:
+                warnings.warn(
+                    "Timer backbone does not support device placement; "
+                    "falling back to default device.",
+                    UserWarning,
+                )
 
         return self._ensure_module_backbone(model)
 

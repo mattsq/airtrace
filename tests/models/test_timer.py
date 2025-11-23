@@ -34,6 +34,7 @@ def mock_timer_backbone():
         ("layer1.weight", torch.nn.Parameter(torch.randn(10, 10))),
         ("layer2.weight", torch.nn.Parameter(torch.randn(10, 10))),
     ])
+    mock_model.to = MagicMock(return_value=mock_model)
 
     return mock_model
 
@@ -139,7 +140,10 @@ def test_timer_checkpoint_loading(mock_automodel):
     call_kwargs = mock_automodel.from_pretrained.call_args[1]
 
     assert call_kwargs["trust_remote_code"] is True
-    assert call_kwargs["device_map"] == "cpu"
+    assert "device_map" not in call_kwargs
+    mock_automodel.from_pretrained.return_value.to.assert_called_once_with(
+        torch.device("cpu")
+    )
 
     # Model should have backbone
     assert model.timer_backbone is not None
@@ -348,7 +352,10 @@ def test_timer_device_parameter(mock_automodel):
 
     # Verify device was passed to HuggingFace loader
     call_kwargs = mock_automodel.from_pretrained.call_args[1]
-    assert call_kwargs["device_map"] == "cpu"
+    assert "device_map" not in call_kwargs
+    mock_automodel.from_pretrained.return_value.to.assert_called_once_with(
+        torch.device("cpu")
+    )
 
 
 def test_timer_from_config():
