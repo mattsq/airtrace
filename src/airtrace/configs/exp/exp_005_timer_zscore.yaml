@@ -1,0 +1,20 @@
+defaults:
+  - override /data: synthetic_cruise
+  - override /model: timer
+  - override /transforms: zscore_diff
+  - override /task: multi_step
+  - override /train: default
+
+exp_name: "timer_zscore_multi_step"
+seed: 42
+
+model:
+  params:
+    pred_len: 24  # Multi-step forecast horizon
+    lookback_length: 256  # Smaller for faster experimentation
+    freeze_backbone: false  # Set true for zero-shot evaluation
+
+train:
+  epochs: 50  # For fine-tuning; set to 0 for zero-shot
+  learning_rate: 1e-4  # Lower LR for fine-tuning foundation model
+  batch_size: 16  # Smaller batch due to large model
