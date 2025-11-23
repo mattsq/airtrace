@@ -28,6 +28,38 @@ import torch.nn.functional as F
 from .base import ARBaseModel
 from .registry import register
 
+
+def _patch_transformers_dynamic_cache() -> None:
+    """Add Timer compatibility shims for older ``DynamicCache`` implementations.
+
+    The Timer checkpoint from HuggingFace expects ``DynamicCache`` instances to
+    expose ``seen_tokens`` and ``get_usable_length`` (added in recent
+    ``transformers`` versions). Some environments still ship earlier
+    implementations without these members, which causes generation and forward
+    passes to crash with ``AttributeError`` during model validation. This helper
+    provides lightweight fallbacks that map both attributes to the existing
+    ``get_seq_length`` API, which reflects the number of cached tokens.
+    """
+
+    try:  # transformers is an optional dependency outside Timer
+        from transformers.cache_utils import DynamicCache
+    except Exception:
+        return
+
+    if not hasattr(DynamicCache, "seen_tokens"):
+        DynamicCache.seen_tokens = property(  # type: ignore[attr-defined]
+            lambda self: self.get_seq_length()
+        )
+
+    if not hasattr(DynamicCache, "get_usable_length"):
+        def _get_usable_length(self, *_, **__):
+            return self.get_seq_length()
+
+        DynamicCache.get_usable_length = _get_usable_length  # type: ignore[attr-defined]
+
+
+_patch_transformers_dynamic_cache()
+
 LOGGER = logging.getLogger(__name__)
 
 
