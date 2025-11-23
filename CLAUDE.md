@@ -314,6 +314,14 @@ class MyNewModel(ARBaseModel):
 7. **Document**: Update docstrings, add to `docs/` if needed
 8. **Commit**: Clear, descriptive messages
 
+### Testing Best Practices
+
+- Aim for **end-to-end or integration-level coverage** when possible so tests validate real behavior instead of assumptions.
+- **Never skip, mock, simple-assert, or monkey patch** when a more thorough test can exercise the actual code path and validate the intended outcome.
+- Prefer **realistic fixtures and data** over synthetic shortcuts; mirror the way configs and registries are used in production.
+- Keep assertions **behavior-focused** (outputs, side effects, invariants) rather than implementation details.
+- When you must isolate dependencies, **justify the mock** in a comment and keep the surface area minimal.
+
 ## Memory and Learnings
 
 **IMPORTANT**: When you discover something surprising, unexpected, or non-obvious about this codebase that future agents should know, **add it to `MEMORY.md`**.
