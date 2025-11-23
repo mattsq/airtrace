@@ -16,6 +16,21 @@ import torch
 from airtrace.models.timer import TimerModel, TimerInputNormalizer
 
 
+def test_timer_dynamic_cache_patch_applied():
+    """Timer import should add compatibility shims for ``DynamicCache``."""
+    from transformers.cache_utils import DynamicCache
+
+    cache = DynamicCache()
+
+    assert hasattr(cache, "seen_tokens")
+    assert hasattr(cache, "get_usable_length")
+
+    # Fallback methods should mirror the available sequence length API
+    cache_len = cache.get_seq_length()
+    assert cache.seen_tokens == cache_len
+    assert cache.get_usable_length(5) == cache_len
+
+
 # Mock the HuggingFace model to avoid downloading during tests
 @pytest.fixture
 def mock_timer_backbone():
