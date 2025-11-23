@@ -246,12 +246,12 @@ class ONNXExporter:
         try:
             torch.onnx.export(
                 export_model,
-                (dummy_input, None),  # (input, context) - context is None
+                dummy_input,
                 str(output_path),
                 export_params=True,
                 opset_version=opset_version,
                 do_constant_folding=True,
-                input_names=['input', 'context'],
+                input_names=['input'],
                 output_names=['output'],
                 dynamic_axes=dynamic_axes,
                 verbose=False,
@@ -405,7 +405,6 @@ class ONNXExporter:
             # ONNX inference
             ort_inputs = {
                 'input': dummy_input.numpy(),
-                'context': None,  # Context is optional
             }
             onnx_output = ort_session.run(None, ort_inputs)[0]
 
