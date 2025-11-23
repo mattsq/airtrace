@@ -111,7 +111,8 @@ def test_sensor_data_module_supports_optional_test_set(monkeypatch, tmp_path):
     module.setup()
 
     test_loader = module.test_dataloader()
-    assert test_loader is not None
+    assert isinstance(test_loader.dataset, SensorWindowDataset)
+    assert len(test_loader) == 1
     test_batch = next(iter(test_loader))
     assert test_batch["x"].shape[-1] == 1
 
