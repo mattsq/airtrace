@@ -32,6 +32,7 @@ This audit identified **significant test integrity issues** across multiple cate
 - ✅ Replaced over-mocked CLI evaluation/training coverage with focused checks that exercise real CLI formatting and data-check/dry-run flows.
 - ✅ Reinforced transform and model tests to check learned statistics, gradient magnitudes, and wrapper contents rather than only verifying objects exist.
 - ✅ Fixed Informer attention reporting, SOFTS normalization statistics, and LoRA adapter initialization to ensure gradient/shape validations in hardened tests reflect true model behavior.
+- ✅ Hardened transform coverage for clipping and smoothing by asserting fitted bounds, Gaussian filter outputs, and metadata, eliminating weak "ran without error" assertions in `tests/test_transforms.py`.
 
 ---
 
