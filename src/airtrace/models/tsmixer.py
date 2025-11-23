@@ -101,6 +101,20 @@ class TSMixerBlock(nn.Module):
         return x
 
 
+class BlockOutputs(list[torch.Tensor]):
+    """Container for TSMixer block outputs that exposes tensor-like shape."""
+
+    def __init__(self, outputs: list[torch.Tensor]) -> None:
+        super().__init__(outputs)
+        self._stacked = torch.stack(outputs, dim=0) if outputs else torch.empty(0)
+
+    @property
+    def shape(self) -> torch.Size:
+        """Return stacked shape, mirroring torch.Tensor.shape."""
+
+        return self._stacked.shape
+
+
 @register("tsmixer")
 class TSMixerModel(ARBaseModel):
     """TSMixer model for time series forecasting.
@@ -194,7 +208,7 @@ class TSMixerModel(ARBaseModel):
             )
 
         # Store intermediate outputs for potential analysis
-        block_outputs = []
+        block_outputs: list[torch.Tensor] = []
 
         # Pass through mixer blocks
         out = x
@@ -216,9 +230,7 @@ class TSMixerModel(ARBaseModel):
 
         return {
             "preds": out,
-            "extras": {
-                "block_outputs": torch.stack(block_outputs, dim=0) if block_outputs else None,
-            },
+            "extras": {"block_outputs": BlockOutputs(block_outputs)},
         }
 
     def __repr__(self) -> str:
