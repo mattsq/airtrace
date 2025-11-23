@@ -98,8 +98,12 @@ def test_softs_normalization():
     assert torch.isfinite(out_no_norm["preds"]).all()
 
     # Check extras
-    assert out_norm["extras"]["means"] is not None
-    assert out_norm["extras"]["stdev"] is not None
+    means = out_norm["extras"]["means"]
+    stdev = out_norm["extras"]["stdev"]
+    assert means.shape == (num_channels,)
+    assert stdev.shape == (num_channels,)
+    assert torch.isfinite(means).all()
+    assert torch.isfinite(stdev).all()
     assert out_no_norm["extras"]["means"] is None
     assert out_no_norm["extras"]["stdev"] is None
 
@@ -388,9 +392,10 @@ def test_softs_gradient_flow():
     loss = output["preds"].mean()
     loss.backward()
 
-    # Check that gradients exist
+    # Check that gradients exist and carry signal
     assert x.grad is not None
-    assert not torch.isnan(x.grad).any()
+    assert torch.isfinite(x.grad).all()
+    assert torch.any(x.grad != 0)
 
 
 def test_softs_large_batch():

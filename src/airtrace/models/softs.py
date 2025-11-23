@@ -246,8 +246,14 @@ class SOFTS(ARBaseModel):
                 torch.var(x, dim=1, keepdim=True, unbiased=False) + 1e-5
             )
             x = x / stdev
+            # Report per-channel statistics aggregated across the batch for easier
+            # downstream inspection while keeping per-sample values for
+            # de-normalization.
+            reported_means = means.mean(dim=0).squeeze(0)
+            reported_stdev = stdev.mean(dim=0).squeeze(0)
         else:
             means, stdev = None, None
+            reported_means, reported_stdev = None, None
 
         # Embedding: [B, T, D] -> [B, D, d_model]
         x = x.permute(0, 2, 1)  # [B, D, T]
@@ -283,7 +289,7 @@ class SOFTS(ARBaseModel):
         return {
             "preds": x,
             "extras": {
-                "means": means,
-                "stdev": stdev,
+                "means": reported_means,
+                "stdev": reported_stdev,
             },
         }
