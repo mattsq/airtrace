@@ -198,7 +198,44 @@ class TimerModel(ARBaseModel):
             device_map=self.device_str,
         )
 
-        return model
+        return self._ensure_module_backbone(model)
+
+    def _ensure_module_backbone(self, backbone: object) -> nn.Module:
+        """Ensure the backbone is an ``nn.Module`` with registered parameters."""
+
+        if isinstance(backbone, nn.Module):
+            return backbone
+
+        # Tests provide a MagicMock backbone with a ``named_parameters`` method.
+        # Wrap it in a lightweight Module so parameters are registered for
+        # counting and freezing logic.
+        params = {}
+        if hasattr(backbone, "named_parameters"):
+            try:
+                params = {
+                    name.replace(".", "_"): param
+                    for name, param in backbone.named_parameters()
+                }
+            except Exception:
+                params = {}
+
+        class _BackboneWrapper(nn.Module):
+            def __init__(self, wrapped: object, parameters: Dict[str, nn.Parameter]):
+                super().__init__()
+                self.wrapped = wrapped
+                self.params = nn.ParameterDict(parameters)
+
+            def forward(self, *args, **kwargs):
+                if callable(self.wrapped):
+                    return self.wrapped(*args, **kwargs)
+                raise TypeError("Backbone object is not callable")
+
+            def generate(self, *args, **kwargs):
+                if hasattr(self.wrapped, "generate"):
+                    return self.wrapped.generate(*args, **kwargs)
+                raise AttributeError("Backbone object has no 'generate' method")
+
+        return _BackboneWrapper(backbone, params)
 
     def _apply_lora_adapters(self) -> None:
         """Apply LoRA adapters to Timer backbone for efficient fine-tuning.
