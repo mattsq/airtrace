@@ -53,8 +53,8 @@ class ONNXExporter:
         from airtrace.models.registry import build_model
         from airtrace.transforms.registry import build_transforms
 
-        # Load checkpoint
-        checkpoint = torch.load(checkpoint_path, map_location=device)
+        # Load checkpoint (requires full pickle because we persist Hydra config)
+        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
         # Extract config
         if "config" not in checkpoint:

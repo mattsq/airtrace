@@ -35,6 +35,7 @@ This audit identified **significant test integrity issues** across multiple cate
 - ✅ Fixed Informer attention reporting, SOFTS normalization statistics, and LoRA adapter initialization to ensure gradient/shape validations in hardened tests reflect true model behavior.
 - ✅ Hardened transform coverage for clipping and smoothing by asserting fitted bounds, Gaussian filter outputs, and metadata, eliminating weak "ran without error" assertions in `tests/test_transforms.py`.
 - ✅ (2026-05-07) Eliminated remaining `assert ... is not None` checks across visualization and model gradient tests, and updated `scripts/audit_tests.sh` to tolerate zero-match cases so the audit can report a clean slate.
+- ✅ (2026-11-23) Replaced the stubbed ONNX export CLI test with a real end-to-end export that loads a persisted checkpoint, runs `onnxruntime` inference, and verifies metadata, and fixed `ONNXExporter.from_checkpoint` to load Hydra configs under PyTorch 2.6's `weights_only=True` default.
 
 ---
 

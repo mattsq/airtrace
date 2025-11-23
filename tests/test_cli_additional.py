@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import numpy as np
@@ -5,8 +6,10 @@ import pandas as pd
 import pytest
 import torch
 from omegaconf import OmegaConf
+import onnxruntime as ort
 
 from airtrace import cli
+from airtrace.models.baselines import PersistenceModel
 
 
 def test_prepare_hydra_overrides_export_requires_format():
@@ -83,59 +86,53 @@ def _create_minimal_data_root(base_dir: Path) -> Path:
     return data_root
 
 
-def test_export_onnx_uses_exporter(monkeypatch, tmp_path, capsys):
+def test_export_onnx_produces_loadable_model(tmp_path, capsys):
     checkpoint_path = tmp_path / "ckpt.ckpt"
-    torch.save({"model_state_dict": {}}, checkpoint_path)
+    output_path = tmp_path / "model.onnx"
 
-    called = {}
-
-    class _FakeExporter:
-        @classmethod
-        def from_checkpoint(cls, checkpoint):
-            called["from_checkpoint"] = checkpoint
-            return cls()
-
-        def export(self, output_path, end_to_end, batch_size, sequence_length, opset_version, verbose):
-            called["export"] = {
-                "output_path": output_path,
-                "end_to_end": end_to_end,
-                "batch_size": batch_size,
-                "sequence_length": sequence_length,
-                "opset_version": opset_version,
-                "verbose": verbose,
-            }
-            return {"onnx_model": output_path}
-
-        def verify_export(self, onnx_path, end_to_end, verbose):
-            called["verify_export"] = {"onnx_path": onnx_path, "end_to_end": end_to_end, "verbose": verbose}
-
-    monkeypatch.setattr("airtrace.export.ONNXExporter", _FakeExporter)
+    model = PersistenceModel(input_dim=2, output_dim=1)
+    config = OmegaConf.create(
+        {
+            "model": {"name": "persistence", "input_dim": 2, "output_dim": 1, "params": {}},
+            "data": {"window_size_in": 4},
+        }
+    )
+    torch.save({"model_state_dict": model.state_dict(), "config": config}, checkpoint_path)
 
     cfg = OmegaConf.create(
         {
             "mode": "export",
             "cli": {
                 "export_format": "onnx",
-                "output": tmp_path / "model.onnx",
-                "end_to_end": True,
-                "batch_size": 2,
-                "sequence_length": 16,
+                "output": output_path,
+                "end_to_end": False,
+                "batch_size": 1,
+                "sequence_length": 4,
                 "verify": True,
-                "opset_version": 17,
+                "opset_version": 14,
             },
             "checkpoint": str(checkpoint_path),
         }
     )
 
     cli.export_onnx(cfg)
+    cli_output = capsys.readouterr().out
 
-    assert called["from_checkpoint"] == checkpoint_path
-    assert called["export"]["output_path"] == cfg.cli.output
-    assert called["export"]["end_to_end"] is True
-    assert called["export"]["batch_size"] == 2
-    assert called["export"]["sequence_length"] == 16
-    assert called["export"]["opset_version"] == 17
-    assert called["verify_export"]["onnx_path"] == cfg.cli.output
+    assert output_path.exists()
+    assert "Export Complete" in cli_output
+
+    metadata_path = output_path.with_suffix(".metadata.json")
+    assert metadata_path.exists()
+    metadata = json.loads(metadata_path.read_text())
+    assert metadata["input_shape"] == [1, 4, 2]
+    assert metadata["output_dim"] == 1
+
+    session = ort.InferenceSession(str(output_path))
+    sample = np.arange(8, dtype=np.float32).reshape(1, 4, 2)
+    onnx_out = session.run(None, {"input": sample, "context": None})[0]
+
+    expected = sample[:, -1:, :1]
+    np.testing.assert_allclose(onnx_out, expected, atol=1e-5)
 
 
 def test_main_unknown_modes_exit(capsys):
