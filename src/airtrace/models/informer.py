@@ -165,11 +165,18 @@ class InformerEncoder(nn.Module):
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         attn_map: Optional[torch.Tensor] = None
+        first_attn_map: Optional[torch.Tensor] = None
         for idx, layer in enumerate(self.layers):
             x, attn_map = layer(x)
+            if first_attn_map is None:
+                first_attn_map = attn_map
             if self.distill and idx < len(self.layers) - 1:
                 x = self.distill_convs[idx](x.transpose(1, 2)).transpose(1, 2)
-        return x, attn_map
+
+        # When distillation reduces the sequence length, surface the attention map
+        # computed on the original resolution so downstream consumers retain a
+        # direct alignment with the encoder input length.
+        return x, (first_attn_map if self.distill else attn_map)
 
 
 class InformerDecoderLayer(nn.Module):

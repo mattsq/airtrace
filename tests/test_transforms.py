@@ -233,8 +233,14 @@ def test_clip_transform():
     # Fit transform
     transform.fit(dataset)
     assert transform.is_fitted
+
+    # Learned bounds should match dataset percentiles for each feature
     assert transform.lower_bounds is not None
     assert transform.upper_bounds is not None
+    expected_lower = np.percentile(dataset._x_data, 5.0, axis=(0, 1))
+    expected_upper = np.percentile(dataset._x_data, 95.0, axis=(0, 1))
+    np.testing.assert_allclose(transform.lower_bounds, expected_lower)
+    np.testing.assert_allclose(transform.upper_bounds, expected_upper)
 
     # Apply transform
     sample = dataset[0]
@@ -509,6 +515,8 @@ def test_impute_mean():
 
     transform.fit(dataset)
     assert transform.mean_values is not None
+    expected_mean = dataset._x_data.mean(axis=(0, 1))
+    np.testing.assert_allclose(transform.mean_values, expected_mean)
 
     # Create data with NaNs
     x = np.random.randn(50, 5).astype(np.float32)

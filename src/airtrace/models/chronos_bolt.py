@@ -44,7 +44,11 @@ class LoRALinear(nn.Module):
             self.lora_down = nn.Linear(in_features, rank, bias=False)
             self.lora_up = nn.Linear(rank, out_features, bias=False)
             nn.init.kaiming_uniform_(self.lora_down.weight, a=math.sqrt(5))
-            nn.init.zeros_(self.lora_up.weight)
+            # Use a small but non-zero initialization so gradients flow to both
+            # LoRA projections on the first backward pass (zero init would block
+            # gradients to ``lora_down`` entirely).
+            nn.init.kaiming_uniform_(self.lora_up.weight, a=math.sqrt(5))
+            self.lora_up.weight.data.mul_(0.01)
             self.scaling = alpha / rank
         else:
             self.lora_down = None
