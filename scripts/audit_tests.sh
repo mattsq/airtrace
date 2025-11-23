@@ -22,7 +22,7 @@ NC='\033[0m' # No Color
 echo "📊 METRIC 1: Weak Assertions"
 echo "----------------------------"
 
-is_not_none_count=$(grep -rn "assert.*is not None" "$TESTS_DIR/" 2>/dev/null | wc -l)
+is_not_none_count=$( (grep -rn "assert.*is not None" "$TESTS_DIR/" 2>/dev/null || true) | wc -l)
 echo "  • 'assert ... is not None': $is_not_none_count instances"
 
 if [ "$is_not_none_count" -gt 50 ]; then
@@ -36,7 +36,7 @@ fi
 if [ "$DETAILED" = "--detailed" ]; then
     echo ""
     echo "  Top files with weak assertions:"
-    grep -rn "assert.*is not None" "$TESTS_DIR/" 2>/dev/null | cut -d: -f1 | sort | uniq -c | sort -rn | head -5 | sed 's/^/    /'
+    (grep -rn "assert.*is not None" "$TESTS_DIR/" 2>/dev/null || true) | cut -d: -f1 | sort | uniq -c | sort -rn | head -5 | sed 's/^/    /'
 fi
 
 echo ""
@@ -45,13 +45,13 @@ echo ""
 echo "📊 METRIC 2: Excessive Mocking"
 echo "----------------------------"
 
-mock_count=$(grep -rn "monkeypatch\.setattr\|@patch\|@mock.patch" "$TESTS_DIR/" 2>/dev/null | wc -l)
+mock_count=$( (grep -rn "monkeypatch\.setattr\|@patch\|@mock.patch" "$TESTS_DIR/" 2>/dev/null || true) | wc -l)
 echo "  • Total mocking calls: $mock_count"
 
 if [ "$DETAILED" = "--detailed" ]; then
     echo ""
     echo "  Files with most mocking:"
-    grep -rn "monkeypatch\.setattr\|@patch\|@mock.patch" "$TESTS_DIR/" 2>/dev/null | cut -d: -f1 | sort | uniq -c | sort -rn | head -5 | sed 's/^/    /'
+    (grep -rn "monkeypatch\.setattr\|@patch\|@mock.patch" "$TESTS_DIR/" 2>/dev/null || true) | cut -d: -f1 | sort | uniq -c | sort -rn | head -5 | sed 's/^/    /'
     echo ""
     echo "  Tests with >5 mocks (potential over-mocking):"
     for file in $(find "$TESTS_DIR" -name "test_*.py"); do
@@ -70,13 +70,13 @@ echo ""
 echo "📊 METRIC 3: Stub/Fake Classes"
 echo "----------------------------"
 
-stub_count=$(grep -rn "^class _[A-Z]\|^class Fake\|^class Stub\|^class Dummy[A-Z]" "$TESTS_DIR/" 2>/dev/null | wc -l)
+stub_count=$( (grep -rn "^class _[A-Z]\|^class Fake\|^class Stub\|^class Dummy[A-Z]" "$TESTS_DIR/" 2>/dev/null || true) | wc -l)
 echo "  • Stub classes defined: $stub_count"
 
 if [ "$DETAILED" = "--detailed" ]; then
     echo ""
     echo "  Files with most stubs:"
-    grep -rn "^class _[A-Z]\|^class Fake\|^class Stub\|^class Dummy[A-Z]" "$TESTS_DIR/" 2>/dev/null | cut -d: -f1 | sort | uniq -c | sort -rn | head -5 | sed 's/^/    /'
+    (grep -rn "^class _[A-Z]\|^class Fake\|^class Stub\|^class Dummy[A-Z]" "$TESTS_DIR/" 2>/dev/null || true) | cut -d: -f1 | sort | uniq -c | sort -rn | head -5 | sed 's/^/    /'
 fi
 
 echo ""
@@ -101,7 +101,7 @@ echo "----------------------------"
 echo -n "  • Scanning for tests with suspicious patterns... "
 
 empty_asserts=0
-hardcoded_returns=$(grep -rn "return.*\[\]$\|return None$\|return.*0\.0\)" "$TESTS_DIR/" 2>/dev/null | grep -v "pragma: no cover" | wc -l)
+hardcoded_returns=$( (grep -rn "return.*\[\]$\|return None$\|return.*0\.0\)" "$TESTS_DIR/" 2>/dev/null | grep -v "pragma: no cover" || true) | wc -l)
 
 echo "Done"
 echo "  • Hardcoded returns in stubs: $hardcoded_returns instances"
@@ -109,7 +109,7 @@ echo "  • Hardcoded returns in stubs: $hardcoded_returns instances"
 if [ "$DETAILED" = "--detailed" ]; then
     echo ""
     echo "  Hardcoded return examples:"
-    grep -rn "return.*\[\]$\|return None$\|return.*0\.0\)" "$TESTS_DIR/" 2>/dev/null | grep -v "pragma: no cover" | head -5 | sed 's/^/    /'
+    (grep -rn "return.*\[\]$\|return None$\|return.*0\.0\)" "$TESTS_DIR/" 2>/dev/null | grep -v "pragma: no cover" || true) | head -5 | sed 's/^/    /'
 fi
 
 echo ""

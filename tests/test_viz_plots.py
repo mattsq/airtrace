@@ -30,7 +30,7 @@ class TestPlotTimeseries:
         data = rng.standard_normal((100, 1))
         fig = plot_timeseries(data)
 
-        assert fig is not None
+        assert isinstance(fig, matplotlib.figure.Figure)
         assert len(fig.axes) == 1
 
         axis = fig.axes[0]
@@ -50,7 +50,7 @@ class TestPlotTimeseries:
         sensor_names = ["fuel_flow", "mach", "altitude"]
         fig = plot_timeseries(data, sensor_names=sensor_names)
 
-        assert fig is not None
+        assert isinstance(fig, matplotlib.figure.Figure)
         assert len(fig.axes) == 3
 
         for idx, (axis, expected_label) in enumerate(zip(fig.axes, sensor_names)):
@@ -89,7 +89,7 @@ class TestPlotPredictions:
 
         fig = plot_predictions(targets, predictions)
 
-        assert fig is not None
+        assert isinstance(fig, matplotlib.figure.Figure)
         assert len(fig.axes) == 2
         for idx, axis in enumerate(fig.axes):
             lines = axis.get_lines()
@@ -110,7 +110,7 @@ class TestPlotPredictions:
 
         fig = plot_predictions(targets, predictions, sensor_names=sensor_names)
 
-        assert fig is not None
+        assert isinstance(fig, matplotlib.figure.Figure)
         assert len(fig.axes) == 3
         for axis, expected_label in zip(fig.axes, sensor_names):
             assert axis.get_ylabel() == expected_label
@@ -123,7 +123,7 @@ class TestPlotPredictions:
 
         fig = plot_predictions(targets, predictions)
 
-        assert fig is not None
+        assert isinstance(fig, matplotlib.figure.Figure)
         assert len(fig.axes) == 1
         lines = fig.axes[0].get_lines()
         assert len(lines) == 2
@@ -139,7 +139,7 @@ class TestPlotErrorDistribution:
 
         fig = plot_error_distribution(errors)
 
-        assert fig is not None
+        assert isinstance(fig, matplotlib.figure.Figure)
         assert len(fig.axes) == 2
         for axis in fig.axes:
             heights = [patch.get_height() for patch in axis.patches]
@@ -155,7 +155,7 @@ class TestPlotErrorDistribution:
 
         fig = plot_error_distribution(errors, sensor_names=sensor_names)
 
-        assert fig is not None
+        assert isinstance(fig, matplotlib.figure.Figure)
         assert len(fig.axes) == 3
         titles = [axis.get_title() for axis in fig.axes]
         assert titles == sensor_names
@@ -167,7 +167,7 @@ class TestPlotErrorDistribution:
 
         fig = plot_error_distribution(errors)
 
-        assert fig is not None
+        assert isinstance(fig, matplotlib.figure.Figure)
         assert len(fig.axes) == 1
         assert fig.axes[0].get_ylabel() == "Frequency"
         plt.close(fig)
@@ -183,7 +183,7 @@ class TestPlotScatterPredictions:
 
         fig = plot_scatter_predictions(targets, predictions)
 
-        assert fig is not None
+        assert isinstance(fig, matplotlib.figure.Figure)
         assert len(fig.axes) == 2
         for axis in fig.axes:
             scatter = axis.collections[0]
@@ -204,7 +204,7 @@ class TestPlotScatterPredictions:
 
         fig = plot_scatter_predictions(targets, predictions, sensor_names=sensor_names)
 
-        assert fig is not None
+        assert isinstance(fig, matplotlib.figure.Figure)
         assert len(fig.axes) == 3
         assert [axis.get_title() for axis in fig.axes] == sensor_names
         plt.close(fig)
@@ -216,7 +216,7 @@ class TestPlotScatterPredictions:
 
         fig = plot_scatter_predictions(targets, predictions)
 
-        assert fig is not None
+        assert isinstance(fig, matplotlib.figure.Figure)
         assert len(fig.axes) == 1
         assert fig.axes[0].lines
         plt.close(fig)
@@ -228,7 +228,7 @@ class TestPlotScatterPredictions:
 
         fig = plot_scatter_predictions(targets, predictions)
 
-        assert fig is not None
+        assert isinstance(fig, matplotlib.figure.Figure)
         for axis in fig.axes:
             scatter = axis.collections[0]
             offsets = scatter.get_offsets()
@@ -249,7 +249,7 @@ class TestPlotMetricsComparison:
 
         fig = plot_metrics_comparison(metrics_dict)
 
-        assert fig is not None
+        assert isinstance(fig, matplotlib.figure.Figure)
         assert len(fig.axes) == 3  # One for each metric
         for metric_name, axis in zip(["mse", "mae", "rmse"], fig.axes):
             heights = [patch.get_height() for patch in axis.patches]
@@ -268,7 +268,7 @@ class TestPlotMetricsComparison:
 
         fig = plot_metrics_comparison(metrics_dict)
 
-        assert fig is not None
+        assert isinstance(fig, matplotlib.figure.Figure)
         assert len(fig.axes) == 1
         heights = [patch.get_height() for patch in fig.axes[0].patches]
         np.testing.assert_allclose(sorted(heights), [0.1, 0.15])
@@ -295,7 +295,7 @@ class TestPlotMetricsComparison:
 
         fig = plot_metrics_comparison(metrics_dict, figsize=(15, 6))
 
-        assert fig is not None
+        assert isinstance(fig, matplotlib.figure.Figure)
         assert len(fig.axes) == 2
         for axis in fig.axes:
             assert len(axis.patches) == len(metrics_dict)

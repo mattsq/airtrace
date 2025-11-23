@@ -353,14 +353,15 @@ def test_gradient_flow() -> None:
     loss.backward()
 
     # Check that input gradients exist
-    assert x.grad is not None
-    assert torch.isfinite(x.grad).all()
-    assert torch.any(x.grad != 0)
+    input_grad = x.grad
+    assert isinstance(input_grad, torch.Tensor)
+    assert torch.isfinite(input_grad).all()
+    assert torch.any(input_grad != 0)
 
     # Check that model parameters have gradients
     for name, param in model.named_parameters():
         if param.requires_grad:
-            assert param.grad is not None, f"Parameter {name} should have gradients"
+            assert isinstance(param.grad, torch.Tensor), f"Parameter {name} should have gradients"
             assert torch.isfinite(param.grad).all(), f"Parameter {name} has non-finite gradients"
             assert torch.any(param.grad != 0), f"Parameter {name} should receive gradient signal"
 

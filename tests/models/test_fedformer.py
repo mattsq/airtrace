@@ -187,7 +187,7 @@ def test_fedformer_model_gradient_flow():
     # Check that parameters have gradients
     for param in model.parameters():
         if param.requires_grad:
-            assert param.grad is not None
+            assert isinstance(param.grad, torch.Tensor)
             assert torch.isfinite(param.grad).all()
             assert torch.any(param.grad != 0)
 

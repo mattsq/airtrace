@@ -57,6 +57,6 @@ def test_crossformer_gradient_flow(batch: torch.Tensor) -> None:
 
     for param in model.parameters():
         if param.requires_grad:
-            assert param.grad is not None
+            assert isinstance(param.grad, torch.Tensor)
             assert torch.isfinite(param.grad).all()
             assert torch.any(param.grad != 0)
