@@ -434,6 +434,15 @@ def validate_single_model(
             # Use the synthetic dataset defaults (window_size=60, pred_horizon=1)
             # so validation can instantiate the model without extra config.
             config["params"] = {"seq_len": 60, "pred_len": 1}
+        elif model_name == "timer":
+            # Keep Timer lightweight in CI by matching the synthetic dataset
+            # window and freezing the backbone (zero-shot inference only).
+            config["params"] = {
+                "pred_len": 1,
+                "lookback_length": 96,
+                "freeze_backbone": True,
+                "device": device,
+            }
 
         model = build_model(config, input_dim=input_dim, output_dim=output_dim)
 

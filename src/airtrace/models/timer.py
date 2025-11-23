@@ -57,6 +57,16 @@ def _patch_transformers_dynamic_cache() -> None:
 
         DynamicCache.get_usable_length = _get_usable_length  # type: ignore[attr-defined]
 
+    if not hasattr(DynamicCache, "get_max_length"):
+        def _get_max_length(self, *_, **__):
+            # HuggingFace's Timer implementation expects this helper to exist
+            # when converting legacy caches. Fall back to the current sequence
+            # length which reflects the usable cache capacity for older
+            # versions.
+            return self.get_seq_length()
+
+        DynamicCache.get_max_length = _get_max_length  # type: ignore[attr-defined]
+
 
 _patch_transformers_dynamic_cache()
 
@@ -135,6 +145,7 @@ class TimerModel(ARBaseModel):
         pred_len: Forecast horizon in timesteps
         checkpoint: HuggingFace model ID or local path to checkpoint
         lookback_length: Context window size (default: 512)
+        min_context_length: Minimum context length required by Timer (default: 96)
         normalize_inputs: Whether to z-score normalize inputs (recommended: True)
         freeze_backbone: Freeze Timer backbone for zero-shot or LoRA fine-tuning
         lora_rank: LoRA adapter rank (0 disables LoRA)
@@ -151,6 +162,7 @@ class TimerModel(ARBaseModel):
         pred_len: int = 24,
         checkpoint: str = "thuml/timer-base-84m",
         lookback_length: int = 512,
+        min_context_length: int = 96,
         normalize_inputs: bool = True,
         freeze_backbone: bool = False,
         lora_rank: int = 0,
@@ -173,6 +185,7 @@ class TimerModel(ARBaseModel):
         self.pred_len = pred_len
         self.checkpoint = checkpoint
         self.lookback_length = lookback_length
+        self.min_context_length = max(1, min_context_length)
         self.normalize_inputs = normalize_inputs
         self.freeze_backbone = freeze_backbone
         self.lora_rank = lora_rank
@@ -182,6 +195,11 @@ class TimerModel(ARBaseModel):
 
         # Normalization module (applied per variate)
         self.normalizer = TimerInputNormalizer() if normalize_inputs else None
+
+        # Generation can fail on older transformer cache implementations; once
+        # a failure is observed we disable future generation attempts and fall
+        # back to forward() to avoid noisy repeated warnings.
+        self._generation_disabled = False
 
         # Load Timer backbone from HuggingFace
         self.timer_backbone = self._load_timer_backbone(
@@ -325,25 +343,34 @@ class TimerModel(ARBaseModel):
         """
         # Timer expects inputs as [B, T] for univariate
         # Use the model's generate method for autoregressive forecasting
-        try:
-            with torch.no_grad() if self.freeze_backbone else torch.enable_grad():
-                # Generate predictions autoregressively
-                output = self.timer_backbone.generate(
-                    series,
-                    max_new_tokens=pred_len,
+        output: Optional[torch.Tensor]
+        predictions: torch.Tensor
+
+        if not self._generation_disabled:
+            try:
+                with torch.no_grad() if self.freeze_backbone else torch.enable_grad():
+                    # Generate predictions autoregressively
+                    output = self.timer_backbone.generate(
+                        series,
+                        max_new_tokens=pred_len,
+                    )
+
+                    # Extract only the generated tokens (last pred_len positions)
+                    predictions = output[:, -pred_len:]
+            except Exception as e:
+                # Disable further generation attempts to avoid repeated noise
+                self._generation_disabled = True
+                LOGGER.warning(
+                    f"Timer generate failed ({e}), falling back to forward pass"
                 )
+                output = None
+        else:
+            output = None
 
-                # Extract only the generated tokens (last pred_len positions)
-                predictions = output[:, -pred_len:]
-
-        except Exception as e:
-            # Fallback: if generate fails, use forward pass
-            LOGGER.warning(
-                f"Timer generate failed ({e}), falling back to forward pass"
-            )
+        if output is None:
             output = self.timer_backbone(series)
             # Extract logits and take last pred_len positions
-            if hasattr(output, 'logits'):
+            if hasattr(output, "logits"):
                 predictions = output.logits[:, -pred_len:]
             else:
                 predictions = output[:, -pred_len:]
@@ -413,18 +440,20 @@ class TimerModel(ARBaseModel):
                 f"Input dimension mismatch: expected {self.input_dim}, got {D}"
             )
 
-        # Truncate or pad to lookback_length if needed
-        if T > self.lookback_length:
-            x = x[:, -self.lookback_length:, :]
-            LOGGER.debug(f"Truncated input from {T} to {self.lookback_length} steps")
-        elif T < self.lookback_length:
+        # Truncate or pad to the required context length if needed
+        target_context = max(self.lookback_length, self.min_context_length)
+
+        if T > target_context:
+            x = x[:, -target_context:, :]
+            LOGGER.debug(f"Truncated input from {T} to {target_context} steps")
+        elif T < target_context:
             # Pad with zeros at the beginning
-            pad_length = self.lookback_length - T
+            pad_length = target_context - T
             padding = torch.zeros(
                 B, pad_length, D, dtype=x.dtype, device=x.device
             )
             x = torch.cat([padding, x], dim=1)
-            LOGGER.debug(f"Padded input from {T} to {self.lookback_length} steps")
+            LOGGER.debug(f"Padded input from {T} to {target_context} steps")
 
         # Normalize inputs if enabled
         normalization_stats = None
@@ -471,6 +500,7 @@ class TimerModel(ARBaseModel):
             f"  output_dim={self.output_dim},\n"
             f"  pred_len={self.pred_len},\n"
             f"  lookback_length={self.lookback_length},\n"
+            f"  min_context_length={self.min_context_length},\n"
             f"  normalize_inputs={self.normalize_inputs},\n"
             f"  freeze_backbone={self.freeze_backbone},\n"
             f"  total_params={self.get_num_params():,},\n"
