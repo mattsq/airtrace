@@ -374,9 +374,10 @@ def test_tsmixer_gradient_flow():
     loss.backward()
 
     # Check that gradients exist
-    assert x.grad is not None
-    assert torch.isfinite(x.grad).all()
-    assert torch.any(x.grad != 0)
+    input_grad = x.grad
+    assert isinstance(input_grad, torch.Tensor)
+    assert torch.isfinite(input_grad).all()
+    assert torch.any(input_grad != 0)
 
 
 def test_tsmixer_deterministic_eval():

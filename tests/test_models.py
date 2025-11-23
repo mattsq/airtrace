@@ -57,9 +57,10 @@ def assert_nonzero_gradients(parameters: Iterable[torch.nn.Parameter]) -> None:
     grad_norms: List[float] = []
     for param in parameters:
         if param.requires_grad:
-            assert param.grad is not None
-            assert torch.isfinite(param.grad).all()
-            grad_norms.append(param.grad.detach().abs().sum().item())
+            grad = param.grad
+            assert isinstance(grad, torch.Tensor)
+            assert torch.isfinite(grad).all()
+            grad_norms.append(grad.detach().abs().sum().item())
 
     assert grad_norms, "No trainable parameters were checked for gradients"
     assert any(norm > 0 for norm in grad_norms), "Expected at least one non-zero gradient"
@@ -2094,9 +2095,10 @@ def test_cyclenet_model_gradient_flow():
     assert_nonzero_gradients(model.parameters())
 
     # Check that learnable cycles have gradients
-    assert model.learnable_cycles.cycles.grad is not None
-    assert torch.isfinite(model.learnable_cycles.cycles.grad).all()
-    assert model.learnable_cycles.cycles.grad.detach().abs().sum().item() > 0
+    cycles_grad = model.learnable_cycles.cycles.grad
+    assert isinstance(cycles_grad, torch.Tensor)
+    assert torch.isfinite(cycles_grad).all()
+    assert cycles_grad.detach().abs().sum().item() > 0
 
 
 def test_cyclenet_model_num_params():

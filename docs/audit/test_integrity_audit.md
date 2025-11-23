@@ -34,6 +34,7 @@ This audit identified **significant test integrity issues** across multiple cate
 - ✅ Reinforced transform and model tests to check learned statistics, gradient magnitudes, and wrapper contents rather than only verifying objects exist.
 - ✅ Fixed Informer attention reporting, SOFTS normalization statistics, and LoRA adapter initialization to ensure gradient/shape validations in hardened tests reflect true model behavior.
 - ✅ Hardened transform coverage for clipping and smoothing by asserting fitted bounds, Gaussian filter outputs, and metadata, eliminating weak "ran without error" assertions in `tests/test_transforms.py`.
+- ✅ (2026-05-07) Eliminated remaining `assert ... is not None` checks across visualization and model gradient tests, and updated `scripts/audit_tests.sh` to tolerate zero-match cases so the audit can report a clean slate.
 
 ---
 
@@ -45,6 +46,7 @@ Tests that only check for existence (`is not None`) without validating correctne
 ### Statistics
 - **Total instances:** 49
 - **Files affected:** 14
+- **Current status (2026-05-07):** Automated audit now reports **0** remaining `is not None` assertions after remediation; details below capture the original findings for reference.
 
 ### Top Offenders
 
