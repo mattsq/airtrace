@@ -57,7 +57,10 @@ def test_tsmixer_forward():
     assert "preds" in output
     assert "extras" in output
     assert output["preds"].shape == (batch_size, pred_len, num_channels)
-    assert output["extras"]["block_outputs"] is not None
+    block_outputs = output["extras"]["block_outputs"]
+    assert isinstance(block_outputs, list)
+    assert len(block_outputs) == model.num_blocks
+    assert all(torch.isfinite(out).all() for out in block_outputs)
 
 
 def test_tsmixer_residual_connections():
@@ -372,8 +375,8 @@ def test_tsmixer_gradient_flow():
 
     # Check that gradients exist
     assert x.grad is not None
-    assert not torch.isnan(x.grad).any()
     assert torch.isfinite(x.grad).all()
+    assert torch.any(x.grad != 0)
 
 
 def test_tsmixer_deterministic_eval():
@@ -484,7 +487,7 @@ def test_tsmixer_output_projection():
     )
 
     # Check output projection exists
-    assert model.output_projection is not None
+    assert isinstance(model.output_projection, torch.nn.Linear)
     assert model.output_projection.in_features == input_dim
     assert model.output_projection.out_features == output_dim
 
@@ -531,7 +534,7 @@ def test_tsmixer_block_outputs_tracking():
     output = model(x)
 
     block_outputs = output["extras"]["block_outputs"]
-    assert block_outputs is not None
+    assert isinstance(block_outputs, list)
     assert block_outputs.shape[0] == num_blocks
     assert block_outputs.shape[1:] == (2, 96, 5)  # [num_blocks, batch, seq, features]
 
