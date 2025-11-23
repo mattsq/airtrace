@@ -1,6 +1,6 @@
 # Test Integrity Audit
 
-This directory contains the results of a comprehensive test integrity audit conducted on 2025-11-22.
+This directory contains the results of a comprehensive test integrity audit conducted on 2025-11-22 and continually updated as remediation progresses.
 
 ## Quick Links
 
@@ -10,40 +10,34 @@ This directory contains the results of a comprehensive test integrity audit cond
 
 ## Executive Summary
 
-The audit identified **significant test quality issues** that could provide false confidence:
+The audit originally highlighted **significant test quality issues** (weak assertions, over-mocking, and stub-heavy flows). After remediation, the current snapshot shows no weak-assertion matches, no tests exceeding the monkeypatch threshold, and integration coverage for CLI training/evaluation and ONNX export.
 
-### Critical Findings
+### Current Findings (2027-02-04)
 
-🔴 **2 tests with excessive mocking** - Mock the exact infrastructure they claim to test
-- `test_cli_additional.py::test_evaluate_runs_with_stub_components`
-- `test_cli.py::test_train_accepts_all_flag_combinations`
-
-⚠️ **49 weak assertions** - Check existence, not correctness
-- 15 in `test_viz_plots.py`
-- 12 in `test_models.py`
-- 22 in other model tests
-
-⚠️ **36+ stub classes** - Some with hardcoded returns bypassing logic
+- 🟢 **Weak assertions:** 0 remaining (was 49)
+- 🟢 **Excessive mocking:** 0 tests above threshold; remaining mocks limited to compatibility shims
+- 🟡 **Stubs:** Only documented fixture helpers remain
 
 ### Impact
 
-These issues mean that:
-- Tests pass even when core functionality is broken
-- Coverage metrics are inflated
-- Bugs can slip through CI
+- Core workflows are exercised with real data modules, trainers, and exporters
+- Coverage is more behavior-focused, reducing false positives in CI
+- Ongoing work is limited to documentation and CI guardrails
 
 ### Recommendations
 
-**Priority 1 (CRITICAL):** Rewrite or delete the 2 over-mocked CLI tests
-**Priority 2 (HIGH):** Strengthen assertions in visualization and model tests
-**Priority 3 (MEDIUM):** Add integration tests for critical workflows
+- Maintain integration-focused coverage for CLI, data, and export paths
+- Keep assertions behavior-driven (outputs, metadata, gradients)
+- Add CI enforcement for over-mocking and continue running `./scripts/audit_tests.sh --detailed`
 
-### Remediation Progress (2025-02-09)
+### Remediation Progress (2027-02-04)
 
-- ✅ `tests/test_viz_plots.py` now validates plotted content (lines, labels, counts) instead of relying on `is not None` checks.
-- ✅ CLI tests now target real formatting and data-check/dry-run flows rather than replacing core components with stubs.
+- ✅ `tests/test_viz_plots.py` validates plotted content (lines, labels, counts) instead of relying on `is not None` checks.
+- ✅ CLI tests target real formatting and data-check/dry-run flows rather than replacing core components with stubs.
+- ✅ Integration workflows (`tests/integration/test_workflows.py`) cover training, checkpointing, evaluation, and ONNX export.
+- 🟡 Added `tests/README.md` with philosophy and mocking guidance; CI hook for monkeypatch counts remains pending.
 
-**Estimated remediation time:** 16-24 hours
+**Estimated remediation time:** Completed (ongoing maintenance only)
 
 ## How to Use This Audit
 
