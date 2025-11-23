@@ -4,6 +4,7 @@ from typing import Any, Dict
 
 import numpy as np
 import pytest
+from scipy.ndimage import gaussian_filter1d, uniform_filter1d
 
 from airtrace.transforms import (
     Compose,
@@ -261,8 +262,20 @@ def test_clip_std_method():
     sample = dataset[0]
     x, y, meta = transform(sample["x"], sample["y"], sample["meta"])
 
-    # Check it ran without error
+    # Bounds should reflect dataset statistics
+    expected_mean = dataset._x_data.mean(axis=(0, 1))
+    expected_std = dataset._x_data.std(axis=(0, 1))
+    np.testing.assert_allclose(transform.lower_bounds, expected_mean - 3.0 * expected_std)
+    np.testing.assert_allclose(transform.upper_bounds, expected_mean + 3.0 * expected_std)
+
+    # All values should be clipped within the learned bounds
     assert x.shape == sample["x"].shape
+    assert x.min() >= transform.lower_bounds.min()
+    assert x.max() <= transform.upper_bounds.max()
+    assert y.shape == sample["y"].shape
+    assert y.min() >= transform.lower_bounds.min()
+    assert y.max() <= transform.upper_bounds.max()
+    assert meta["clip_method"] == "std"
 
 
 def test_noop_transform():
@@ -446,23 +459,34 @@ def test_smooth_transform():
     sample = dataset[0]
     x, y, meta = transform(sample["x"], sample["y"], sample["meta"])
 
-    # Check shapes preserved
+    # Check shapes preserved and smoothing applied
     assert x.shape == sample["x"].shape
     assert y.shape == sample["y"].shape
+    expected_x = uniform_filter1d(
+        sample["x"], size=transform.window_size, axis=0, mode=transform.mode
+    )
+    np.testing.assert_allclose(x, expected_x)
     assert meta["smoothed"] is True
 
 
 def test_smooth_gaussian():
     """Test Gaussian smoothing."""
-    dataset = MockDataset()
+    dataset = MockDataset(seq_len=8, dim=2, seed=123)
     transform = SmoothTransform(window_size=5, method="gaussian")
 
     transform.fit(dataset)
     sample = dataset[0]
     x, y, meta = transform(sample["x"], sample["y"], sample["meta"])
 
-    # Check it ran without error
+    sigma = transform.window_size / 6.0
+    expected_x = gaussian_filter1d(sample["x"], sigma=sigma, axis=0, mode=transform.mode)
+    expected_y = gaussian_filter1d(sample["y"], sigma=sigma, axis=0, mode=transform.mode)
+
     assert x.shape == sample["x"].shape
+    assert y.shape == sample["y"].shape
+    np.testing.assert_allclose(x, expected_x)
+    np.testing.assert_allclose(y, expected_y)
+    assert meta["smooth_method"] == "gaussian"
 
 
 def test_impute_transform():
