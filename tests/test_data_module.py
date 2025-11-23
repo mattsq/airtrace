@@ -3,8 +3,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from airtrace.data import datamodule
 from airtrace.data.datamodule import SensorDataModule
+from airtrace.data.windows import WindowSpec
 from airtrace.data.dataset import SensorWindowDataset
 from airtrace.transforms.context import ContextTransform
 
@@ -46,28 +46,15 @@ class _DummyStore:
         return base.astype(np.float32), meta
 
 
-def test_sensor_data_module_builds_datasets_and_loaders(monkeypatch, tmp_path):
-    train_index = pd.DataFrame({"flight_id": ["flight_1"], "start_idx": [0], "end_idx": [5]})
-    val_index = pd.DataFrame({"flight_id": ["flight_1"], "start_idx": [1], "end_idx": [6]})
-
-    def _fake_read_parquet(path, *args, **kwargs):
-        name = getattr(path, "name", str(path))
-        if "train" in name:
-            return train_index
-        if "val" in name:
-            return val_index
-        raise FileNotFoundError(path)
-
-    monkeypatch.setattr(datamodule.pd, "read_parquet", _fake_read_parquet)
-    monkeypatch.setattr(datamodule, "DataStore", _DummyStore)
-
+def test_sensor_data_module_builds_datasets_and_loaders(minimal_data_root: Path):
     transforms = _DummyTransform()
     config = {
-        "root": tmp_path,
+        "root": minimal_data_root,
         "sensors": {"use": ["s1", "s2"]},
-        "window": {"input_len": 4, "pred_len": 2, "stride": 1, "target_sensors": ["s2"]},
-        "train_index": "train.parquet",
-        "val_index": "val.parquet",
+        "window": {"input_len": 4, "pred_len": 1, "stride": 1, "target_sensors": ["s2"]},
+        "train_index": "metadata/train.parquet",
+        "val_index": "metadata/val.parquet",
+        "dataset_name": "tiny",
     }
 
     module = SensorDataModule(config, transforms=transforms, batch_size=2, num_workers=0)
@@ -89,22 +76,14 @@ def test_sensor_data_module_builds_datasets_and_loaders(monkeypatch, tmp_path):
     assert val_batch["x"].shape[1:] == (4, 2)
 
 
-def test_sensor_data_module_supports_optional_test_set(monkeypatch, tmp_path):
-    index_df = pd.DataFrame({"flight_id": ["flight_1"], "start_idx": [0], "end_idx": [3]})
-
-    def _fake_read_parquet(path, *args, **kwargs):
-        return index_df
-
-    monkeypatch.setattr(datamodule.pd, "read_parquet", _fake_read_parquet)
-    monkeypatch.setattr(datamodule, "DataStore", _DummyStore)
-
+def test_sensor_data_module_supports_optional_test_set(minimal_data_root: Path):
     config = {
-        "root": tmp_path,
+        "root": minimal_data_root,
         "sensors": {"use": ["s1"]},
-        "window": {"input_len": 2, "pred_len": 1, "stride": 1, "target_sensors": ["s1"]},
-        "train_index": "train.parquet",
-        "val_index": "val.parquet",
-        "test_index": "test.parquet",
+        "window": {"input_len": 4, "pred_len": 1, "stride": 1, "target_sensors": ["s1"]},
+        "train_index": "metadata/train.parquet",
+        "val_index": "metadata/val.parquet",
+        "test_index": "metadata/test.parquet",
     }
 
     module = SensorDataModule(config, transforms=None, batch_size=1, num_workers=0)
@@ -120,7 +99,14 @@ def test_sensor_data_module_supports_optional_test_set(monkeypatch, tmp_path):
 def test_sensor_window_dataset_applies_target_mapping():
     index_df = pd.DataFrame({"flight_id": ["f1"], "start_idx": [0], "end_idx": [4]})
     store = _DummyStore(Path("/tmp"))
-    dataset = SensorWindowDataset(index_df, data_store=store, transforms=None, sensor_names=["s1", "s2"], target_sensors=["s2"], window_spec=datamodule.WindowSpec(3, 1, 1, ["s2"]))
+    dataset = SensorWindowDataset(
+        index_df,
+        data_store=store,
+        transforms=None,
+        sensor_names=["s1", "s2"],
+        target_sensors=["s2"],
+        window_spec=WindowSpec(3, 1, 1, ["s2"]),
+    )
 
     sample = dataset[0]
     assert sample["x"].shape == (3, 2)
