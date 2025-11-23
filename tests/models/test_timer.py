@@ -41,7 +41,7 @@ def mock_timer_backbone():
 @pytest.fixture
 def mock_automodel(mock_timer_backbone):
     """Mock AutoModelForCausalLM to return our mock model."""
-    with patch("airtrace.models.timer.AutoModelForCausalLM") as mock_cls:
+    with patch("transformers.AutoModelForCausalLM") as mock_cls:
         mock_cls.from_pretrained = MagicMock(return_value=mock_timer_backbone)
         yield mock_cls
 
@@ -365,7 +365,7 @@ def test_timer_from_config():
         }
     }
 
-    with patch("airtrace.models.timer.AutoModelForCausalLM"):
+    with patch("transformers.AutoModelForCausalLM"):
         model = build_model(config, input_dim=6, output_dim=3)
 
         assert isinstance(model, TimerModel)
@@ -393,7 +393,9 @@ def test_timer_lora_warning(mock_automodel):
 
 def test_timer_imports_error():
     """Timer should raise helpful error if transformers not installed."""
-    with patch("airtrace.models.timer.AutoModelForCausalLM", side_effect=ImportError("No module named 'transformers'")):
+    # Mock the import to fail
+    import sys
+    with patch.dict(sys.modules, {'transformers': None}):
         with pytest.raises(ImportError, match="transformers"):
             model = TimerModel(
                 input_dim=6,
