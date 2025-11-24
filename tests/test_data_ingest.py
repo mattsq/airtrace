@@ -5,7 +5,7 @@ import pytest
 
 from airtrace.data.ingest.config_gen import ConfigGenerator
 from airtrace.data.ingest.indexer import WindowIndexer
-from airtrace.data.ingest.processor import FlightProcessor
+from airtrace.data.ingest.processor import FlightProcessResult, FlightProcessor
 from airtrace.data.ingest.validator import FlightValidator
 
 
@@ -70,7 +70,14 @@ def test_window_indexer_create_all_indices(tmp_path):
     test_df.to_parquet(processed_dir / "test.parquet", engine="pyarrow")
 
     indexer = WindowIndexer(input_len=3, pred_len=2, stride=2, processed_dir=processed_dir)
-    train_path, val_path, test_path = indexer.create_all_indices(
+    (
+        train_path,
+        val_path,
+        test_path,
+        train_len,
+        val_len,
+        test_len,
+    ) = indexer.create_all_indices(
         train_ids=["train"], val_ids=["val"], test_ids=["test"], output_dir=tmp_path, dataset_name="demo"
     )
 
@@ -78,8 +85,12 @@ def test_window_indexer_create_all_indices(tmp_path):
     assert val_path.exists()
     assert test_path.exists()
 
+    assert train_len == 2
+    assert val_len == 1
+    assert test_len == 2
+
     train_index = pd.read_parquet(train_path)
-    assert len(train_index) == 2
+    assert len(train_index) == train_len
     assert train_index.iloc[0].to_dict() == {"flight_id": "train", "start_idx": 0, "end_idx": 5}
 
 
@@ -157,6 +168,25 @@ def test_flight_processor_missing_sensors_returns_none(tmp_path):
     output = processor.process_flight("flight", flight_path)
     assert output is None
     assert not (output_dir / "flight.parquet").exists()
+
+
+def test_flight_processor_returns_result_metadata(tmp_path):
+    output_dir = tmp_path / "processed"
+    processor = FlightProcessor(
+        output_dir=output_dir,
+        sensors=["a"],
+        timestamp_column="time",
+    )
+
+    flight_path = tmp_path / "flight.parquet"
+    pd.DataFrame({"time": pd.date_range("2024-01-01", periods=4, freq="1s"), "a": range(4)}).to_parquet(
+        flight_path, engine="pyarrow"
+    )
+
+    result = processor.process_flight("flight", flight_path)
+    assert isinstance(result, FlightProcessResult)
+    assert result.length == 4
+    assert result.output_path.exists()
 
 
 def test_flight_processor_standardize_timestamp_errors_on_missing_column():

@@ -2,12 +2,25 @@
 Flight data processing - cleaning, resampling, and saving.
 """
 
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
-import pandas as pd
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 import logging
+from pathlib import Path
+from typing import Dict, List, Optional, Set, Tuple, Union
+
+import pandas as pd
+import pyarrow.dataset as ds
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class FlightProcessResult:
+    """Result of a processed flight."""
+
+    flight_id: str
+    output_path: Path
+    length: int
 
 
 class FlightProcessor:
@@ -19,7 +32,8 @@ class FlightProcessor:
         sensors: List[str],
         timestamp_column: str,
         resample_rate: Optional[str] = None,
-        dataset_name: Optional[str] = None
+        dataset_name: Optional[str] = None,
+        forward_fill_limit: int = 5
     ):
         """
         Args:
@@ -34,6 +48,7 @@ class FlightProcessor:
         self.timestamp_column = timestamp_column
         self.resample_rate = resample_rate
         self.dataset_name = dataset_name
+        self.forward_fill_limit = forward_fill_limit
 
         # Create output directory if needed
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -41,8 +56,9 @@ class FlightProcessor:
     def process_flight(
         self,
         flight_id: str,
-        source: Union[Path, Tuple[Path, str, str]]
-    ) -> Optional[Path]:
+        source: Union[Path, Tuple[Path, str, str]],
+        min_length: int = 1
+    ) -> Optional[FlightProcessResult]:
         """
         Process a single flight.
 
@@ -52,18 +68,10 @@ class FlightProcessor:
                    for filtering multi-flight files
 
         Returns:
-            Path to saved processed file, or None if processing failed
+            Result with path and length, or None if processing failed/too short
         """
         try:
-            # Load flight data
-            if isinstance(source, tuple):
-                # Multi-flight file - need to filter
-                file_path, id_column, id_value = source
-                df = pd.read_parquet(file_path, engine="pyarrow")
-                df = df[df[id_column] == id_value].copy()
-            else:
-                # Single flight file
-                df = pd.read_parquet(source, engine="pyarrow")
+            df = self._load_flight_dataframe(source)
 
             # Standardize timestamp index
             df = self._standardize_timestamp(df)
@@ -76,16 +84,21 @@ class FlightProcessor:
                 df = self._resample(df)
 
             # Validate minimum length
-            if len(df) == 0:
-                logger.warning(f"Flight {flight_id} has no data after processing, skipping")
+            if len(df) < min_length:
+                logger.warning(
+                    f"Flight {flight_id} too short after processing ({len(df)} < {min_length}), skipping"
+                )
                 return None
 
             # Save to output directory
             output_path = self.output_dir / f"{flight_id}.parquet"
             df.to_parquet(output_path, engine="pyarrow", index=True)
 
-            logger.info(f"Processed flight {flight_id}: {len(df)} timesteps, saved to {output_path}")
-            return output_path
+            length = len(df)
+            logger.info(
+                f"Processed flight {flight_id}: {length} timesteps, saved to {output_path}"
+            )
+            return FlightProcessResult(flight_id=flight_id, output_path=output_path, length=length)
 
         except Exception as e:
             logger.error(f"Failed to process flight {flight_id}: {e}")
@@ -94,7 +107,8 @@ class FlightProcessor:
     def process_all(
         self,
         flight_registry: Dict[str, Union[Path, Tuple[Path, str, str]]],
-        min_length: int = 1
+        min_length: int = 1,
+        max_workers: Optional[int] = None
     ) -> List[str]:
         """
         Process all flights in registry.
@@ -106,22 +120,26 @@ class FlightProcessor:
         Returns:
             List of successfully processed flight IDs
         """
-        successful_flights = []
+        success_map: Dict[str, bool] = {flight_id: False for flight_id in flight_registry}
 
-        for flight_id, source in flight_registry.items():
-            output_path = self.process_flight(flight_id, source)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(self.process_flight, flight_id, source, min_length): flight_id
+                for flight_id, source in flight_registry.items()
+            }
 
-            if output_path is not None:
-                # Check length
-                df = pd.read_parquet(output_path)
-                if len(df) >= min_length:
-                    successful_flights.append(flight_id)
-                else:
-                    logger.warning(
-                        f"Flight {flight_id} too short ({len(df)} < {min_length}), skipping"
-                    )
-                    # Remove the file
-                    output_path.unlink()
+            for future in as_completed(futures):
+                flight_id = futures[future]
+                try:
+                    result = future.result()
+                except Exception as exc:  # pragma: no cover - surfaced via logger
+                    logger.error(f"Failed to process flight {flight_id}: {exc}")
+                    continue
+
+                if result is not None:
+                    success_map[flight_id] = True
+
+        successful_flights = [fid for fid in flight_registry if success_map[fid]]
 
         logger.info(
             f"Successfully processed {len(successful_flights)}/{len(flight_registry)} flights"
@@ -134,9 +152,7 @@ class FlightProcessor:
 
         # If timestamp is already the index, we're done
         if pd.api.types.is_datetime64_any_dtype(df.index):
-            # Ensure sorted
-            df = df.sort_index()
-            return df
+            return df.sort_index()
 
         # Set timestamp column as index
         if self.timestamp_column in df.columns:
@@ -148,10 +164,10 @@ class FlightProcessor:
         else:
             raise ValueError(f"Timestamp column '{self.timestamp_column}' not found")
 
-        # Ensure sorted
+        df.index = pd.to_datetime(df.index, errors="coerce")
         df = df.sort_index()
 
-        return df
+        return df[~df.index.to_series().isna()]
 
     def _filter_sensors(self, df: pd.DataFrame) -> pd.DataFrame:
         """Filter to only sensor columns."""
@@ -175,7 +191,7 @@ class FlightProcessor:
         df_resampled = df.resample(self.resample_rate).mean()
 
         # Forward-fill small gaps (up to 5 steps)
-        df_resampled = df_resampled.ffill(limit=5)
+        df_resampled = df_resampled.ffill(limit=self.forward_fill_limit)
 
         # Drop any remaining NaN rows
         initial_len = len(df_resampled)
@@ -186,3 +202,35 @@ class FlightProcessor:
             logger.debug(f"Dropped {dropped} rows with NaN after resampling")
 
         return df_resampled
+
+    def _load_flight_dataframe(
+        self, source: Union[Path, Tuple[Path, str, str]]
+    ) -> pd.DataFrame:
+        """Load a single flight with column pruning and filtering."""
+
+        if isinstance(source, tuple):
+            file_path, id_column, id_value = source
+            dataset = ds.dataset(file_path)
+            columns = self._required_columns({id_column})
+            available_columns = [c for c in columns if c in dataset.schema.names]
+            table = dataset.to_table(
+                columns=available_columns, filter=ds.field(id_column) == id_value
+            )
+            return table.to_pandas()
+
+        dataset = ds.dataset(source)
+        columns = self._required_columns()
+        available_columns = [c for c in columns if c in dataset.schema.names]
+        table = dataset.to_table(columns=available_columns)
+        return table.to_pandas()
+
+    def _required_columns(self, extra: Optional[Set[str]] = None) -> Set[str]:
+        """Compute the minimal set of columns needed for processing."""
+
+        columns: Set[str] = set(self.sensors)
+        columns.add(self.timestamp_column)
+
+        if extra:
+            columns.update(extra)
+
+        return columns
