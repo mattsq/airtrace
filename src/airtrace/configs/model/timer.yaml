@@ -1,0 +1,15 @@
+# @package _global_
+
+model:
+  name: timer
+  params:
+    pred_len: 96                      # Forecast horizon in timesteps
+    checkpoint: thuml/timer-base-84m  # HuggingFace model ID or local path
+    lookback_length: 512              # Context window size (Timer supports variable)
+    normalize_inputs: true            # Z-score normalization (recommended for Timer)
+    freeze_backbone: false            # Set true for zero-shot or LoRA fine-tuning
+    lora_rank: 0                      # LoRA adapter rank (0 disables, >0 enables)
+    lora_alpha: 8.0                   # LoRA scaling factor
+    lora_dropout: 0.05                # LoRA dropout rate
+    device: cpu                       # Device to load model on (cpu or cuda)
+    trust_remote_code: true           # Required for HuggingFace Timer model
