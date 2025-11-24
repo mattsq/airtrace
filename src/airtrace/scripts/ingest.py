@@ -399,7 +399,8 @@ def ingest_dataset(args):
             config_path,
             n_flights=len(train_ids) + len(val_ids) + len(test_ids),
             input_path=str(input_path),
-            force=args.force
+            force=args.force,
+            index_paths=(train_path, val_path, test_path),
         )
     else:
         logger.info("\n[Step 5/5] Skipping config generation (--skip-config)")
