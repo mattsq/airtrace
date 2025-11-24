@@ -40,13 +40,18 @@ Examples:
   airtrace ingest data/raw/qantas/ --dataset-name qantas_fleet
 
   # With custom window parameters
-  airtrace ingest data/flights.parquet --dataset-name airbus \\
+  airtrace ingest data/flights.parquet --dataset-name airbus \
     --input-len 512 --pred-len 64 --stride 16
 
   # With resampling
-  airtrace ingest data/flights.parquet --dataset-name boeing \\
+  airtrace ingest data/flights.parquet --dataset-name boeing \
     --resample-rate 1S --target-sensors fuel_flow,mach,n1
-        """
+
+Performance tips:
+  --max-workers 4          Parallelize processing and windowing
+  --sample-rows 500        Limit rows read when validating inputs/checksums
+  --reuse-indices          Reuse matching index files instead of regenerating
+"""
     )
 
     # Required arguments
@@ -134,6 +139,38 @@ Examples:
         "--skip-config",
         action="store_true",
         help="Skip creating YAML config file"
+    )
+    parser.add_argument(
+        "--reuse-processed",
+        action="store_true",
+        help="Reuse processed flights when checksums and mtimes match"
+    )
+    parser.add_argument(
+        "--reuse-indices",
+        action="store_true",
+        help="Reuse existing window indices when metadata matches"
+    )
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=1,
+        help="Maximum workers for processing/indexing (default: 1)"
+    )
+    parser.add_argument(
+        "--sample-rows",
+        type=int,
+        default=1000,
+        help="Rows to sample for validation and checksum generation (default: 1000)"
+    )
+    parser.add_argument(
+        "--fast-summary",
+        action="store_true",
+        help="Use cached window counts instead of re-reading parquet files"
+    )
+    parser.add_argument(
+        "--no-summary",
+        action="store_true",
+        help="Skip printing the ingestion summary"
     )
     parser.add_argument(
         "--force",
@@ -251,7 +288,8 @@ def ingest_dataset(args):
     validator = FlightValidator(
         input_path,
         timestamp_column=args.timestamp_column,
-        flight_id_column=args.flight_id_column
+        flight_id_column=args.flight_id_column,
+        sample_rows=args.sample_rows,
     )
 
     validation_report = validator.validate()
@@ -297,19 +335,28 @@ def ingest_dataset(args):
     logger.info(f"  Test: {len(test_ids)} flights")
 
     # Step 3: Process flights
+    processor = FlightProcessor(
+        Path("data/processed"),
+        sensor_metadata.sensors,
+        sensor_metadata.timestamp_column,
+        resample_rate=args.resample_rate,
+        dataset_name=dataset_name,
+        max_workers=args.max_workers,
+        sample_rows=args.sample_rows,
+        force=args.force,
+    )
+
+    processed_metadata = processor._load_existing_metadata()
     if not args.skip_processed:
         logger.info("\n[Step 3/5] Processing flights...")
-        processor = FlightProcessor(
-            Path("data/processed"),
-            sensor_metadata.sensors,
-            sensor_metadata.timestamp_column,
-            resample_rate=args.resample_rate,
-            dataset_name=dataset_name
-        )
 
         # Process with minimum length requirement
         min_length = args.input_len + args.pred_len
-        processed_ids = processor.process_all(flight_registry, min_length=min_length)
+        processed_ids, processed_metadata = processor.process_all(
+            flight_registry,
+            min_length=min_length,
+            reuse_existing=args.reuse_processed,
+        )
 
         # Update splits to remove failed flights
         train_ids = [id for id in train_ids if id in processed_ids]
@@ -338,22 +385,30 @@ def ingest_dataset(args):
         args.input_len,
         args.pred_len,
         args.stride,
-        Path("data/processed")
+        Path("data/processed"),
+        metadata_dir=Path("data/metadata"),
     )
 
-    train_path, val_path, test_path = indexer.create_all_indices(
+    train_path, val_path, test_path, window_counts = indexer.create_all_indices(
         train_ids,
         val_ids,
         test_ids,
         Path("data/metadata"),
-        dataset_name
+        dataset_name,
+        reuse_existing=args.reuse_indices,
+        processed_metadata=processed_metadata,
     )
 
-    # Load to get window counts
-    import pandas as pd
-    train_windows = len(pd.read_parquet(train_path))
-    val_windows = len(pd.read_parquet(val_path))
-    test_windows = len(pd.read_parquet(test_path))
+    if args.fast_summary:
+        train_windows = window_counts.get("train", 0)
+        val_windows = window_counts.get("val", 0)
+        test_windows = window_counts.get("test", 0)
+    else:
+        import pandas as pd
+
+        train_windows = len(pd.read_parquet(train_path))
+        val_windows = len(pd.read_parquet(val_path))
+        test_windows = len(pd.read_parquet(test_path))
 
     # Step 5: Generate config
     if not args.skip_config:
@@ -383,20 +438,21 @@ def ingest_dataset(args):
         logger.info("\n[Step 5/5] Skipping config generation (--skip-config)")
 
     # Print summary
-    print_summary(
-        dataset_name,
-        train_ids,
-        val_ids,
-        test_ids,
-        sensor_metadata.sensors,
-        target_sensors,
-        args.input_len,
-        args.pred_len,
-        args.stride,
-        train_windows,
-        val_windows,
-        test_windows
-    )
+    if not args.no_summary:
+        print_summary(
+            dataset_name,
+            train_ids,
+            val_ids,
+            test_ids,
+            sensor_metadata.sensors,
+            target_sensors,
+            args.input_len,
+            args.pred_len,
+            args.stride,
+            train_windows,
+            val_windows,
+            test_windows,
+        )
 
 
 def main():
