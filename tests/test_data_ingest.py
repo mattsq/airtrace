@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pandas as pd
+import numpy as np
 import pytest
 
 from airtrace.data.ingest.config_gen import ConfigGenerator
@@ -164,6 +165,105 @@ def test_flight_processor_standardize_timestamp_errors_on_missing_column():
     df = pd.DataFrame({"a": [1, 2, 3]})
     with pytest.raises(ValueError):
         processor._standardize_timestamp(df)
+
+
+def test_flight_processor_standardize_timestamp_uses_dtype_fastpath(tmp_path):
+    processor = FlightProcessor(
+        output_dir=tmp_path,
+        sensors=["a"],
+        timestamp_column="time",
+        timestamp_dtype="datetime64[ns]",
+    )
+
+    timestamps = pd.date_range("2024-01-01", periods=3, freq="s")
+    df = pd.DataFrame({"time": timestamps, "a": [1, 2, 3]})
+
+    standardized = processor._standardize_timestamp(df)
+    assert standardized.index.name == "timestamp"
+    assert standardized.index.equals(timestamps)
+
+
+def test_flight_processor_resample_numpy_backend(tmp_path):
+    processor = FlightProcessor(
+        output_dir=tmp_path,
+        sensors=["a"],
+        timestamp_column="time",
+        resample_rate="1s",
+        resample_backend="numpy",
+    )
+
+    df = pd.DataFrame(
+        {
+            "time": pd.date_range("2024-01-01", periods=3, freq="2s"),
+            "a": [0.0, 2.0, 4.0],
+        }
+    )
+    standardized = processor._standardize_timestamp(df)
+    filtered = processor._filter_sensors(standardized)
+    resampled = processor._resample(filtered)
+
+    np.testing.assert_allclose(
+        resampled["a"].to_numpy(), np.array([0.0, 1.0, 2.0, 3.0, 4.0])
+    )
+    assert resampled.index[0] == pd.Timestamp("2024-01-01")
+
+
+def test_flight_processor_resample_respects_ffill_limit(tmp_path):
+    processor = FlightProcessor(
+        output_dir=tmp_path,
+        sensors=["a"],
+        timestamp_column="time",
+        resample_rate="1s",
+        ffill_limit=0,
+    )
+
+    df = pd.DataFrame(
+        {
+            "time": pd.to_datetime([
+                "2024-01-01T00:00:00",
+                "2024-01-01T00:00:02",
+            ]),
+            "a": [1.0, 3.0],
+        }
+    )
+    standardized = processor._standardize_timestamp(df)
+    filtered = processor._filter_sensors(standardized)
+    resampled = processor._resample(filtered)
+
+    assert list(resampled.index) == list(
+        pd.to_datetime(["2024-01-01T00:00:00", "2024-01-01T00:00:02"])
+    )
+    np.testing.assert_allclose(resampled["a"].to_numpy(), np.array([1.0, 3.0]))
+
+
+def test_flight_processor_resample_numpy_respects_ffill_limit(tmp_path):
+    processor = FlightProcessor(
+        output_dir=tmp_path,
+        sensors=["a"],
+        timestamp_column="time",
+        resample_rate="1s",
+        resample_backend="numpy",
+        ffill_limit=1,
+    )
+
+    df = pd.DataFrame(
+        {
+            "time": pd.to_datetime([
+                "2024-01-01T00:00:00",
+                "2024-01-01T00:00:05",
+            ]),
+            "a": [0.0, 5.0],
+        }
+    )
+
+    standardized = processor._standardize_timestamp(df)
+    filtered = processor._filter_sensors(standardized)
+    resampled = processor._resample(filtered)
+
+    assert list(resampled.index) == list(
+        pd.to_datetime(["2024-01-01T00:00:00", "2024-01-01T00:00:05"])
+    )
+    np.testing.assert_allclose(resampled["a"].to_numpy(), np.array([0.0, 5.0]))
 
 
 def test_flight_validator_detects_schema_and_quality(tmp_path):

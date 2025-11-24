@@ -5,6 +5,7 @@ Flight data processing - cleaning, resampling, and saving.
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 import pandas as pd
+import numpy as np
 import logging
 
 logger = logging.getLogger(__name__)
@@ -19,7 +20,10 @@ class FlightProcessor:
         sensors: List[str],
         timestamp_column: str,
         resample_rate: Optional[str] = None,
-        dataset_name: Optional[str] = None
+        dataset_name: Optional[str] = None,
+        timestamp_dtype: Optional[str] = None,
+        resample_backend: str = "pandas",
+        ffill_limit: Optional[int] = 5
     ):
         """
         Args:
@@ -28,12 +32,21 @@ class FlightProcessor:
             timestamp_column: Name of timestamp column
             resample_rate: Optional resample rate (e.g., "1S" for 1 second)
             dataset_name: Optional dataset name for auto-naming flights
+            timestamp_dtype: Optional dtype detected by the validator for fast datetime handling
+            resample_backend: Backend to use for resampling ("pandas" or "numpy")
+            ffill_limit: Forward-fill limit for small gaps (None disables limit)
         """
         self.output_dir = Path(output_dir)
         self.sensors = sensors
         self.timestamp_column = timestamp_column
         self.resample_rate = resample_rate
         self.dataset_name = dataset_name
+        self.timestamp_dtype = timestamp_dtype
+        self.resample_backend = resample_backend
+        self.ffill_limit = ffill_limit
+
+        if self.resample_backend not in {"pandas", "numpy"}:
+            raise ValueError("resample_backend must be 'pandas' or 'numpy'")
 
         # Create output directory if needed
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -134,24 +147,45 @@ class FlightProcessor:
 
         # If timestamp is already the index, we're done
         if pd.api.types.is_datetime64_any_dtype(df.index):
-            # Ensure sorted
-            df = df.sort_index()
-            return df
+            df = df.copy()
+            df.index = self._to_datetime_index(df.index)
+            return df.sort_index()
 
         # Set timestamp column as index
         if self.timestamp_column in df.columns:
-            df = df.set_index(self.timestamp_column)
-            df.index.name = "timestamp"
+            timestamp_source = df[self.timestamp_column]
         elif df.index.name == self.timestamp_column:
-            # Already set, just ensure it's sorted
-            pass
+            timestamp_source = df.index
         else:
             raise ValueError(f"Timestamp column '{self.timestamp_column}' not found")
 
-        # Ensure sorted
-        df = df.sort_index()
+        datetime_index = self._to_datetime_index(timestamp_source)
+        df = df.drop(columns=[self.timestamp_column], errors="ignore").copy()
+        df.index = datetime_index
 
-        return df
+        return df.sort_index()
+
+    def _to_datetime_index(self, timestamp_source: Union[pd.Series, pd.Index]) -> pd.DatetimeIndex:
+        """Convert timestamp source to a DatetimeIndex using a single fastpath conversion."""
+
+        if self.timestamp_dtype:
+            try:
+                dtype = pd.api.types.pandas_dtype(self.timestamp_dtype)
+                if pd.api.types.is_datetime64_any_dtype(dtype):
+                    datetime_index = pd.DatetimeIndex(timestamp_source, copy=False)
+                    datetime_index.name = "timestamp"
+                    return datetime_index
+            except (TypeError, ValueError):
+                # Fall back to normal conversion if dtype string is not understood
+                pass
+
+        if pd.api.types.is_datetime64_any_dtype(timestamp_source):
+            datetime_index = pd.DatetimeIndex(timestamp_source, copy=False)
+        else:
+            datetime_index = pd.to_datetime(timestamp_source)
+
+        datetime_index.name = "timestamp"
+        return datetime_index
 
     def _filter_sensors(self, df: pd.DataFrame) -> pd.DataFrame:
         """Filter to only sensor columns."""
@@ -171,11 +205,21 @@ class FlightProcessor:
     def _resample(self, df: pd.DataFrame) -> pd.DataFrame:
         """Resample to uniform time intervals."""
 
-        # Resample using mean (for numeric data)
-        df_resampled = df.resample(self.resample_rate).mean()
+        mask = None
 
-        # Forward-fill small gaps (up to 5 steps)
-        df_resampled = df_resampled.ffill(limit=5)
+        if self.resample_backend == "numpy":
+            df_resampled, mask = self._resample_with_numpy(df)
+        else:
+            df_resampled = df.resample(self.resample_rate).mean()
+
+        if self.ffill_limit is not None:
+            if self.ffill_limit > 0:
+                df_resampled = df_resampled.ffill(limit=self.ffill_limit)
+        else:
+            df_resampled = df_resampled.ffill()
+
+        if mask is not None and not np.all(mask):
+            df_resampled = df_resampled.where(mask[:, None], np.nan)
 
         # Drop any remaining NaN rows
         initial_len = len(df_resampled)
@@ -186,3 +230,65 @@ class FlightProcessor:
             logger.debug(f"Dropped {dropped} rows with NaN after resampling")
 
         return df_resampled
+
+    def _resample_with_numpy(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, Optional[np.ndarray]]:
+        """Resample using numpy interpolation to reduce pandas overhead."""
+
+        if df.empty:
+            return df, None
+
+        target_index = pd.date_range(
+            start=df.index[0], end=df.index[-1], freq=self.resample_rate, name=df.index.name
+        )
+
+        freq = target_index.freq
+        if freq is None:
+            raise ValueError("Target index frequency is undefined for numpy resampling")
+
+        freq_ns = int(freq.nanos)
+
+        current_ns = df.index.view("int64")
+        target_ns = target_index.view("int64")
+        resampled_data = {}
+
+        if self.ffill_limit is None:
+            allowed_mask: Optional[np.ndarray] = None
+        elif self.ffill_limit == 0:
+            allowed_mask = np.isin(target_index.view("int64"), current_ns)
+        else:
+            allowed_mask = np.ones(len(target_index), dtype=bool)
+            # Mask out large gaps between observed points to honor forward-fill limit
+            for start_ns, end_ns in zip(current_ns[:-1], current_ns[1:]):
+                gap_steps = int((end_ns - start_ns) // freq_ns - 1)
+                if gap_steps > self.ffill_limit:
+                    gap_start = np.searchsorted(target_index.view("int64"), start_ns + freq_ns)
+                    gap_end = np.searchsorted(target_index.view("int64"), end_ns)
+                    allowed_mask[gap_start:gap_end] = False
+
+            # Avoid filling beyond the forward-fill limit after the final observation
+            final_idx = np.searchsorted(target_index.view("int64"), current_ns[-1])
+            trailing_steps = len(target_index) - final_idx - 1
+            if trailing_steps > self.ffill_limit:
+                allowed_mask[final_idx + self.ffill_limit + 1 :] = False
+
+        for column in df.columns:
+            series = df[column].to_numpy()
+            valid_mask = np.isfinite(series)
+
+            if not valid_mask.any():
+                resampled_data[column] = np.full_like(target_ns, np.nan, dtype=float)
+                continue
+
+            valid_x = current_ns[valid_mask]
+            valid_y = series[valid_mask]
+
+            if len(valid_y) == 1:
+                resampled_series = np.full_like(target_ns, valid_y[0], dtype=float)
+            else:
+                resampled_series = np.interp(target_ns, valid_x, valid_y)
+
+            resampled_data[column] = resampled_series
+
+        resampled_df = pd.DataFrame(resampled_data, index=target_index)
+
+        return resampled_df, allowed_mask

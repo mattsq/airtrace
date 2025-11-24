@@ -112,6 +112,19 @@ Examples:
         help="Resample to uniform rate (e.g., '1S' for 1 second)"
     )
     parser.add_argument(
+        "--resample-backend",
+        type=str,
+        default="pandas",
+        choices=["pandas", "numpy"],
+        help="Backend to use when resampling (default: pandas)",
+    )
+    parser.add_argument(
+        "--ffill-limit",
+        type=int,
+        default=5,
+        help="Forward-fill limit for small gaps during resampling (set to 0 to disable)",
+    )
+    parser.add_argument(
         "--timestamp-column",
         type=str,
         default=None,
@@ -304,7 +317,10 @@ def ingest_dataset(args):
             sensor_metadata.sensors,
             sensor_metadata.timestamp_column,
             resample_rate=args.resample_rate,
-            dataset_name=dataset_name
+            dataset_name=dataset_name,
+            timestamp_dtype=sensor_metadata.timestamp_dtype,
+            resample_backend=args.resample_backend,
+            ffill_limit=args.ffill_limit,
         )
 
         # Process with minimum length requirement

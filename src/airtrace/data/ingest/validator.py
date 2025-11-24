@@ -15,6 +15,7 @@ class SensorMetadata:
 
     sensors: List[str]
     timestamp_column: str
+    timestamp_dtype: Optional[str]
     sampling_rate: Optional[float]  # Median seconds between samples
     sampling_std: Optional[float]  # Std dev of time deltas
     dtypes: Dict[str, str] = field(default_factory=dict)
@@ -134,9 +135,15 @@ class FlightValidator:
         # Get dtypes
         dtypes = {sensor: str(df[sensor].dtype) for sensor in sensors if sensor in df.columns}
 
+        if pd.api.types.is_datetime64_any_dtype(df.index):
+            timestamp_dtype = str(df.index.dtype)
+        else:
+            timestamp_dtype = str(df[timestamp_col].dtype)
+
         return SensorMetadata(
             sensors=sensors,
             timestamp_column=timestamp_col,
+            timestamp_dtype=timestamp_dtype,
             sampling_rate=sampling_rate,
             sampling_std=sampling_std,
             dtypes=dtypes,
