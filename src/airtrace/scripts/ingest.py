@@ -145,6 +145,12 @@ Examples:
         action="store_true",
         help="Validate inputs without creating files"
     )
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=None,
+        help="Maximum worker threads for flight processing (default: uses CPU count)",
+    )
 
     return parser.parse_args()
 
@@ -309,7 +315,9 @@ def ingest_dataset(args):
 
         # Process with minimum length requirement
         min_length = args.input_len + args.pred_len
-        processed_ids = processor.process_all(flight_registry, min_length=min_length)
+        processed_ids = processor.process_all(
+            flight_registry, min_length=min_length, max_workers=args.max_workers
+        )
 
         # Update splits to remove failed flights
         train_ids = [id for id in train_ids if id in processed_ids]
@@ -341,19 +349,20 @@ def ingest_dataset(args):
         Path("data/processed")
     )
 
-    train_path, val_path, test_path = indexer.create_all_indices(
+    (
+        train_path,
+        val_path,
+        test_path,
+        train_windows,
+        val_windows,
+        test_windows,
+    ) = indexer.create_all_indices(
         train_ids,
         val_ids,
         test_ids,
         Path("data/metadata"),
         dataset_name
     )
-
-    # Load to get window counts
-    import pandas as pd
-    train_windows = len(pd.read_parquet(train_path))
-    val_windows = len(pd.read_parquet(val_path))
-    test_windows = len(pd.read_parquet(test_path))
 
     # Step 5: Generate config
     if not args.skip_config:

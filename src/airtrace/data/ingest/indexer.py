@@ -2,10 +2,13 @@
 Window index generation for train/val/test splits.
 """
 
-from pathlib import Path
-from typing import List, Tuple
-import pandas as pd
 import logging
+from pathlib import Path
+from typing import List, Optional, Tuple
+
+import numpy as np
+import pandas as pd
+import pyarrow.parquet as pq
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +51,7 @@ class WindowIndexer:
         Returns:
             DataFrame with columns [flight_id, start_idx, end_idx]
         """
-        index_rows = []
+        frames = []
 
         for flight_id in flight_ids:
             flight_path = self.processed_dir / f"{flight_id}.parquet"
@@ -57,15 +60,10 @@ class WindowIndexer:
                 logger.warning(f"Flight file not found: {flight_path}, skipping")
                 continue
 
-            # Load flight to get length
-            try:
-                df = pd.read_parquet(flight_path)
-                T = len(df)
-            except Exception as e:
-                logger.error(f"Failed to load {flight_path}: {e}, skipping")
+            T = self._flight_length(flight_path)
+            if T is None:
                 continue
 
-            # Check if flight is long enough
             if T < self.total_len:
                 logger.warning(
                     f"Flight {flight_id} too short for windowing "
@@ -73,17 +71,22 @@ class WindowIndexer:
                 )
                 continue
 
-            # Generate sliding windows
-            for start_idx in range(0, T - self.total_len + 1, self.stride):
-                end_idx = start_idx + self.total_len
-                index_rows.append({
-                    "flight_id": flight_id,
-                    "start_idx": start_idx,
-                    "end_idx": end_idx
-                })
+            start_indices = np.arange(0, T - self.total_len + 1, self.stride)
+            if len(start_indices) == 0:
+                continue
 
-        # Create DataFrame
-        index_df = pd.DataFrame(index_rows)
+            end_indices = start_indices + self.total_len
+            frames.append(
+                pd.DataFrame(
+                    {
+                        "flight_id": np.repeat(flight_id, len(start_indices)),
+                        "start_idx": start_indices,
+                        "end_idx": end_indices,
+                    }
+                )
+            )
+
+        index_df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
         logger.info(
             f"{split_name}: {len(index_df)} windows from {len(flight_ids)} flights"
@@ -98,7 +101,7 @@ class WindowIndexer:
         test_ids: List[str],
         output_dir: Path,
         dataset_name: str
-    ) -> Tuple[Path, Path, Path]:
+    ) -> Tuple[Path, Path, Path, int, int, int]:
         """
         Create train/val/test indices.
 
@@ -110,7 +113,7 @@ class WindowIndexer:
             dataset_name: Dataset name for file naming
 
         Returns:
-            Tuple of (train_path, val_path, test_path)
+            Tuple of (train_path, val_path, test_path, train_len, val_len, test_len)
         """
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -131,4 +134,28 @@ class WindowIndexer:
 
         logger.info(f"Saved window indices to {output_dir}")
 
-        return train_path, val_path, test_path
+        return (
+            train_path,
+            val_path,
+            test_path,
+            len(train_index),
+            len(val_index),
+            len(test_index),
+        )
+
+    def _flight_length(self, flight_path: Path) -> Optional[int]:
+        """Return flight length using parquet metadata when available."""
+
+        try:
+            metadata = pq.ParquetFile(flight_path).metadata
+            if metadata is not None:
+                return metadata.num_rows
+        except Exception as exc:  # pragma: no cover - metadata failures are logged
+            logger.debug(f"Could not read metadata for {flight_path}: {exc}")
+
+        try:
+            df = pd.read_parquet(flight_path, columns=[])
+            return len(df)
+        except Exception as exc:  # pragma: no cover - surfacing via logger
+            logger.error(f"Failed to load {flight_path}: {exc}, skipping")
+            return None
