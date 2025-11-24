@@ -4,8 +4,10 @@ Flight data processing - cleaning, resampling, and saving.
 
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
-import pandas as pd
 import logging
+
+import pandas as pd
+import pyarrow.dataset as ds
 
 logger = logging.getLogger(__name__)
 
@@ -59,11 +61,35 @@ class FlightProcessor:
             if isinstance(source, tuple):
                 # Multi-flight file - need to filter
                 file_path, id_column, id_value = source
-                df = pd.read_parquet(file_path, engine="pyarrow")
-                df = df[df[id_column] == id_value].copy()
+                dataset = ds.dataset(file_path, format="parquet")
+
+                schema_columns = set(dataset.schema.names)
+                available_sensors = [s for s in self.sensors if s in schema_columns]
+
+                if self.timestamp_column not in schema_columns:
+                    raise ValueError(f"Timestamp column '{self.timestamp_column}' not found in {file_path}")
+
+                if id_column not in schema_columns:
+                    raise ValueError(f"Flight identifier column '{id_column}' not found in {file_path}")
+
+                columns = list({*available_sensors, self.timestamp_column, id_column})
+
+                scanner = dataset.scanner(
+                    columns=columns,
+                    filter=ds.field(id_column) == id_value,
+                    use_threads=True,
+                )
+                df = scanner.to_table().to_pandas()
             else:
                 # Single flight file
-                df = pd.read_parquet(source, engine="pyarrow")
+                dataset = ds.dataset(source, format="parquet")
+                schema_columns = set(dataset.schema.names)
+                available_sensors = [s for s in self.sensors if s in schema_columns]
+
+                if self.timestamp_column not in schema_columns:
+                    raise ValueError(f"Timestamp column '{self.timestamp_column}' not found in {source}")
+
+                df = pd.read_parquet(source, columns=list({*available_sensors, self.timestamp_column}))
 
             # Standardize timestamp index
             df = self._standardize_timestamp(df)
