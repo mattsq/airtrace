@@ -263,11 +263,45 @@ shuffle timing script output `89a1ae†L1-L7`
 
 ---
 
+### 2025-11-23 Models/Timer: HuggingFace Foundation Model Integration Pattern
+
+**Discovered by**: Claude (Timer implementation session)
+**Impact**: Foundation model integration, HuggingFace dependencies, multivariate handling
+
+Timer is the first HuggingFace-based foundation model in AirTrace, establishing patterns for future foundation model integrations:
+
+**Key Integration Learnings**:
+
+1. **HuggingFace requires `trust_remote_code=True`**: Timer (and likely other HF time series models) use custom modeling code that requires explicit trust. This is a security consideration that must be documented clearly for users.
+
+2. **Multivariate handling for univariate models**: Timer is pre-trained on univariate series in S3 (Single-Series Sequence) format. For multivariate aircraft data (6-30 sensors), we process each dimension independently:
+   ```python
+   # Process each variate separately
+   for d in range(D):
+       series_d = x[:, :, d]  # [B, T]
+       preds_d = timer_backbone.generate(series_d, max_new_tokens=pred_len)
+       predictions.append(preds_d)
+   # Stack: [B, pred_len, D]
+   ```
+   This approach maintains compatibility with pre-trained weights while supporting multivariate data.
+
+3. **Normalization is critical**: Timer expects normalized inputs. The model applies per-variate z-score normalization and stores statistics for denormalization. Without normalization, generation can be unstable.
+
+4. **Model size and dependencies**: Timer-base-84M is ~350MB and requires `transformers>=4.40.1`. First run downloads the checkpoint (cached to `~/.cache/huggingface/`). This should be documented for offline/production deployments.
+
+5. **Testing without downloads**: Use mock fixtures (`@patch("airtrace.models.timer.AutoModelForCausalLM")`) to test integration without downloading checkpoints during CI/CD.
+
+**Code Reference**: `src/airtrace/models/timer.py`, `tests/models/test_timer.py`, `docs/models/timer.md`
+
+**Future models**: This pattern applies to TimesFM (Google), MOMENT (CMU), and other HuggingFace time series models.
+
+---
+
 ## Current State
 
-**Total learnings**: 8
-**Last updated**: 2025-11-19
-**Most active areas**: Project structure, configuration system, data pipeline, synthetic data, baseline models, model validation, dependency management
+**Total learnings**: 9
+**Last updated**: 2025-11-23
+**Most active areas**: Project structure, configuration system, data pipeline, synthetic data, baseline models, model validation, dependency management, foundation model integration
 
 ---
 

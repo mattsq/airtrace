@@ -66,6 +66,7 @@ class FlightProcessor:
             flight_id: Identifier for this flight
             source: Either a Path to parquet file, or (Path, column_name, value) tuple
                    for filtering multi-flight files
+            with_length: When True, return the processed length alongside the path
 
         Returns:
             Result with path and length, or None if processing failed/too short
