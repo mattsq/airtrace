@@ -68,7 +68,14 @@ class FlightProcessor:
                     filter=ds.field(id_column) == id_value,
                     use_threads=True,
                 )
-                df = scanner.to_table().to_pandas()
+                batches = [batch.to_pandas() for batch in scanner.to_batches()]
+
+                if not batches:
+                    raise ValueError(
+                        f"No rows found for {id_column}={id_value} in {file_path}"
+                    )
+
+                df = pd.concat(batches, ignore_index=True)
             else:
                 # Single flight file
                 df = pd.read_parquet(source, columns=list({*self.sensors, self.timestamp_column}))
