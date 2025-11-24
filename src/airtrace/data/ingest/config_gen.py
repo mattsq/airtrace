@@ -43,7 +43,8 @@ class ConfigGenerator:
         output_path: Path,
         n_flights: int = 0,
         input_path: str = "",
-        force: bool = False
+        force: bool = False,
+        index_paths: tuple[Path, Path, Path] | None = None,
     ):
         """
         Generate and save YAML config.
@@ -53,6 +54,8 @@ class ConfigGenerator:
             n_flights: Total number of flights (for header comment)
             input_path: Original input path (for header comment)
             force: Overwrite existing file
+            index_paths: Optional explicit train/val/test index paths to embed in
+                the generated config (supports partitioned outputs)
         """
         output_path = Path(output_path)
 
@@ -66,7 +69,7 @@ class ConfigGenerator:
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Build YAML content
-        yaml_content = self._build_yaml(n_flights, input_path)
+        yaml_content = self._build_yaml(n_flights, input_path, index_paths)
 
         # Write file
         with open(output_path, "w") as f:
@@ -74,8 +77,23 @@ class ConfigGenerator:
 
         logger.info(f"Generated config: {output_path}")
 
-    def _build_yaml(self, n_flights: int, input_path: str) -> str:
+    def _build_yaml(
+        self,
+        n_flights: int,
+        input_path: str,
+        index_paths: tuple[Path, Path, Path] | None,
+    ) -> str:
         """Build YAML content string."""
+
+        def _format_index_path(path: Path) -> str:
+            """Format index path relative to the data root when possible."""
+
+            data_root = Path("data")
+            try:
+                relative_path = path.relative_to(data_root)
+            except ValueError:
+                relative_path = path
+            return relative_path.as_posix()
 
         # Header with metadata
         header = f"""# @package _global_
@@ -88,13 +106,22 @@ class ConfigGenerator:
 """
 
         # Data configuration
+        if index_paths is None:
+            train_index_path = f"metadata/{self.dataset_name}_train_index.parquet"
+            val_index_path = f"metadata/{self.dataset_name}_val_index.parquet"
+            test_index_path = f"metadata/{self.dataset_name}_test_index.parquet"
+        else:
+            train_index_path, val_index_path, test_index_path = (
+                _format_index_path(path) for path in index_paths
+            )
+
         config_lines = [
             "data:",
             "  root: data/",
             f'  dataset_name: "{self.dataset_name}"',
-            f'  train_index: "metadata/{self.dataset_name}_train_index.parquet"',
-            f'  val_index: "metadata/{self.dataset_name}_val_index.parquet"',
-            f'  test_index: "metadata/{self.dataset_name}_test_index.parquet"',
+            f'  train_index: "{train_index_path}"',
+            f'  val_index: "{val_index_path}"',
+            f'  test_index: "{test_index_path}"',
             "",
             "  window:",
             f"    input_len: {self.input_len}",
