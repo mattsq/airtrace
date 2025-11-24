@@ -61,8 +61,19 @@ class FlightProcessor:
             if isinstance(source, tuple):
                 # Multi-flight file - need to filter
                 file_path, id_column, id_value = source
-                columns = list({*self.sensors, self.timestamp_column, id_column})
                 dataset = ds.dataset(file_path, format="parquet")
+
+                schema_columns = set(dataset.schema.names)
+                available_sensors = [s for s in self.sensors if s in schema_columns]
+
+                if self.timestamp_column not in schema_columns:
+                    raise ValueError(f"Timestamp column '{self.timestamp_column}' not found in {file_path}")
+
+                if id_column not in schema_columns:
+                    raise ValueError(f"Flight identifier column '{id_column}' not found in {file_path}")
+
+                columns = list({*available_sensors, self.timestamp_column, id_column})
+
                 scanner = dataset.scanner(
                     columns=columns,
                     filter=ds.field(id_column) == id_value,
@@ -71,7 +82,14 @@ class FlightProcessor:
                 df = scanner.to_table().to_pandas()
             else:
                 # Single flight file
-                df = pd.read_parquet(source, columns=list({*self.sensors, self.timestamp_column}))
+                dataset = ds.dataset(source, format="parquet")
+                schema_columns = set(dataset.schema.names)
+                available_sensors = [s for s in self.sensors if s in schema_columns]
+
+                if self.timestamp_column not in schema_columns:
+                    raise ValueError(f"Timestamp column '{self.timestamp_column}' not found in {source}")
+
+                df = pd.read_parquet(source, columns=list({*available_sensors, self.timestamp_column}))
 
             # Standardize timestamp index
             df = self._standardize_timestamp(df)
