@@ -45,7 +45,8 @@ class FlightValidator:
         self,
         input_path: Path,
         timestamp_column: Optional[str] = None,
-        flight_id_column: Optional[str] = None
+        flight_id_column: Optional[str] = None,
+        sample_rows: int = 1000,
     ):
         """
         Args:
@@ -57,6 +58,7 @@ class FlightValidator:
         self.timestamp_column = timestamp_column
         self.flight_id_column = flight_id_column
         self.report = ValidationReport()
+        self.sample_rows = sample_rows
 
     def validate(self) -> ValidationReport:
         """Run all validation checks."""
@@ -75,8 +77,8 @@ class FlightValidator:
         # Load sample data from first file
         try:
             sample_df = pd.read_parquet(files[0], engine="pyarrow")
-            if len(sample_df) > 1000:
-                sample_df = sample_df.iloc[:1000]
+            if len(sample_df) > self.sample_rows:
+                sample_df = sample_df.iloc[: self.sample_rows]
         except Exception as e:
             self.report.add_error(f"Failed to load {files[0]}: {e}")
             return self.report

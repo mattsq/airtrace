@@ -2,10 +2,15 @@
 Flight data processing - cleaning, resampling, and saving.
 """
 
+import hashlib
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
+
+import numpy as np
 import pandas as pd
 import logging
+import pyarrow.parquet as pq
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +24,11 @@ class FlightProcessor:
         sensors: List[str],
         timestamp_column: str,
         resample_rate: Optional[str] = None,
-        dataset_name: Optional[str] = None
+        dataset_name: Optional[str] = None,
+        max_workers: int = 1,
+        sample_rows: int = 1000,
+        force: bool = False,
+        metadata_dir: Path = Path("data/metadata"),
     ):
         """
         Args:
@@ -34,6 +43,15 @@ class FlightProcessor:
         self.timestamp_column = timestamp_column
         self.resample_rate = resample_rate
         self.dataset_name = dataset_name
+        self.max_workers = max_workers
+        self.sample_rows = sample_rows
+        self.force = force
+        self.metadata_dir = Path(metadata_dir)
+        self.metadata_path = (
+            self.metadata_dir / f"{self.dataset_name}_processed_meta.json"
+            if self.dataset_name
+            else None
+        )
 
         # Create output directory if needed
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -42,7 +60,7 @@ class FlightProcessor:
         self,
         flight_id: str,
         source: Union[Path, Tuple[Path, str, str]]
-    ) -> Optional[Path]:
+    ) -> Optional[Tuple[Path, int]]:
         """
         Process a single flight.
 
@@ -85,7 +103,7 @@ class FlightProcessor:
             df.to_parquet(output_path, engine="pyarrow", index=True)
 
             logger.info(f"Processed flight {flight_id}: {len(df)} timesteps, saved to {output_path}")
-            return output_path
+            return output_path, len(df)
 
         except Exception as e:
             logger.error(f"Failed to process flight {flight_id}: {e}")
@@ -94,40 +112,162 @@ class FlightProcessor:
     def process_all(
         self,
         flight_registry: Dict[str, Union[Path, Tuple[Path, str, str]]],
-        min_length: int = 1
-    ) -> List[str]:
+        min_length: int = 1,
+        reuse_existing: bool = False,
+        fast_fail: bool = False,
+    ) -> Tuple[List[str], Dict[str, Dict[str, Union[str, float, int]]]]:
         """
         Process all flights in registry.
 
         Args:
             flight_registry: Dictionary mapping flight_id -> source
             min_length: Minimum number of timesteps (flights shorter are skipped)
+            reuse_existing: Reuse previously processed flights when metadata matches
+            fast_fail: If True, stop processing on first error
 
         Returns:
-            List of successfully processed flight IDs
+            Tuple of (successful flight IDs, metadata keyed by flight_id)
         """
-        successful_flights = []
+        successful_flights: List[str] = []
+        processed_metadata: Dict[str, Dict[str, Union[str, float, int]]] = {}
+        existing_metadata = self._load_existing_metadata() if reuse_existing else {}
 
-        for flight_id, source in flight_registry.items():
-            output_path = self.process_flight(flight_id, source)
+        tasks = list(flight_registry.items())
+        results = []
 
-            if output_path is not None:
-                # Check length
-                df = pd.read_parquet(output_path)
-                if len(df) >= min_length:
-                    successful_flights.append(flight_id)
-                else:
-                    logger.warning(
-                        f"Flight {flight_id} too short ({len(df)} < {min_length}), skipping"
-                    )
-                    # Remove the file
-                    output_path.unlink()
+        def _process(flight_id: str, source: Union[Path, Tuple[Path, str, str]]):
+            source_path = source[0] if isinstance(source, tuple) else source
+            signature = self._compute_source_signature(Path(source_path))
+            output_path = self.output_dir / f"{flight_id}.parquet"
+
+            if (
+                reuse_existing
+                and not self.force
+                and output_path.exists()
+                and self._is_metadata_match(flight_id, signature, existing_metadata)
+            ):
+                stored = existing_metadata[flight_id]
+                length = int(stored.get("length", 0))
+                if length >= min_length:
+                    logger.info(f"Reusing processed flight {flight_id} (cached)")
+                    return flight_id, stored
+
+            result = self.process_flight(flight_id, source)
+            if result is None:
+                return None
+
+            output_path, length = result
+            if length < min_length:
+                logger.warning(
+                    f"Flight {flight_id} too short ({length} < {min_length}), skipping"
+                )
+                output_path.unlink(missing_ok=True)
+                return None
+
+            return flight_id, {
+                "source_signature": signature,
+                "length": length,
+                "processed_path": str(output_path),
+                "processed_mtime": output_path.stat().st_mtime,
+            }
+
+        if self.max_workers > 1:
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                future_map = {
+                    executor.submit(_process, flight_id, source): flight_id
+                    for flight_id, source in tasks
+                }
+                for future in as_completed(future_map):
+                    try:
+                        results.append(future.result())
+                    except Exception as exc:  # pragma: no cover - logged downstream
+                        logger.error(f"Processing failed for {future_map[future]}: {exc}")
+                        if fast_fail:
+                            raise
+        else:
+            for flight_id, source in tasks:
+                results.append(_process(flight_id, source))
+
+        for item in results:
+            if item is None:
+                continue
+            flight_id, metadata = item
+            successful_flights.append(flight_id)
+            processed_metadata[flight_id] = metadata
+
+        if self.metadata_path:
+            self._save_metadata(processed_metadata)
 
         logger.info(
             f"Successfully processed {len(successful_flights)}/{len(flight_registry)} flights"
         )
 
-        return successful_flights
+        return successful_flights, processed_metadata
+
+    def _compute_source_signature(self, source_path: Path) -> Dict[str, Union[str, float, int]]:
+        stat = source_path.stat()
+        signature: Dict[str, Union[str, float, int]] = {
+            "mtime": stat.st_mtime,
+            "size": stat.st_size,
+        }
+
+        if self.sample_rows > 0:
+            try:
+                checksum = hashlib.md5()
+                rows_needed = self.sample_rows
+                for batch in pq.ParquetFile(source_path).iter_batches(batch_size=self.sample_rows):
+                    df = batch.to_pandas()
+                    checksum.update(np.asarray(df).tobytes())
+                    rows_needed -= len(df)
+                    if rows_needed <= 0:
+                        break
+                signature["checksum"] = checksum.hexdigest()
+            except Exception as exc:  # pragma: no cover - best effort safeguard
+                logger.debug(f"Failed to compute checksum for {source_path}: {exc}")
+
+        return signature
+
+    def _is_metadata_match(
+        self,
+        flight_id: str,
+        signature: Dict[str, Union[str, float, int]],
+        metadata: Dict[str, Dict[str, Union[str, float, int]]],
+    ) -> bool:
+        if flight_id not in metadata:
+            return False
+
+        stored = metadata[flight_id]
+        stored_sig = stored.get("source_signature", {})
+        return (
+            stored_sig.get("mtime") == signature.get("mtime")
+            and stored_sig.get("size") == signature.get("size")
+            and stored_sig.get("checksum") == signature.get("checksum")
+        )
+
+    def _load_existing_metadata(self) -> Dict[str, Dict[str, Union[str, float, int]]]:
+        if not self.metadata_path or not self.metadata_path.exists():
+            return {}
+        try:
+            import json
+
+            with open(self.metadata_path, "r") as f:
+                return json.load(f)
+        except Exception as exc:  # pragma: no cover - robustness guard
+            logger.debug(f"Failed to load processed metadata: {exc}")
+            return {}
+
+    def _save_metadata(self, metadata: Dict[str, Dict[str, Union[str, float, int]]]):
+        if not self.metadata_path:
+            return
+
+        self.metadata_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            import json
+
+            with open(self.metadata_path, "w") as f:
+                json.dump(metadata, f, indent=2)
+        except Exception as exc:  # pragma: no cover - robustness guard
+            logger.debug(f"Failed to save processed metadata: {exc}")
 
     def _standardize_timestamp(self, df: pd.DataFrame) -> pd.DataFrame:
         """Standardize timestamp as index."""

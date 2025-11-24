@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -44,7 +45,13 @@ def test_window_indexer_skips_short_and_missing_flights(tmp_path):
     short_df = pd.DataFrame({"s1": range(3)}, index=pd.date_range("2024-01-01", periods=3, freq="s"))
     short_df.to_parquet(short_path, engine="pyarrow")
 
-    indexer = WindowIndexer(input_len=3, pred_len=2, stride=2, processed_dir=processed_dir)
+    indexer = WindowIndexer(
+        input_len=3,
+        pred_len=2,
+        stride=2,
+        processed_dir=processed_dir,
+        metadata_dir=tmp_path,
+    )
 
     index_df = indexer.create_index(["flight_a", "missing", "short"], split_name="train")
     assert index_df["flight_id"].unique().tolist() == ["flight_a"]
@@ -69,18 +76,81 @@ def test_window_indexer_create_all_indices(tmp_path):
     val_df.to_parquet(processed_dir / "val.parquet", engine="pyarrow")
     test_df.to_parquet(processed_dir / "test.parquet", engine="pyarrow")
 
-    indexer = WindowIndexer(input_len=3, pred_len=2, stride=2, processed_dir=processed_dir)
-    train_path, val_path, test_path = indexer.create_all_indices(
-        train_ids=["train"], val_ids=["val"], test_ids=["test"], output_dir=tmp_path, dataset_name="demo"
+    indexer = WindowIndexer(
+        input_len=3,
+        pred_len=2,
+        stride=2,
+        processed_dir=processed_dir,
+        metadata_dir=tmp_path,
+    )
+    train_path, val_path, test_path, window_counts = indexer.create_all_indices(
+        train_ids=["train"],
+        val_ids=["val"],
+        test_ids=["test"],
+        output_dir=tmp_path,
+        dataset_name="demo",
     )
 
     assert train_path.exists()
     assert val_path.exists()
     assert test_path.exists()
+    assert window_counts == {"train": 2, "val": 1, "test": 2}
 
     train_index = pd.read_parquet(train_path)
     assert len(train_index) == 2
     assert train_index.iloc[0].to_dict() == {"flight_id": "train", "start_idx": 0, "end_idx": 5}
+
+
+def test_window_indexer_reuses_indices_when_metadata_matches(tmp_path):
+    processed_dir = tmp_path / "processed"
+    metadata_dir = tmp_path / "metadata"
+    processed_dir.mkdir()
+
+    train_df = pd.DataFrame(
+        {"s1": range(8)}, index=pd.date_range("2024-01-01", periods=8, freq="s")
+    )
+    train_df.to_parquet(processed_dir / "train.parquet", engine="pyarrow")
+
+    processed_metadata = {
+        "train": {
+            "length": len(train_df),
+            "source_signature": {"mtime": 1.0, "size": 1, "checksum": "abc"},
+        }
+    }
+
+    indexer = WindowIndexer(
+        input_len=3,
+        pred_len=2,
+        stride=2,
+        processed_dir=processed_dir,
+        metadata_dir=metadata_dir,
+    )
+
+    paths = indexer.create_all_indices(
+        train_ids=["train"],
+        val_ids=[],
+        test_ids=[],
+        output_dir=metadata_dir,
+        dataset_name="demo",
+        processed_metadata=processed_metadata,
+    )
+
+    meta_path = metadata_dir / "demo_index_meta.json"
+    assert meta_path.exists()
+    assert paths[3]["train"] == 2
+
+    reused_paths = indexer.create_all_indices(
+        train_ids=["train"],
+        val_ids=[],
+        test_ids=[],
+        output_dir=metadata_dir,
+        dataset_name="demo",
+        reuse_existing=True,
+        processed_metadata=processed_metadata,
+    )
+
+    assert reused_paths[0] == paths[0]
+    assert reused_paths[3] == paths[3]
 
 
 def test_flight_processor_process_all_respects_min_length(tmp_path):
@@ -91,6 +161,7 @@ def test_flight_processor_process_all_respects_min_length(tmp_path):
         timestamp_column="time",
         resample_rate="1S",
         dataset_name="demo",
+        metadata_dir=tmp_path,
     )
 
     long_df = pd.DataFrame(
@@ -107,8 +178,12 @@ def test_flight_processor_process_all_respects_min_length(tmp_path):
     long_df.to_parquet(registry["long"], engine="pyarrow")
     short_df.to_parquet(registry["short"], engine="pyarrow")
 
-    processed = processor.process_all(registry, min_length=3)
+    processed, metadata = processor.process_all(registry, min_length=3)
     assert processed == ["long"]
+    assert "long" in metadata
+
+    saved_meta = json.loads((tmp_path / "demo_processed_meta.json").read_text())
+    assert "long" in saved_meta
 
     saved_path = output_dir / "long.parquet"
     assert saved_path.exists()
