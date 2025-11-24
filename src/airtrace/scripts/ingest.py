@@ -281,6 +281,25 @@ def ingest_dataset(args):
     dataset_name = args.dataset_name
     split_ratios = parse_split_ratios(args.split)
 
+    # Backward-compatible defaults for optional performance flags
+    sample_rows_arg = getattr(args, "sample_rows", None)
+    sample_rows = sample_rows_arg if isinstance(sample_rows_arg, int) else 1000
+
+    max_workers_arg = getattr(args, "max_workers", None)
+    max_workers = max_workers_arg if isinstance(max_workers_arg, int) else 1
+
+    reuse_processed_arg = getattr(args, "reuse_processed", None)
+    reuse_processed = reuse_processed_arg if isinstance(reuse_processed_arg, bool) else False
+
+    reuse_indices_arg = getattr(args, "reuse_indices", None)
+    reuse_indices = reuse_indices_arg if isinstance(reuse_indices_arg, bool) else False
+
+    fast_summary_arg = getattr(args, "fast_summary", None)
+    fast_summary = fast_summary_arg if isinstance(fast_summary_arg, bool) else False
+
+    no_summary_arg = getattr(args, "no_summary", None)
+    no_summary = no_summary_arg if isinstance(no_summary_arg, bool) else False
+
     logger.info(f"Starting ingestion: {input_path} -> {dataset_name}")
 
     # Step 1: Validate input
@@ -289,7 +308,7 @@ def ingest_dataset(args):
         input_path,
         timestamp_column=args.timestamp_column,
         flight_id_column=args.flight_id_column,
-        sample_rows=args.sample_rows,
+        sample_rows=sample_rows,
     )
 
     validation_report = validator.validate()
@@ -341,8 +360,8 @@ def ingest_dataset(args):
         sensor_metadata.timestamp_column,
         resample_rate=args.resample_rate,
         dataset_name=dataset_name,
-        max_workers=args.max_workers,
-        sample_rows=args.sample_rows,
+        max_workers=max_workers,
+        sample_rows=sample_rows,
         force=args.force,
     )
 
@@ -355,7 +374,7 @@ def ingest_dataset(args):
         processed_ids, processed_metadata = processor.process_all(
             flight_registry,
             min_length=min_length,
-            reuse_existing=args.reuse_processed,
+            reuse_existing=reuse_processed,
         )
 
         # Update splits to remove failed flights
@@ -395,11 +414,11 @@ def ingest_dataset(args):
         test_ids,
         Path("data/metadata"),
         dataset_name,
-        reuse_existing=args.reuse_indices,
+        reuse_existing=reuse_indices,
         processed_metadata=processed_metadata,
     )
 
-    if args.fast_summary:
+    if fast_summary:
         train_windows = window_counts.get("train", 0)
         val_windows = window_counts.get("val", 0)
         test_windows = window_counts.get("test", 0)
@@ -438,7 +457,7 @@ def ingest_dataset(args):
         logger.info("\n[Step 5/5] Skipping config generation (--skip-config)")
 
     # Print summary
-    if not args.no_summary:
+    if not no_summary:
         print_summary(
             dataset_name,
             train_ids,
