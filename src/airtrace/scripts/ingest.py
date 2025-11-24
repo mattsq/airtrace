@@ -82,6 +82,26 @@ Examples:
         help="Sliding window stride (default: 32)"
     )
 
+    # Index generation
+    parser.add_argument(
+        "--index-workers",
+        type=int,
+        default=1,
+        help="Number of worker processes for window index generation",
+    )
+    parser.add_argument(
+        "--index-partitioned",
+        action="store_true",
+        help="Write window indices as partitioned parquet datasets",
+    )
+    parser.add_argument(
+        "--stream-index-writes",
+        action="store_true",
+        help=(
+            "Stream window indices directly to parquet instead of keeping the full DataFrame"
+        ),
+    )
+
     # Sensor configuration
     parser.add_argument(
         "--target-sensors",
@@ -357,19 +377,21 @@ def ingest_dataset(args):
         Path("data/processed")
     )
 
-    train_path, val_path, test_path = indexer.create_all_indices(
+    (train_path, val_path, test_path), window_counts = indexer.create_all_indices(
         train_ids,
         val_ids,
         test_ids,
         Path("data/metadata"),
-        dataset_name
+        dataset_name,
+        num_workers=args.index_workers,
+        write_partitioned=args.index_partitioned,
+        materialize_dataframe=not args.stream_index_writes,
+        return_counts=True,
     )
 
-    # Load to get window counts
-    import pandas as pd
-    train_windows = len(pd.read_parquet(train_path))
-    val_windows = len(pd.read_parquet(val_path))
-    test_windows = len(pd.read_parquet(test_path))
+    train_windows = window_counts["train"]
+    val_windows = window_counts["val"]
+    test_windows = window_counts["test"]
 
     # Step 5: Generate config
     if not args.skip_config:
