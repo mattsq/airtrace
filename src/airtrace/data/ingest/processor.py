@@ -41,8 +41,9 @@ class FlightProcessor:
     def process_flight(
         self,
         flight_id: str,
-        source: Union[Path, Tuple[Path, str, str]]
-    ) -> Optional[Path]:
+        source: Union[Path, Tuple[Path, str, str]],
+        with_length: bool = False,
+    ) -> Optional[Union[Path, Tuple[Path, int]]]:
         """
         Process a single flight.
 
@@ -50,9 +51,10 @@ class FlightProcessor:
             flight_id: Identifier for this flight
             source: Either a Path to parquet file, or (Path, column_name, value) tuple
                    for filtering multi-flight files
+            with_length: When True, return the processed length alongside the path
 
         Returns:
-            Path to saved processed file, or None if processing failed
+            Path to saved processed file (and optionally its length), or None if processing failed
         """
         try:
             # Load flight data
@@ -85,6 +87,8 @@ class FlightProcessor:
             df.to_parquet(output_path, engine="pyarrow", index=True)
 
             logger.info(f"Processed flight {flight_id}: {len(df)} timesteps, saved to {output_path}")
+            if with_length:
+                return output_path, len(df)
             return output_path
 
         except Exception as e:
@@ -109,19 +113,18 @@ class FlightProcessor:
         successful_flights = []
 
         for flight_id, source in flight_registry.items():
-            output_path = self.process_flight(flight_id, source)
+            result = self.process_flight(flight_id, source, with_length=True)
 
-            if output_path is not None:
-                # Check length
-                df = pd.read_parquet(output_path)
-                if len(df) >= min_length:
+            if result is not None:
+                output_path, processed_length = result
+                if processed_length >= min_length:
                     successful_flights.append(flight_id)
                 else:
                     logger.warning(
-                        f"Flight {flight_id} too short ({len(df)} < {min_length}), skipping"
+                        f"Flight {flight_id} too short ({processed_length} < {min_length}), skipping"
                     )
                     # Remove the file
-                    output_path.unlink()
+                    output_path.unlink(missing_ok=True)
 
         logger.info(
             f"Successfully processed {len(successful_flights)}/{len(flight_registry)} flights"
