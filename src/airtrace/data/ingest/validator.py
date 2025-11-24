@@ -5,8 +5,10 @@ Flight data validation and schema detection.
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-import pandas as pd
 import numpy as np
+import pandas as pd
+import pyarrow as pa
+import pyarrow.dataset as ds
 
 
 @dataclass
@@ -45,17 +47,20 @@ class FlightValidator:
         self,
         input_path: Path,
         timestamp_column: Optional[str] = None,
-        flight_id_column: Optional[str] = None
+        flight_id_column: Optional[str] = None,
+        sample_rows: int = 1000,
     ):
         """
         Args:
             input_path: Path to parquet file or directory
             timestamp_column: Name of timestamp column (auto-detect if None)
             flight_id_column: Name of flight ID column (single flight if None)
+            sample_rows: Number of rows to scan when sampling files
         """
         self.input_path = Path(input_path)
         self.timestamp_column = timestamp_column
         self.flight_id_column = flight_id_column
+        self.sample_rows = sample_rows
         self.report = ValidationReport()
 
     def validate(self) -> ValidationReport:
@@ -74,9 +79,7 @@ class FlightValidator:
 
         # Load sample data from first file
         try:
-            sample_df = pd.read_parquet(files[0], engine="pyarrow")
-            if len(sample_df) > 1000:
-                sample_df = sample_df.iloc[:1000]
+            sample_df = self._sample_dataframe(files[0])
         except Exception as e:
             self.report.add_error(f"Failed to load {files[0]}: {e}")
             return self.report
@@ -104,35 +107,35 @@ class FlightValidator:
         if not files:
             raise ValueError("No parquet files found")
 
-        # Load first file
-        df = pd.read_parquet(files[0], engine="pyarrow")
+        # Load sample from first file for schema detection
+        sample_df = self._sample_dataframe(files[0])
 
         # Detect timestamp
-        timestamp_col = self._detect_timestamp_column(df)
+        timestamp_col = self._detect_timestamp_column(sample_df)
         if timestamp_col is None:
             raise ValueError("No timestamp column found")
 
         # Set timestamp as index if needed
-        if timestamp_col != df.index.name:
-            df = df.set_index(timestamp_col)
+        if timestamp_col != sample_df.index.name:
+            sample_df = sample_df.set_index(timestamp_col)
 
         # Detect sensors
-        sensors = self._detect_sensors(df, timestamp_col)
+        sensors = self._detect_sensors(sample_df, timestamp_col)
 
         # Compute sampling statistics
-        time_deltas = df.index.to_series().diff().dt.total_seconds().dropna()
+        time_deltas = sample_df.index.to_series().diff().dt.total_seconds().dropna()
         sampling_rate = float(time_deltas.median()) if len(time_deltas) > 0 else None
         sampling_std = float(time_deltas.std()) if len(time_deltas) > 0 else None
 
         # Compute NaN percentages
         nan_percentages = {}
         for sensor in sensors:
-            if sensor in df.columns:
-                nan_pct = float(df[sensor].isna().sum() / len(df) * 100)
+            if sensor in sample_df.columns:
+                nan_pct = float(sample_df[sensor].isna().sum() / len(sample_df) * 100)
                 nan_percentages[sensor] = nan_pct
 
         # Get dtypes
-        dtypes = {sensor: str(df[sensor].dtype) for sensor in sensors if sensor in df.columns}
+        dtypes = {sensor: str(sample_df[sensor].dtype) for sensor in sensors if sensor in sample_df.columns}
 
         return SensorMetadata(
             sensors=sensors,
@@ -160,9 +163,14 @@ class FlightValidator:
                 flight_registry[flight_id] = file_path
 
         elif self.flight_id_column is not None:
-            # Single file with flight ID column - need to group
-            df = pd.read_parquet(files[0], columns=[self.flight_id_column])
-            flight_ids = df[self.flight_id_column].unique()
+            # Single file with flight ID column - scan lazily to collect IDs
+            dataset = ds.dataset(files[0], format="parquet")
+            scanner = dataset.scanner(columns=[self.flight_id_column])
+            flight_ids = set()
+
+            for batch in scanner.to_batches():
+                array = batch[self.flight_id_column]
+                flight_ids.update(array.drop_null().to_pylist())
 
             for flight_id in flight_ids:
                 # Store (file, flight_id_column, flight_id_value) tuple
@@ -188,6 +196,34 @@ class FlightValidator:
             return sorted(parquet_files)
         else:
             return []
+
+    def _sample_dataframe(
+        self,
+        file_path: Path,
+        columns: Optional[List[str]] = None,
+    ) -> pd.DataFrame:
+        """Load a sampled subset of rows using a pyarrow dataset scanner."""
+
+        dataset = ds.dataset(file_path, format="parquet")
+        scanner = dataset.scanner(columns=columns, use_threads=True)
+
+        batches: List[pa.RecordBatch] = []
+        remaining = self.sample_rows if self.sample_rows > 0 else None
+
+        for batch in scanner.to_batches():
+            if remaining is not None and remaining <= 0:
+                break
+
+            if remaining is not None and batch.num_rows > remaining:
+                batch = batch.slice(0, remaining)
+
+            batches.append(batch)
+
+            if remaining is not None:
+                remaining -= batch.num_rows
+
+        table = pa.Table.from_batches(batches, schema=scanner.projected_schema)
+        return table.to_pandas()
 
     def _detect_timestamp_column(self, df: pd.DataFrame) -> Optional[str]:
         """Detect the timestamp column."""

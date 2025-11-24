@@ -123,6 +123,12 @@ Examples:
         default=None,
         help="Column name for flight IDs in multi-flight files"
     )
+    parser.add_argument(
+        "--sample-rows",
+        type=int,
+        default=1000,
+        help="Number of rows to sample for validation and schema detection"
+    )
 
     # Control flags
     parser.add_argument(
@@ -251,7 +257,8 @@ def ingest_dataset(args):
     validator = FlightValidator(
         input_path,
         timestamp_column=args.timestamp_column,
-        flight_id_column=args.flight_id_column
+        flight_id_column=args.flight_id_column,
+        sample_rows=args.sample_rows,
     )
 
     validation_report = validator.validate()

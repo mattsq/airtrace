@@ -4,8 +4,10 @@ Flight data processing - cleaning, resampling, and saving.
 
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
-import pandas as pd
 import logging
+
+import pandas as pd
+import pyarrow.dataset as ds
 
 logger = logging.getLogger(__name__)
 
@@ -59,11 +61,17 @@ class FlightProcessor:
             if isinstance(source, tuple):
                 # Multi-flight file - need to filter
                 file_path, id_column, id_value = source
-                df = pd.read_parquet(file_path, engine="pyarrow")
-                df = df[df[id_column] == id_value].copy()
+                columns = list({*self.sensors, self.timestamp_column, id_column})
+                dataset = ds.dataset(file_path, format="parquet")
+                scanner = dataset.scanner(
+                    columns=columns,
+                    filter=ds.field(id_column) == id_value,
+                    use_threads=True,
+                )
+                df = scanner.to_table().to_pandas()
             else:
                 # Single flight file
-                df = pd.read_parquet(source, engine="pyarrow")
+                df = pd.read_parquet(source, columns=list({*self.sensors, self.timestamp_column}))
 
             # Standardize timestamp index
             df = self._standardize_timestamp(df)
