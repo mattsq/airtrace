@@ -236,6 +236,36 @@ def test_flight_processor_resample_respects_ffill_limit(tmp_path):
     np.testing.assert_allclose(resampled["a"].to_numpy(), np.array([1.0, 3.0]))
 
 
+def test_flight_processor_resample_numpy_respects_ffill_limit(tmp_path):
+    processor = FlightProcessor(
+        output_dir=tmp_path,
+        sensors=["a"],
+        timestamp_column="time",
+        resample_rate="1s",
+        resample_backend="numpy",
+        ffill_limit=1,
+    )
+
+    df = pd.DataFrame(
+        {
+            "time": pd.to_datetime([
+                "2024-01-01T00:00:00",
+                "2024-01-01T00:00:05",
+            ]),
+            "a": [0.0, 5.0],
+        }
+    )
+
+    standardized = processor._standardize_timestamp(df)
+    filtered = processor._filter_sensors(standardized)
+    resampled = processor._resample(filtered)
+
+    assert list(resampled.index) == list(
+        pd.to_datetime(["2024-01-01T00:00:00", "2024-01-01T00:00:05"])
+    )
+    np.testing.assert_allclose(resampled["a"].to_numpy(), np.array([0.0, 5.0]))
+
+
 def test_flight_validator_detects_schema_and_quality(tmp_path):
     df = pd.DataFrame(
         {

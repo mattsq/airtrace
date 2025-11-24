@@ -205,8 +205,10 @@ class FlightProcessor:
     def _resample(self, df: pd.DataFrame) -> pd.DataFrame:
         """Resample to uniform time intervals."""
 
+        mask = None
+
         if self.resample_backend == "numpy":
-            df_resampled = self._resample_with_numpy(df)
+            df_resampled, mask = self._resample_with_numpy(df)
         else:
             df_resampled = df.resample(self.resample_rate).mean()
 
@@ -215,6 +217,9 @@ class FlightProcessor:
                 df_resampled = df_resampled.ffill(limit=self.ffill_limit)
         else:
             df_resampled = df_resampled.ffill()
+
+        if mask is not None and not np.all(mask):
+            df_resampled = df_resampled.where(mask[:, None], np.nan)
 
         # Drop any remaining NaN rows
         initial_len = len(df_resampled)
@@ -226,19 +231,45 @@ class FlightProcessor:
 
         return df_resampled
 
-    def _resample_with_numpy(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _resample_with_numpy(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, Optional[np.ndarray]]:
         """Resample using numpy interpolation to reduce pandas overhead."""
 
         if df.empty:
-            return df
+            return df, None
 
         target_index = pd.date_range(
             start=df.index[0], end=df.index[-1], freq=self.resample_rate, name=df.index.name
         )
 
+        freq = target_index.freq
+        if freq is None:
+            raise ValueError("Target index frequency is undefined for numpy resampling")
+
+        freq_ns = int(freq.nanos)
+
         current_ns = df.index.view("int64")
         target_ns = target_index.view("int64")
         resampled_data = {}
+
+        if self.ffill_limit is None:
+            allowed_mask: Optional[np.ndarray] = None
+        elif self.ffill_limit == 0:
+            allowed_mask = np.isin(target_index.view("int64"), current_ns)
+        else:
+            allowed_mask = np.ones(len(target_index), dtype=bool)
+            # Mask out large gaps between observed points to honor forward-fill limit
+            for start_ns, end_ns in zip(current_ns[:-1], current_ns[1:]):
+                gap_steps = int((end_ns - start_ns) // freq_ns - 1)
+                if gap_steps > self.ffill_limit:
+                    gap_start = np.searchsorted(target_index.view("int64"), start_ns + freq_ns)
+                    gap_end = np.searchsorted(target_index.view("int64"), end_ns)
+                    allowed_mask[gap_start:gap_end] = False
+
+            # Avoid filling beyond the forward-fill limit after the final observation
+            final_idx = np.searchsorted(target_index.view("int64"), current_ns[-1])
+            trailing_steps = len(target_index) - final_idx - 1
+            if trailing_steps > self.ffill_limit:
+                allowed_mask[final_idx + self.ffill_limit + 1 :] = False
 
         for column in df.columns:
             series = df[column].to_numpy()
@@ -258,4 +289,6 @@ class FlightProcessor:
 
             resampled_data[column] = resampled_series
 
-        return pd.DataFrame(resampled_data, index=target_index)
+        resampled_df = pd.DataFrame(resampled_data, index=target_index)
+
+        return resampled_df, allowed_mask
