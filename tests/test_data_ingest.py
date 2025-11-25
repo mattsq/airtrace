@@ -71,13 +71,14 @@ def test_window_indexer_create_all_indices(tmp_path):
     test_df.to_parquet(processed_dir / "test.parquet", engine="pyarrow")
 
     indexer = WindowIndexer(input_len=3, pred_len=2, stride=2, processed_dir=processed_dir)
-    train_path, val_path, test_path = indexer.create_all_indices(
+    train_path, val_path, test_path, window_counts = indexer.create_all_indices(
         train_ids=["train"], val_ids=["val"], test_ids=["test"], output_dir=tmp_path, dataset_name="demo"
     )
 
     assert train_path.exists()
     assert val_path.exists()
     assert test_path.exists()
+    assert window_counts == {"train": 2, "val": 1, "test": 2}
 
     train_index = pd.read_parquet(train_path)
     assert len(train_index) == 2
@@ -108,8 +109,10 @@ def test_flight_processor_process_all_respects_min_length(tmp_path):
     long_df.to_parquet(registry["long"], engine="pyarrow")
     short_df.to_parquet(registry["short"], engine="pyarrow")
 
-    processed = processor.process_all(registry, min_length=3)
+    processed, metadata = processor.process_all(registry, min_length=3)
     assert processed == ["long"]
+    assert "long" in metadata
+    assert metadata["long"]["length"] == 5
 
     saved_path = output_dir / "long.parquet"
     assert saved_path.exists()
