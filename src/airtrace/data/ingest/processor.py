@@ -157,17 +157,19 @@ class FlightProcessor:
             output_path = self.output_dir / f"{flight_id}.parquet"
 
             # Automatic reuse: check if we can reuse existing processed file
-            if (
-                output_path.exists()
-                and self._is_metadata_match(flight_id, signature, existing_metadata)
-            ):
-                stored = existing_metadata[flight_id]
-                length = int(stored.get("length", 0))
-                if length >= min_length:
-                    logger.info(f"Reusing processed flight {flight_id} (cached)")
-                    successful_flights.append(flight_id)
-                    processed_metadata[flight_id] = stored
-                    continue
+            if output_path.exists():
+                if self._is_metadata_match(flight_id, signature, existing_metadata):
+                    stored = existing_metadata[flight_id]
+                    length = int(stored.get("length", 0))
+                    if length >= min_length:
+                        logger.info(f"Reusing processed flight {flight_id} (cached)")
+                        successful_flights.append(flight_id)
+                        processed_metadata[flight_id] = stored
+                        continue
+                else:
+                    # Log why cache was invalidated for debugging
+                    if flight_id in existing_metadata:
+                        logger.debug(f"Cache invalidated for {flight_id}: config or source changed")
 
             # Process flight
             result = self.process_flight(flight_id, source)
@@ -185,6 +187,7 @@ class FlightProcessor:
             successful_flights.append(flight_id)
             processed_metadata[flight_id] = {
                 "source_signature": signature,
+                "processing_signature": self._compute_processing_signature(),
                 "length": length,
                 "processed_path": str(output_path),
                 "processed_mtime": output_path.stat().st_mtime,
@@ -363,14 +366,47 @@ class FlightProcessor:
             "checksum": checksum.hexdigest(),
         }
 
+    def _compute_processing_signature(self) -> str:
+        """Compute deterministic signature from processing configuration.
+
+        Returns MD5 hash of all parameters that affect processing output.
+        """
+        config = {
+            "sensors": sorted(self.sensors),  # Sorted for determinism
+            "timestamp_column": self.timestamp_column,
+            "resample_rate": self.resample_rate,
+            "resample_backend": self.resample_backend,
+            "ffill_limit": self.ffill_limit,
+            "timestamp_dtype": self.timestamp_dtype,
+        }
+
+        # Use JSON for deterministic serialization
+        config_json = json.dumps(config, sort_keys=True)
+        checksum = hashlib.md5()
+        checksum.update(config_json.encode())
+        return checksum.hexdigest()
+
     def _is_metadata_match(
         self, flight_id: str, signature: Dict, existing_metadata: Dict
     ) -> bool:
-        """Check if existing metadata matches current source signature."""
+        """Check if existing metadata matches current source and processing config."""
         if flight_id not in existing_metadata:
             return False
-        stored_sig = existing_metadata[flight_id].get("source_signature", {})
-        return stored_sig.get("checksum") == signature.get("checksum")
+
+        stored = existing_metadata[flight_id]
+
+        # Check source file signature
+        stored_source_sig = stored.get("source_signature", {})
+        if stored_source_sig.get("checksum") != signature.get("checksum"):
+            return False
+
+        # Check processing config signature
+        current_config_sig = self._compute_processing_signature()
+        stored_config_sig = stored.get("processing_signature")
+        if stored_config_sig != current_config_sig:
+            return False
+
+        return True
 
     def _save_metadata(self, metadata: Dict) -> None:
         """Save processing metadata to JSON file."""

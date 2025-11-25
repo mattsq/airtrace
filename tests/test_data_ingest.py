@@ -358,3 +358,114 @@ def test_flight_validator_quality_checks_detect_issues():
     assert any("duplicate" in warn for warn in validator.report.warnings)
     assert any("Irregular sampling" in warn for warn in validator.report.warnings)
 
+
+def test_flight_processor_invalidates_cache_on_config_change(tmp_path):
+    """Test that processor invalidates cache when processing config changes."""
+    import time
+
+    # Create test data
+    df = pd.DataFrame({
+        "time": pd.date_range("2024-01-01", periods=100, freq="1s"),
+        "sensor1": range(100),
+        "sensor2": range(100, 200),
+    })
+    input_file = tmp_path / "flight.parquet"
+    df.to_parquet(input_file, engine="pyarrow", index=False)
+
+    # First run: process with sensor1
+    processor1 = FlightProcessor(
+        output_dir=tmp_path / "processed",
+        sensors=["sensor1"],
+        timestamp_column="time",
+        dataset_name="test",
+        metadata_dir=tmp_path / "metadata",
+    )
+
+    flight_ids1, metadata1 = processor1.process_all(
+        {"flight": input_file}, min_length=1
+    )
+
+    first_mtime = (tmp_path / "processed" / "flight.parquet").stat().st_mtime
+
+    # Read first processed file to verify sensor1
+    first_processed = pd.read_parquet(tmp_path / "processed" / "flight.parquet")
+    assert "sensor1" in first_processed.columns
+    assert "sensor2" not in first_processed.columns
+
+    # Sleep to ensure mtime will differ if file is regenerated
+    time.sleep(0.02)
+
+    # Second run: CHANGE sensors to sensor2 (source file unchanged)
+    processor2 = FlightProcessor(
+        output_dir=tmp_path / "processed",
+        sensors=["sensor2"],  # DIFFERENT!
+        timestamp_column="time",
+        dataset_name="test",
+        metadata_dir=tmp_path / "metadata",
+    )
+
+    flight_ids2, metadata2 = processor2.process_all(
+        {"flight": input_file}, min_length=1
+    )
+
+    second_mtime = (tmp_path / "processed" / "flight.parquet").stat().st_mtime
+
+    # Cache should have been INVALIDATED and file REPROCESSED
+    assert flight_ids1 == flight_ids2 == ["flight"]
+
+    # Verify new file has correct sensor (primary check)
+    reprocessed = pd.read_parquet(tmp_path / "processed" / "flight.parquet")
+    assert "sensor2" in reprocessed.columns
+    assert "sensor1" not in reprocessed.columns
+
+    # File should have been regenerated (mtime changed)
+    assert first_mtime != second_mtime
+
+
+def test_flight_processor_reuses_cache_on_config_match(tmp_path):
+    """Test that processor correctly reuses cache when config matches."""
+
+    # Create test data
+    df = pd.DataFrame({
+        "time": pd.date_range("2024-01-01", periods=100, freq="1s"),
+        "sensor1": range(100),
+    })
+    input_file = tmp_path / "flight.parquet"
+    df.to_parquet(input_file, engine="pyarrow", index=False)
+
+    # First run
+    processor1 = FlightProcessor(
+        output_dir=tmp_path / "processed",
+        sensors=["sensor1"],
+        timestamp_column="time",
+        resample_rate="1S",
+        dataset_name="test",
+        metadata_dir=tmp_path / "metadata",
+    )
+
+    flight_ids1, metadata1 = processor1.process_all(
+        {"flight": input_file}, min_length=1
+    )
+
+    first_mtime = (tmp_path / "processed" / "flight.parquet").stat().st_mtime
+
+    # Second run with IDENTICAL config
+    processor2 = FlightProcessor(
+        output_dir=tmp_path / "processed",
+        sensors=["sensor1"],  # SAME
+        timestamp_column="time",  # SAME
+        resample_rate="1S",  # SAME
+        dataset_name="test",
+        metadata_dir=tmp_path / "metadata",
+    )
+
+    flight_ids2, metadata2 = processor2.process_all(
+        {"flight": input_file}, min_length=1
+    )
+
+    second_mtime = (tmp_path / "processed" / "flight.parquet").stat().st_mtime
+
+    # Cache should have been REUSED
+    assert flight_ids1 == flight_ids2 == ["flight"]
+    assert first_mtime == second_mtime  # File NOT regenerated
+
