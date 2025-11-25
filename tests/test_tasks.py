@@ -80,6 +80,23 @@ def test_task_registry_errors(registry_restore):
     with pytest.raises(ValueError):
         registry.register("unique")(UniqueTask)
 
+
+def test_base_task_methods_raise_not_implemented():
+    class IncompleteTask(Task):
+        def training_step(self, batch: Dict[str, torch.Tensor], model: torch.nn.Module):
+            return super().training_step(batch, model)
+
+        def validation_step(self, batch: Dict[str, torch.Tensor], model: torch.nn.Module):
+            return super().validation_step(batch, model)
+
+    task = IncompleteTask({"loss": "mse", "metrics": ["rmse"]})
+
+    with pytest.raises(NotImplementedError):
+        task.training_step({}, torch.nn.Linear(1, 1))
+
+    with pytest.raises(NotImplementedError):
+        task.validation_step({}, torch.nn.Linear(1, 1))
+
     with pytest.raises(ValueError):
         registry.build_task({"name": "missing"})
 
