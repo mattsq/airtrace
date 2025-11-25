@@ -208,10 +208,9 @@ class TestIngestDataset:
             'mach': np.random.randn(1000) * 0.01 + 0.82,
             'altitude': np.random.randn(1000) * 100 + 35000,
         })
-        df = df.set_index('timestamp')
-        
+
         input_file = tmp_path / "test_flight.parquet"
-        df.to_parquet(input_file)
+        df.to_parquet(input_file, index=False)
 
         # Create mock args
         args = MagicMock()

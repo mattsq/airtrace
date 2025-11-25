@@ -338,5 +338,13 @@ class FlightValidator:
 
             return pd.concat(batches, ignore_index=True) if batches else pd.DataFrame()
         except Exception as e:
-            logger.error(f"Failed to sample {file_path}: {e}")
-            raise
+            # Fallback to pandas if PyArrow dataset API fails
+            logger.warning(f"PyArrow dataset API failed for {file_path}, falling back to pandas: {e}")
+            try:
+                df = pd.read_parquet(file_path, engine="pyarrow")
+                if sample_rows > 0:
+                    return df.head(sample_rows)
+                return df
+            except Exception as fallback_error:
+                logger.error(f"Failed to sample {file_path}: {fallback_error}")
+                raise

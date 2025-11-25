@@ -40,10 +40,10 @@ def test_window_indexer_skips_short_and_missing_flights(tmp_path):
     short_path = processed_dir / "short.parquet"
 
     df = pd.DataFrame({"s1": range(10)}, index=pd.date_range("2024-01-01", periods=10, freq="s"))
-    df.to_parquet(flight_path, engine="pyarrow")
+    df.to_parquet(flight_path, engine="pyarrow", index=False)
 
     short_df = pd.DataFrame({"s1": range(3)}, index=pd.date_range("2024-01-01", periods=3, freq="s"))
-    short_df.to_parquet(short_path, engine="pyarrow")
+    short_df.to_parquet(short_path, engine="pyarrow", index=False)
 
     indexer = WindowIndexer(input_len=3, pred_len=2, stride=2, processed_dir=processed_dir)
 
@@ -66,9 +66,9 @@ def test_window_indexer_create_all_indices(tmp_path):
         {"s1": range(7)}, index=pd.date_range("2024-01-03", periods=7, freq="s")
     )
 
-    train_df.to_parquet(processed_dir / "train.parquet", engine="pyarrow")
-    val_df.to_parquet(processed_dir / "val.parquet", engine="pyarrow")
-    test_df.to_parquet(processed_dir / "test.parquet", engine="pyarrow")
+    train_df.to_parquet(processed_dir / "train.parquet", engine="pyarrow", index=False)
+    val_df.to_parquet(processed_dir / "val.parquet", engine="pyarrow", index=False)
+    test_df.to_parquet(processed_dir / "test.parquet", engine="pyarrow", index=False)
 
     indexer = WindowIndexer(input_len=3, pred_len=2, stride=2, processed_dir=processed_dir)
     train_path, val_path, test_path, window_counts = indexer.create_all_indices(
@@ -106,8 +106,8 @@ def test_flight_processor_process_all_respects_min_length(tmp_path):
         "long": tmp_path / "long.parquet",
         "short": tmp_path / "short.parquet",
     }
-    long_df.to_parquet(registry["long"], engine="pyarrow")
-    short_df.to_parquet(registry["short"], engine="pyarrow")
+    long_df.to_parquet(registry["long"], engine="pyarrow", index=False)
+    short_df.to_parquet(registry["short"], engine="pyarrow", index=False)
 
     processed, metadata = processor.process_all(registry, min_length=3)
     assert processed == ["long"]
@@ -139,7 +139,7 @@ def test_flight_processor_handles_multiflight_and_empty_result(tmp_path):
             "a": [None, None, None, None, None, None],
         }
     )
-    df.to_parquet(multi_flight_path, engine="pyarrow")
+    df.to_parquet(multi_flight_path, engine="pyarrow", index=False)
 
     output = processor.process_flight("y", (multi_flight_path, "flight_id", "y"))
     assert output is None
@@ -280,7 +280,7 @@ def test_flight_validator_detects_schema_and_quality(tmp_path):
     data_dir = tmp_path / "raw"
     data_dir.mkdir()
     file_path = data_dir / "flight.parquet"
-    df.to_parquet(file_path, engine="pyarrow")
+    df.to_parquet(file_path, engine="pyarrow", index=False)
 
     validator = FlightValidator(input_path=data_dir)
     report = validator.validate()
@@ -315,7 +315,7 @@ def test_flight_validator_invalid_timestamp_column(tmp_path):
     data_dir = tmp_path / "raw"
     data_dir.mkdir()
     file_path = data_dir / "flight.parquet"
-    pd.DataFrame({"timestamp": [1, 2, 3], "sensor": [0.1, 0.2, 0.3]}).to_parquet(file_path, engine="pyarrow")
+    pd.DataFrame({"timestamp": [1, 2, 3], "sensor": [0.1, 0.2, 0.3]}).to_parquet(file_path, engine="pyarrow", index=False)
 
     validator = FlightValidator(input_path=data_dir, timestamp_column="timestamp")
     report = validator.validate()
@@ -331,7 +331,7 @@ def test_flight_validator_detect_flights_with_id_column(tmp_path):
             "flight_id": ["a", "a", "b", "b"],
             "sensor": [1, 2, 3, 4],
         }
-    ).to_parquet(file_path, engine="pyarrow")
+    ).to_parquet(file_path, engine="pyarrow", index=False)
 
     validator = FlightValidator(input_path=file_path, flight_id_column="flight_id")
     registry = validator.detect_flights()
