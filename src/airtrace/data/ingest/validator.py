@@ -7,6 +7,10 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import pandas as pd
 import numpy as np
+import pyarrow.dataset as ds
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -73,11 +77,9 @@ class FlightValidator:
             self.report.add_error(f"No parquet files found at {self.input_path}")
             return self.report
 
-        # Load sample data from first file
+        # Load sample data from first file using PyArrow sampling
         try:
-            sample_df = pd.read_parquet(files[0], engine="pyarrow")
-            if len(sample_df) > 1000:
-                sample_df = sample_df.iloc[:1000]
+            sample_df = self._sample_dataframe(files[0], sample_rows=1000)
         except Exception as e:
             self.report.add_error(f"Failed to load {files[0]}: {e}")
             return self.report
@@ -105,8 +107,8 @@ class FlightValidator:
         if not files:
             raise ValueError("No parquet files found")
 
-        # Load first file
-        df = pd.read_parquet(files[0], engine="pyarrow")
+        # Load sample from first file using PyArrow sampling
+        df = self._sample_dataframe(files[0], sample_rows=10000)
 
         # Detect timestamp
         timestamp_col = self._detect_timestamp_column(df)
@@ -309,3 +311,32 @@ class FlightValidator:
                         f"Irregular sampling detected (median={median_delta:.2f}s, std={std_delta:.2f}s). "
                         "Consider using --resample-rate"
                     )
+
+    def _sample_dataframe(self, file_path: Path, sample_rows: int = 1000) -> pd.DataFrame:
+        """Sample dataframe efficiently using PyArrow."""
+        try:
+            dataset = ds.dataset(file_path, format="parquet")
+            scanner = dataset.scanner(use_threads=True)
+
+            if sample_rows <= 0:
+                # Load full file
+                return scanner.to_table().to_pandas()
+
+            # Sample first N rows efficiently
+            batches = []
+            rows_collected = 0
+            for batch in scanner.to_batches():
+                batch_size = len(batch)
+                if rows_collected + batch_size <= sample_rows:
+                    batches.append(batch.to_pandas())
+                    rows_collected += batch_size
+                else:
+                    # Partial batch
+                    remaining = sample_rows - rows_collected
+                    batches.append(batch.slice(0, remaining).to_pandas())
+                    break
+
+            return pd.concat(batches, ignore_index=True) if batches else pd.DataFrame()
+        except Exception as e:
+            logger.error(f"Failed to sample {file_path}: {e}")
+            raise

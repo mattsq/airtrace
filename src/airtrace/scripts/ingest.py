@@ -341,11 +341,12 @@ def ingest_dataset(args):
             timestamp_dtype=sensor_metadata.timestamp_dtype,
             resample_backend=args.resample_backend,
             ffill_limit=args.ffill_limit,
+            metadata_dir=Path("data/metadata"),
         )
 
         # Process with minimum length requirement
         min_length = args.input_len + args.pred_len
-        processed_ids = processor.process_all(flight_registry, min_length=min_length)
+        processed_ids, processed_metadata = processor.process_all(flight_registry, min_length=min_length)
 
         # Update splits to remove failed flights
         train_ids = [id for id in train_ids if id in processed_ids]
@@ -355,6 +356,7 @@ def ingest_dataset(args):
         logger.info(f"  Successfully processed {len(processed_ids)} flights")
     else:
         logger.info("\n[Step 3/5] Skipping flight processing (--skip-processed)")
+        processed_metadata = None
 
     # Step 4: Create window indices
     logger.info("\n[Step 4/5] Creating window indices...")
@@ -374,10 +376,11 @@ def ingest_dataset(args):
         args.input_len,
         args.pred_len,
         args.stride,
-        Path("data/processed")
+        Path("data/processed"),
+        metadata_dir=Path("data/metadata"),
     )
 
-    (train_path, val_path, test_path), window_counts = indexer.create_all_indices(
+    train_path, val_path, test_path, window_counts = indexer.create_all_indices(
         train_ids,
         val_ids,
         test_ids,
@@ -386,7 +389,7 @@ def ingest_dataset(args):
         num_workers=args.index_workers,
         write_partitioned=args.index_partitioned,
         materialize_dataframe=not args.stream_index_writes,
-        return_counts=True,
+        processed_metadata=processed_metadata,
     )
 
     train_windows = window_counts["train"]
