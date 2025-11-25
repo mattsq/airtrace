@@ -2,10 +2,12 @@
 Window index generation for train/val/test splits.
 """
 
+import hashlib
+import json
 import logging
 from multiprocessing import Pool
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple, Union
+from typing import Dict, Iterable, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -24,6 +26,7 @@ class WindowIndexer:
         pred_len: int,
         stride: int,
         processed_dir: Path,
+        metadata_dir: Path = Path("data/metadata"),
     ):
         """
         Args:
@@ -31,6 +34,7 @@ class WindowIndexer:
             pred_len: Prediction sequence length (forecast)
             stride: Sliding window stride
             processed_dir: Directory containing processed flight parquet files
+            metadata_dir: Directory to store index metadata for caching
         """
         self.input_len = input_len
         self.pred_len = pred_len
@@ -38,6 +42,7 @@ class WindowIndexer:
         self.processed_dir = Path(processed_dir)
         self.total_len = input_len + pred_len
         self._length_cache: dict[str, int] = {}
+        self.metadata_dir = Path(metadata_dir)
 
     @staticmethod
     def _get_length_from_metadata(flight_path: Path) -> Optional[int]:
@@ -265,10 +270,10 @@ class WindowIndexer:
         num_workers: int = 1,
         write_partitioned: bool = False,
         materialize_dataframe: bool = True,
-        return_counts: bool = False,
-    ) -> Union[Tuple[Path, Path, Path], Tuple[Tuple[Path, Path, Path], dict[str, int]]]:
+        processed_metadata: Optional[Dict[str, Dict]] = None,
+    ) -> Tuple[Path, Path, Path, Dict[str, int]]:
         """
-        Create train/val/test indices.
+        Create train/val/test indices with automatic caching.
 
         Args:
             train_ids: Training flight IDs
@@ -279,15 +284,36 @@ class WindowIndexer:
             num_workers: Number of worker processes for parallel generation
             write_partitioned: Write indices as a partitioned parquet dataset
             materialize_dataframe: Whether to keep full index DataFrames in memory
-            return_counts: Whether to also return split window counts
+            processed_metadata: Metadata from processor for cache validation
 
         Returns:
-            Tuple of (train_path, val_path, test_path). When ``return_counts`` is
-            True, returns ((train_path, val_path, test_path), counts).
+            Tuple of (train_path, val_path, test_path, window_counts dict)
         """
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        meta_path = self.metadata_dir / f"{dataset_name}_index_meta.json"
+
+        # Automatic reuse: check if we can reuse existing indices
+        if self._can_reuse_indices(
+            meta_path, train_ids, val_ids, test_ids, processed_metadata
+        ):
+            metadata = self._load_metadata(meta_path)
+            output_suffix = "" if write_partitioned else ".parquet"
+            train_path = output_dir / f"{dataset_name}_train_index{output_suffix}"
+            val_path = output_dir / f"{dataset_name}_val_index{output_suffix}"
+            test_path = output_dir / f"{dataset_name}_test_index{output_suffix}"
+
+            if train_path.exists() and val_path.exists() and test_path.exists():
+                logger.info("Reusing cached window indices")
+                return (
+                    train_path,
+                    val_path,
+                    test_path,
+                    metadata.get("window_counts", {}),
+                )
+
+        # Create indices (not cached or cache invalid)
         output_suffix = "" if write_partitioned else ".parquet"
 
         def build_split(
@@ -316,9 +342,104 @@ class WindowIndexer:
         val_index, val_path, val_count = build_split(val_ids, "val")
         test_index, test_path, test_count = build_split(test_ids, "test")
 
+        window_counts = {
+            "train": train_count,
+            "val": val_count,
+            "test": test_count,
+        }
+
+        # Save metadata for future runs
+        self._save_metadata(
+            meta_path, train_ids, val_ids, test_ids, window_counts, processed_metadata
+        )
+
         logger.info(f"Saved window indices to {output_dir}")
-        paths = (train_path, val_path, test_path)
-        if return_counts:
-            return paths, {"train": train_count, "val": val_count, "test": test_count}
-        return paths
+        return train_path, val_path, test_path, window_counts
+
+    def _save_metadata(
+        self,
+        meta_path: Path,
+        train_ids: List[str],
+        val_ids: List[str],
+        test_ids: List[str],
+        window_counts: Dict[str, int],
+        processed_metadata: Optional[Dict],
+    ) -> None:
+        """Save index generation metadata."""
+        meta_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "input_len": self.input_len,
+            "pred_len": self.pred_len,
+            "stride": self.stride,
+            "train_ids": train_ids,
+            "val_ids": val_ids,
+            "test_ids": test_ids,
+            "window_counts": window_counts,
+            "processed_signature": self._processed_signature(
+                processed_metadata, train_ids + val_ids + test_ids
+            ),
+        }
+        with open(meta_path, "w") as f:
+            json.dump(payload, f, indent=2)
+
+    def _load_metadata(self, meta_path: Path) -> Dict:
+        """Load index generation metadata."""
+        if not meta_path.exists():
+            return {}
+        try:
+            with open(meta_path, "r") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def _can_reuse_indices(
+        self,
+        meta_path: Path,
+        train_ids: List[str],
+        val_ids: List[str],
+        test_ids: List[str],
+        processed_metadata: Optional[Dict],
+    ) -> bool:
+        """Check if existing indices can be reused."""
+        metadata = self._load_metadata(meta_path)
+        if not metadata:
+            return False
+
+        # Check if window parameters match
+        if (
+            metadata.get("input_len") != self.input_len
+            or metadata.get("pred_len") != self.pred_len
+            or metadata.get("stride") != self.stride
+        ):
+            return False
+
+        # Check if flight IDs match
+        if (
+            metadata.get("train_ids") != train_ids
+            or metadata.get("val_ids") != val_ids
+            or metadata.get("test_ids") != test_ids
+        ):
+            return False
+
+        # Check if processed data signature matches
+        expected_sig = self._processed_signature(
+            processed_metadata, train_ids + val_ids + test_ids
+        )
+        return metadata.get("processed_signature") == expected_sig
+
+    def _processed_signature(
+        self, processed_metadata: Optional[Dict], flight_ids: List[str]
+    ) -> str:
+        """Compute signature from processed flight metadata."""
+        if not processed_metadata:
+            return ""
+
+        checksum = hashlib.md5()
+        for flight_id in sorted(flight_ids):
+            meta = processed_metadata.get(flight_id, {})
+            checksum.update(flight_id.encode())
+            checksum.update(str(meta.get("length", 0)).encode())
+            source_sig = meta.get("source_signature", {})
+            checksum.update(str(source_sig.get("checksum", "")).encode())
+        return checksum.hexdigest()
 

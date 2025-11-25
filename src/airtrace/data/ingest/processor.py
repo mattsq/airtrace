@@ -2,10 +2,13 @@
 Flight data processing - cleaning, resampling, and saving.
 """
 
+import hashlib
+import json
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 import pandas as pd
 import numpy as np
+import pyarrow.dataset as ds
 import logging
 
 logger = logging.getLogger(__name__)
@@ -23,7 +26,8 @@ class FlightProcessor:
         dataset_name: Optional[str] = None,
         timestamp_dtype: Optional[str] = None,
         resample_backend: str = "pandas",
-        ffill_limit: Optional[int] = 5
+        ffill_limit: Optional[int] = 5,
+        metadata_dir: Path = Path("data/metadata")
     ):
         """
         Args:
@@ -35,6 +39,7 @@ class FlightProcessor:
             timestamp_dtype: Optional dtype detected by the validator for fast datetime handling
             resample_backend: Backend to use for resampling ("pandas" or "numpy")
             ffill_limit: Forward-fill limit for small gaps (None disables limit)
+            metadata_dir: Directory to store processing metadata for caching
         """
         self.output_dir = Path(output_dir)
         self.sensors = sensors
@@ -44,6 +49,12 @@ class FlightProcessor:
         self.timestamp_dtype = timestamp_dtype
         self.resample_backend = resample_backend
         self.ffill_limit = ffill_limit
+        self.metadata_dir = Path(metadata_dir)
+        self.metadata_path = (
+            self.metadata_dir / f"{self.dataset_name}_processed_meta.json"
+            if self.dataset_name
+            else None
+        )
 
         if self.resample_backend not in {"pandas", "numpy"}:
             raise ValueError("resample_backend must be 'pandas' or 'numpy'")
@@ -55,7 +66,7 @@ class FlightProcessor:
         self,
         flight_id: str,
         source: Union[Path, Tuple[Path, str, str]]
-    ) -> Optional[Path]:
+    ) -> Optional[Tuple[Path, int]]:
         """
         Process a single flight.
 
@@ -65,18 +76,35 @@ class FlightProcessor:
                    for filtering multi-flight files
 
         Returns:
-            Path to saved processed file, or None if processing failed
+            Tuple of (output_path, length) or None if processing failed
         """
         try:
-            # Load flight data
+            # Load flight data with PyArrow column projection for efficiency
             if isinstance(source, tuple):
-                # Multi-flight file - need to filter
+                # Multi-flight file - use PyArrow scanner with filter
                 file_path, id_column, id_value = source
-                df = pd.read_parquet(file_path, engine="pyarrow")
-                df = df[df[id_column] == id_value].copy()
+                columns = list({*self.sensors, self.timestamp_column, id_column})
+                dataset = ds.dataset(file_path, format="parquet")
+                scanner = dataset.scanner(
+                    columns=columns,
+                    filter=ds.field(id_column) == id_value,
+                    use_threads=True,
+                )
+                batches = [batch.to_pandas() for batch in scanner.to_batches()]
+
+                if not batches:
+                    raise ValueError(
+                        f"No rows found for {id_column}={id_value} in {file_path}"
+                    )
+
+                df = pd.concat(batches, ignore_index=True)
             else:
-                # Single flight file
-                df = pd.read_parquet(source, engine="pyarrow")
+                # Single flight file - use column projection
+                df = pd.read_parquet(
+                    source,
+                    columns=list({*self.sensors, self.timestamp_column}),
+                    engine="pyarrow"
+                )
 
             # Standardize timestamp index
             df = self._standardize_timestamp(df)
@@ -98,7 +126,7 @@ class FlightProcessor:
             df.to_parquet(output_path, engine="pyarrow", index=True)
 
             logger.info(f"Processed flight {flight_id}: {len(df)} timesteps, saved to {output_path}")
-            return output_path
+            return output_path, len(df)
 
         except Exception as e:
             logger.error(f"Failed to process flight {flight_id}: {e}")
@@ -108,39 +136,72 @@ class FlightProcessor:
         self,
         flight_registry: Dict[str, Union[Path, Tuple[Path, str, str]]],
         min_length: int = 1
-    ) -> List[str]:
+    ) -> Tuple[List[str], Dict[str, Dict]]:
         """
-        Process all flights in registry.
+        Process all flights with automatic caching.
 
         Args:
             flight_registry: Dictionary mapping flight_id -> source
             min_length: Minimum number of timesteps (flights shorter are skipped)
 
         Returns:
-            List of successfully processed flight IDs
+            Tuple of (successful flight IDs, metadata dict keyed by flight_id)
         """
-        successful_flights = []
+        successful_flights: List[str] = []
+        processed_metadata: Dict[str, Dict] = {}
+        existing_metadata = self._load_existing_metadata()
 
         for flight_id, source in flight_registry.items():
-            output_path = self.process_flight(flight_id, source)
+            source_path = source[0] if isinstance(source, tuple) else source
+            signature = self._compute_source_signature(Path(source_path))
+            output_path = self.output_dir / f"{flight_id}.parquet"
 
-            if output_path is not None:
-                # Check length
-                df = pd.read_parquet(output_path)
-                if len(df) >= min_length:
-                    successful_flights.append(flight_id)
+            # Automatic reuse: check if we can reuse existing processed file
+            if output_path.exists():
+                if self._is_metadata_match(flight_id, signature, existing_metadata):
+                    stored = existing_metadata[flight_id]
+                    length = int(stored.get("length", 0))
+                    if length >= min_length:
+                        logger.info(f"Reusing processed flight {flight_id} (cached)")
+                        successful_flights.append(flight_id)
+                        processed_metadata[flight_id] = stored
+                        continue
                 else:
-                    logger.warning(
-                        f"Flight {flight_id} too short ({len(df)} < {min_length}), skipping"
-                    )
-                    # Remove the file
-                    output_path.unlink()
+                    # Log why cache was invalidated for debugging
+                    if flight_id in existing_metadata:
+                        logger.debug(f"Cache invalidated for {flight_id}: config or source changed")
+
+            # Process flight
+            result = self.process_flight(flight_id, source)
+            if result is None:
+                continue
+
+            output_path, length = result
+            if length < min_length:
+                logger.warning(
+                    f"Flight {flight_id} too short ({length} < {min_length}), skipping"
+                )
+                output_path.unlink(missing_ok=True)
+                continue
+
+            successful_flights.append(flight_id)
+            processed_metadata[flight_id] = {
+                "source_signature": signature,
+                "processing_signature": self._compute_processing_signature(),
+                "length": length,
+                "processed_path": str(output_path),
+                "processed_mtime": output_path.stat().st_mtime,
+            }
+
+        # Save metadata for future runs
+        if self.metadata_path:
+            self._save_metadata(processed_metadata)
 
         logger.info(
             f"Successfully processed {len(successful_flights)}/{len(flight_registry)} flights"
         )
 
-        return successful_flights
+        return successful_flights, processed_metadata
 
     def _standardize_timestamp(self, df: pd.DataFrame) -> pd.DataFrame:
         """Standardize timestamp as index."""
@@ -292,3 +353,75 @@ class FlightProcessor:
         resampled_df = pd.DataFrame(resampled_data, index=target_index)
 
         return resampled_df, allowed_mask
+
+    def _compute_source_signature(self, source_path: Path) -> Dict:
+        """Compute checksum signature for source file."""
+        stat = source_path.stat()
+        checksum = hashlib.md5()
+        checksum.update(str(stat.st_mtime).encode())
+        checksum.update(str(stat.st_size).encode())
+        return {
+            "mtime": stat.st_mtime,
+            "size": stat.st_size,
+            "checksum": checksum.hexdigest(),
+        }
+
+    def _compute_processing_signature(self) -> str:
+        """Compute deterministic signature from processing configuration.
+
+        Returns MD5 hash of all parameters that affect processing output.
+        """
+        config = {
+            "sensors": sorted(self.sensors),  # Sorted for determinism
+            "timestamp_column": self.timestamp_column,
+            "resample_rate": self.resample_rate,
+            "resample_backend": self.resample_backend,
+            "ffill_limit": self.ffill_limit,
+            "timestamp_dtype": self.timestamp_dtype,
+        }
+
+        # Use JSON for deterministic serialization
+        config_json = json.dumps(config, sort_keys=True)
+        checksum = hashlib.md5()
+        checksum.update(config_json.encode())
+        return checksum.hexdigest()
+
+    def _is_metadata_match(
+        self, flight_id: str, signature: Dict, existing_metadata: Dict
+    ) -> bool:
+        """Check if existing metadata matches current source and processing config."""
+        if flight_id not in existing_metadata:
+            return False
+
+        stored = existing_metadata[flight_id]
+
+        # Check source file signature
+        stored_source_sig = stored.get("source_signature", {})
+        if stored_source_sig.get("checksum") != signature.get("checksum"):
+            return False
+
+        # Check processing config signature
+        current_config_sig = self._compute_processing_signature()
+        stored_config_sig = stored.get("processing_signature")
+        if stored_config_sig != current_config_sig:
+            return False
+
+        return True
+
+    def _save_metadata(self, metadata: Dict) -> None:
+        """Save processing metadata to JSON file."""
+        if not self.metadata_path:
+            return
+        self.metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.metadata_path, "w") as f:
+            json.dump(metadata, f, indent=2)
+
+    def _load_existing_metadata(self) -> Dict:
+        """Load existing processing metadata if available."""
+        if not self.metadata_path or not self.metadata_path.exists():
+            return {}
+        try:
+            with open(self.metadata_path, "r") as f:
+                return json.load(f)
+        except Exception:
+            return {}

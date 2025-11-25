@@ -40,10 +40,10 @@ def test_window_indexer_skips_short_and_missing_flights(tmp_path):
     short_path = processed_dir / "short.parquet"
 
     df = pd.DataFrame({"s1": range(10)}, index=pd.date_range("2024-01-01", periods=10, freq="s"))
-    df.to_parquet(flight_path, engine="pyarrow")
+    df.to_parquet(flight_path, engine="pyarrow", index=False)
 
     short_df = pd.DataFrame({"s1": range(3)}, index=pd.date_range("2024-01-01", periods=3, freq="s"))
-    short_df.to_parquet(short_path, engine="pyarrow")
+    short_df.to_parquet(short_path, engine="pyarrow", index=False)
 
     indexer = WindowIndexer(input_len=3, pred_len=2, stride=2, processed_dir=processed_dir)
 
@@ -66,18 +66,19 @@ def test_window_indexer_create_all_indices(tmp_path):
         {"s1": range(7)}, index=pd.date_range("2024-01-03", periods=7, freq="s")
     )
 
-    train_df.to_parquet(processed_dir / "train.parquet", engine="pyarrow")
-    val_df.to_parquet(processed_dir / "val.parquet", engine="pyarrow")
-    test_df.to_parquet(processed_dir / "test.parquet", engine="pyarrow")
+    train_df.to_parquet(processed_dir / "train.parquet", engine="pyarrow", index=False)
+    val_df.to_parquet(processed_dir / "val.parquet", engine="pyarrow", index=False)
+    test_df.to_parquet(processed_dir / "test.parquet", engine="pyarrow", index=False)
 
     indexer = WindowIndexer(input_len=3, pred_len=2, stride=2, processed_dir=processed_dir)
-    train_path, val_path, test_path = indexer.create_all_indices(
+    train_path, val_path, test_path, window_counts = indexer.create_all_indices(
         train_ids=["train"], val_ids=["val"], test_ids=["test"], output_dir=tmp_path, dataset_name="demo"
     )
 
     assert train_path.exists()
     assert val_path.exists()
     assert test_path.exists()
+    assert window_counts == {"train": 2, "val": 1, "test": 2}
 
     train_index = pd.read_parquet(train_path)
     assert len(train_index) == 2
@@ -105,11 +106,13 @@ def test_flight_processor_process_all_respects_min_length(tmp_path):
         "long": tmp_path / "long.parquet",
         "short": tmp_path / "short.parquet",
     }
-    long_df.to_parquet(registry["long"], engine="pyarrow")
-    short_df.to_parquet(registry["short"], engine="pyarrow")
+    long_df.to_parquet(registry["long"], engine="pyarrow", index=False)
+    short_df.to_parquet(registry["short"], engine="pyarrow", index=False)
 
-    processed = processor.process_all(registry, min_length=3)
+    processed, metadata = processor.process_all(registry, min_length=3)
     assert processed == ["long"]
+    assert "long" in metadata
+    assert metadata["long"]["length"] == 5
 
     saved_path = output_dir / "long.parquet"
     assert saved_path.exists()
@@ -136,7 +139,7 @@ def test_flight_processor_handles_multiflight_and_empty_result(tmp_path):
             "a": [None, None, None, None, None, None],
         }
     )
-    df.to_parquet(multi_flight_path, engine="pyarrow")
+    df.to_parquet(multi_flight_path, engine="pyarrow", index=False)
 
     output = processor.process_flight("y", (multi_flight_path, "flight_id", "y"))
     assert output is None
@@ -277,7 +280,7 @@ def test_flight_validator_detects_schema_and_quality(tmp_path):
     data_dir = tmp_path / "raw"
     data_dir.mkdir()
     file_path = data_dir / "flight.parquet"
-    df.to_parquet(file_path, engine="pyarrow")
+    df.to_parquet(file_path, engine="pyarrow", index=False)
 
     validator = FlightValidator(input_path=data_dir)
     report = validator.validate()
@@ -312,7 +315,7 @@ def test_flight_validator_invalid_timestamp_column(tmp_path):
     data_dir = tmp_path / "raw"
     data_dir.mkdir()
     file_path = data_dir / "flight.parquet"
-    pd.DataFrame({"timestamp": [1, 2, 3], "sensor": [0.1, 0.2, 0.3]}).to_parquet(file_path, engine="pyarrow")
+    pd.DataFrame({"timestamp": [1, 2, 3], "sensor": [0.1, 0.2, 0.3]}).to_parquet(file_path, engine="pyarrow", index=False)
 
     validator = FlightValidator(input_path=data_dir, timestamp_column="timestamp")
     report = validator.validate()
@@ -328,7 +331,7 @@ def test_flight_validator_detect_flights_with_id_column(tmp_path):
             "flight_id": ["a", "a", "b", "b"],
             "sensor": [1, 2, 3, 4],
         }
-    ).to_parquet(file_path, engine="pyarrow")
+    ).to_parquet(file_path, engine="pyarrow", index=False)
 
     validator = FlightValidator(input_path=file_path, flight_id_column="flight_id")
     registry = validator.detect_flights()
@@ -354,4 +357,115 @@ def test_flight_validator_quality_checks_detect_issues():
     assert any("only NaN" in err for err in validator.report.errors)
     assert any("duplicate" in warn for warn in validator.report.warnings)
     assert any("Irregular sampling" in warn for warn in validator.report.warnings)
+
+
+def test_flight_processor_invalidates_cache_on_config_change(tmp_path):
+    """Test that processor invalidates cache when processing config changes."""
+    import time
+
+    # Create test data
+    df = pd.DataFrame({
+        "time": pd.date_range("2024-01-01", periods=100, freq="1s"),
+        "sensor1": range(100),
+        "sensor2": range(100, 200),
+    })
+    input_file = tmp_path / "flight.parquet"
+    df.to_parquet(input_file, engine="pyarrow", index=False)
+
+    # First run: process with sensor1
+    processor1 = FlightProcessor(
+        output_dir=tmp_path / "processed",
+        sensors=["sensor1"],
+        timestamp_column="time",
+        dataset_name="test",
+        metadata_dir=tmp_path / "metadata",
+    )
+
+    flight_ids1, metadata1 = processor1.process_all(
+        {"flight": input_file}, min_length=1
+    )
+
+    first_mtime = (tmp_path / "processed" / "flight.parquet").stat().st_mtime
+
+    # Read first processed file to verify sensor1
+    first_processed = pd.read_parquet(tmp_path / "processed" / "flight.parquet")
+    assert "sensor1" in first_processed.columns
+    assert "sensor2" not in first_processed.columns
+
+    # Sleep to ensure mtime will differ if file is regenerated
+    time.sleep(0.02)
+
+    # Second run: CHANGE sensors to sensor2 (source file unchanged)
+    processor2 = FlightProcessor(
+        output_dir=tmp_path / "processed",
+        sensors=["sensor2"],  # DIFFERENT!
+        timestamp_column="time",
+        dataset_name="test",
+        metadata_dir=tmp_path / "metadata",
+    )
+
+    flight_ids2, metadata2 = processor2.process_all(
+        {"flight": input_file}, min_length=1
+    )
+
+    second_mtime = (tmp_path / "processed" / "flight.parquet").stat().st_mtime
+
+    # Cache should have been INVALIDATED and file REPROCESSED
+    assert flight_ids1 == flight_ids2 == ["flight"]
+
+    # Verify new file has correct sensor (primary check)
+    reprocessed = pd.read_parquet(tmp_path / "processed" / "flight.parquet")
+    assert "sensor2" in reprocessed.columns
+    assert "sensor1" not in reprocessed.columns
+
+    # File should have been regenerated (mtime changed)
+    assert first_mtime != second_mtime
+
+
+def test_flight_processor_reuses_cache_on_config_match(tmp_path):
+    """Test that processor correctly reuses cache when config matches."""
+
+    # Create test data
+    df = pd.DataFrame({
+        "time": pd.date_range("2024-01-01", periods=100, freq="1s"),
+        "sensor1": range(100),
+    })
+    input_file = tmp_path / "flight.parquet"
+    df.to_parquet(input_file, engine="pyarrow", index=False)
+
+    # First run
+    processor1 = FlightProcessor(
+        output_dir=tmp_path / "processed",
+        sensors=["sensor1"],
+        timestamp_column="time",
+        resample_rate="1S",
+        dataset_name="test",
+        metadata_dir=tmp_path / "metadata",
+    )
+
+    flight_ids1, metadata1 = processor1.process_all(
+        {"flight": input_file}, min_length=1
+    )
+
+    first_mtime = (tmp_path / "processed" / "flight.parquet").stat().st_mtime
+
+    # Second run with IDENTICAL config
+    processor2 = FlightProcessor(
+        output_dir=tmp_path / "processed",
+        sensors=["sensor1"],  # SAME
+        timestamp_column="time",  # SAME
+        resample_rate="1S",  # SAME
+        dataset_name="test",
+        metadata_dir=tmp_path / "metadata",
+    )
+
+    flight_ids2, metadata2 = processor2.process_all(
+        {"flight": input_file}, min_length=1
+    )
+
+    second_mtime = (tmp_path / "processed" / "flight.parquet").stat().st_mtime
+
+    # Cache should have been REUSED
+    assert flight_ids1 == flight_ids2 == ["flight"]
+    assert first_mtime == second_mtime  # File NOT regenerated
 
