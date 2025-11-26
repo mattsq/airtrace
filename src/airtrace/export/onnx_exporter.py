@@ -111,8 +111,102 @@ class ONNXExporter:
         return cls(model=model, config=config, transform_stats=transform_stats)
 
     @staticmethod
+    def _compute_input_dim_with_transforms(base_dim: int, transform_pipeline: list) -> int:
+        """Compute input dimension accounting for transforms that add features.
+
+        Args:
+            base_dim: Base sensor count
+            transform_pipeline: List of transform configs
+
+        Returns:
+            Adjusted input dimension
+        """
+        adjusted_dim = base_dim
+
+        for transform_config in transform_pipeline:
+            transform_name = transform_config.get("name", "")
+
+            # ContextTransform adds static features
+            if transform_name == "context":
+                use_static = transform_config.get("use_static", [])
+                adjusted_dim += len(use_static)
+
+            # TemporalFeaturesTransform might add time-based features
+            elif transform_name == "temporal_features":
+                # Add logic if this transform exists
+                pass
+
+        return adjusted_dim
+
+    @staticmethod
+    def _infer_from_model_weights(model_state: Dict[str, torch.Tensor]) -> Optional[Tuple[int, int]]:
+        """Infer dimensions from model weight shapes.
+
+        Args:
+            model_state: Model state dictionary
+
+        Returns:
+            Tuple of (input_dim, output_dim) or None if inference fails
+        """
+        input_dim = None
+        output_dim = None
+
+        # Try Informer/Transformer pattern: value_embedding.proj.weight and projection
+        if "value_embedding.proj.weight" in model_state:
+            input_dim = model_state["value_embedding.proj.weight"].shape[1]
+
+        if "projection.weight" in model_state:
+            output_dim = model_state["projection.weight"].shape[0]
+        elif "projection.bias" in model_state:
+            output_dim = model_state["projection.bias"].shape[0]
+
+        if input_dim is not None and output_dim is not None:
+            return input_dim, output_dim
+
+        # Try GRU/LSTM pattern: weight_ih and decoder
+        for key, tensor in model_state.items():
+            if "weight_ih" in key and tensor.dim() >= 2:
+                # GRU: weight_ih_l0 has shape [3*hidden_size, input_size]
+                input_dim = tensor.shape[1]
+                break
+
+        # Find output dimension from decoder
+        for key, tensor in model_state.items():
+            if "decoder.weight" in key and tensor.dim() >= 2:
+                output_dim = tensor.shape[0]
+                break
+            elif "decoder.bias" in key and tensor.dim() == 1:
+                output_dim = tensor.shape[0]
+                break
+
+        if input_dim is not None and output_dim is not None:
+            return input_dim, output_dim
+
+        # Try generic encoder/decoder pattern
+        for key, tensor in model_state.items():
+            if ("encoder" in key or "embedding" in key) and "weight" in key and tensor.dim() >= 2:
+                if input_dim is None:
+                    input_dim = tensor.shape[1]
+
+        for key, tensor in model_state.items():
+            if "decoder" in key and "weight" in key and tensor.dim() >= 2:
+                if output_dim is None:
+                    output_dim = tensor.shape[0]
+
+        if input_dim is not None and output_dim is not None:
+            return input_dim, output_dim
+
+        return None
+
+    @staticmethod
     def _infer_dimensions(model_state: Dict[str, torch.Tensor], config: DictConfig) -> Tuple[int, int]:
-        """Infer input and output dimensions from model state dict.
+        """Infer input and output dimensions from model state dict and config.
+
+        This method implements a multi-step inference strategy:
+        1. Check explicit config (most reliable)
+        2. Compute from sensors + transform adjustments
+        3. Validate against model weights
+        4. Raise clear error if inference fails
 
         Args:
             model_state: Model state dictionary
@@ -120,46 +214,66 @@ class ONNXExporter:
 
         Returns:
             Tuple of (input_dim, output_dim)
+
+        Raises:
+            ValueError: If dimensions cannot be inferred
         """
-        # Try to get from config first
+        # Step 1: Try explicit config (most reliable)
         model_config = config.get("model", {})
         if "input_dim" in model_config and "output_dim" in model_config:
             return model_config.input_dim, model_config.output_dim
 
-        # Try to infer from data config
+        # Step 2: Compute from sensors + transforms
         data_config = config.get("data", {})
-        sensors = data_config.get("sensors", [])
+        sensors_config = data_config.get("sensors", {})
+
+        # Handle both old format (list) and new format (dict with 'use' key)
+        if isinstance(sensors_config, list):
+            sensors = sensors_config
+        elif isinstance(sensors_config, dict):
+            sensors = sensors_config.get("use", [])
+        else:
+            sensors = []
+
         if sensors:
-            # Assuming sensors defines both input and output dimensions
-            dim = len(sensors)
-            return dim, dim
+            base_dim = len(sensors)
+            transforms_config = config.get("transforms", {})
+            transform_pipeline = transforms_config.get("pipeline", [])
 
-        # Try to infer from model weights
-        # Look for common patterns in layer names
-        for key, tensor in model_state.items():
-            # Look for first layer input dimension
-            if "encoder" in key and "weight" in key and tensor.dim() >= 2:
-                # For GRU: weight_ih_l0 has shape [3*hidden_size, input_size]
-                # For Linear: weight has shape [out_features, in_features]
-                if "weight_ih" in key:  # GRU/LSTM input-hidden weight
-                    input_dim = tensor.shape[1]
-                elif "embedding" in key or "input" in key:
-                    input_dim = tensor.shape[1]
-                else:
-                    continue
+            # Compute adjusted input dimension (accounts for context transform, etc.)
+            input_dim = ONNXExporter._compute_input_dim_with_transforms(base_dim, transform_pipeline)
+            output_dim = base_dim  # Output is usually the base sensors
 
-                # Now find output dimension
-                for out_key, out_tensor in model_state.items():
-                    if "decoder" in out_key and "weight" in out_key:
-                        output_dim = out_tensor.shape[0]
-                        return input_dim, output_dim
+            # Step 3: Validate against model weights
+            weight_dims = ONNXExporter._infer_from_model_weights(model_state)
+            if weight_dims:
+                weight_input, weight_output = weight_dims
 
-                # If no decoder found, assume same as input
-                return input_dim, input_dim
+                if weight_input != input_dim:
+                    print(f"Warning: Config suggests input_dim={input_dim}, but model weights suggest {weight_input}")
+                    print(f"  Base sensors: {base_dim}, using weight-based dimension")
+                    input_dim = weight_input
 
-        # Default fallback
-        print("Warning: Could not infer dimensions from checkpoint. Using default 15.")
-        return 15, 15
+                if weight_output != output_dim:
+                    output_dim = weight_output
+
+            return input_dim, output_dim
+
+        # Step 4: Try inference from weights alone
+        weight_dims = ONNXExporter._infer_from_model_weights(model_state)
+        if weight_dims:
+            return weight_dims
+
+        # Step 5: Fail explicitly instead of silent fallback
+        raise ValueError(
+            "Could not infer dimensions from checkpoint.\n"
+            "  - No input_dim/output_dim in model config\n"
+            "  - No sensors list in data config\n"
+            "  - Could not infer from model weights\n"
+            "\n"
+            "Please ensure your checkpoint was saved by AirTrace's training pipeline,\n"
+            "or manually specify dimensions using model.input_dim and model.output_dim in config."
+        )
 
     def export(
         self,
