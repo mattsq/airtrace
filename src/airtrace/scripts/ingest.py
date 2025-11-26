@@ -184,6 +184,11 @@ Examples:
         action="store_true",
         help="Validate inputs without creating files"
     )
+    parser.add_argument(
+        "--show-files",
+        action="store_true",
+        help="Print each processed file instead of showing a progress bar",
+    )
 
     return parser.parse_args()
 
@@ -348,6 +353,8 @@ def ingest_dataset(args):
             resample_backend=args.resample_backend,
             ffill_limit=args.ffill_limit,
             metadata_dir=Path("data/metadata"),
+            log_each_flight=args.show_files,
+            show_progress=not args.show_files,
         )
 
         # Process with minimum length requirement
