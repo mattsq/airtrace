@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 import pyarrow.dataset as ds
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,9 @@ class FlightProcessor:
         timestamp_dtype: Optional[str] = None,
         resample_backend: str = "pandas",
         ffill_limit: Optional[int] = 5,
-        metadata_dir: Path = Path("data/metadata")
+        metadata_dir: Path = Path("data/metadata"),
+        log_each_flight: bool = False,
+        show_progress: bool = True,
     ):
         """
         Args:
@@ -57,6 +60,8 @@ class FlightProcessor:
             if self.dataset_name
             else None
         )
+        self.log_each_flight = log_each_flight
+        self.show_progress = show_progress
 
         if self.resample_backend not in {"pandas", "numpy"}:
             raise ValueError("resample_backend must be 'pandas' or 'numpy'")
@@ -127,7 +132,13 @@ class FlightProcessor:
             output_path = self.output_dir / f"{flight_id}.parquet"
             df.to_parquet(output_path, engine="pyarrow", index=True)
 
-            logger.info(f"Processed flight {flight_id}: {len(df)} timesteps, saved to {output_path}")
+            if self.log_each_flight:
+                logger.info(
+                    "Processed flight %s: %d timesteps, saved to %s",
+                    flight_id,
+                    len(df),
+                    output_path,
+                )
             return output_path, len(df)
 
         except Exception as e:
@@ -168,7 +179,10 @@ class FlightProcessor:
                     stored = existing_metadata[flight_id]
                     length = int(stored.get("length", 0))
                     if length >= min_length:
-                        logger.info(f"Reusing processed flight {flight_id} (cached)")
+                        if self.log_each_flight:
+                            logger.info("Reusing processed flight %s (cached)", flight_id)
+                        else:
+                            logger.debug("Reusing processed flight %s (cached)", flight_id)
                         successful_flights.append(flight_id)
                         processed_metadata[flight_id] = stored
                         continue
@@ -179,6 +193,10 @@ class FlightProcessor:
                         )
 
             tasks.append((flight_id, source))
+
+        progress_bar = None
+        if self.show_progress and len(tasks) > 0:
+            progress_bar = tqdm(total=len(tasks), desc="Processing flights")
 
         def handle_result(
             flight_id: str,
@@ -205,31 +223,45 @@ class FlightProcessor:
                 "processed_mtime": output_path.stat().st_mtime,
             }
 
-        if num_workers <= 1 or len(tasks) <= 1:
-            for flight_id, source in tasks:
-                signature = self._compute_source_signature(
-                    Path(source[0] if isinstance(source, tuple) else source)
-                )
-                handle_result(flight_id, self.process_flight(flight_id, source), signature)
-        else:
-            with ThreadPoolExecutor(max_workers=num_workers) as executor:
-                future_to_id = {}
+        try:
+            if num_workers <= 1 or len(tasks) <= 1:
                 for flight_id, source in tasks:
-                    future = executor.submit(self.process_flight, flight_id, source)
-                    future_to_id[future] = (flight_id, source)
-
-                for future in as_completed(future_to_id):
-                    flight_id, source = future_to_id[future]
                     signature = self._compute_source_signature(
                         Path(source[0] if isinstance(source, tuple) else source)
                     )
-                    try:
-                        result = future.result()
-                    except Exception as exc:  # pragma: no cover - logged per flight
-                        logger.error("Failed to process flight %s: %s", flight_id, exc)
-                        continue
+                    handle_result(
+                        flight_id,
+                        self.process_flight(flight_id, source),
+                        signature,
+                    )
+                    if progress_bar:
+                        progress_bar.update(1)
+            else:
+                with ThreadPoolExecutor(max_workers=num_workers) as executor:
+                    future_to_id = {}
+                    for flight_id, source in tasks:
+                        future = executor.submit(self.process_flight, flight_id, source)
+                        future_to_id[future] = (flight_id, source)
 
-                    handle_result(flight_id, result, signature)
+                    for future in as_completed(future_to_id):
+                        flight_id, source = future_to_id[future]
+                        signature = self._compute_source_signature(
+                            Path(source[0] if isinstance(source, tuple) else source)
+                        )
+                        try:
+                            result = future.result()
+                        except Exception as exc:  # pragma: no cover - logged per flight
+                            logger.error("Failed to process flight %s: %s", flight_id, exc)
+                            if progress_bar:
+                                progress_bar.update(1)
+                            continue
+
+                        handle_result(flight_id, result, signature)
+                        if progress_bar:
+                            progress_bar.update(1)
+        finally:
+            if progress_bar:
+                progress_bar.close()
 
         # Save metadata for future runs
         if self.metadata_path:
