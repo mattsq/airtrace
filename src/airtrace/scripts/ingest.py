@@ -139,6 +139,12 @@ Examples:
         help="Backend to use when resampling (default: pandas)",
     )
     parser.add_argument(
+        "--process-workers",
+        type=int,
+        default=1,
+        help="Number of threads to use when processing flights",
+    )
+    parser.add_argument(
         "--ffill-limit",
         type=int,
         default=5,
@@ -346,7 +352,11 @@ def ingest_dataset(args):
 
         # Process with minimum length requirement
         min_length = args.input_len + args.pred_len
-        processed_ids, processed_metadata = processor.process_all(flight_registry, min_length=min_length)
+        processed_ids, processed_metadata = processor.process_all(
+            flight_registry,
+            min_length=min_length,
+            num_workers=args.process_workers,
+        )
 
         # Update splits to remove failed flights
         train_ids = [id for id in train_ids if id in processed_ids]

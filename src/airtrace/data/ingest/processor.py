@@ -4,12 +4,14 @@ Flight data processing - cleaning, resampling, and saving.
 
 import hashlib
 import json
+import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
-import pandas as pd
+
 import numpy as np
+import pandas as pd
 import pyarrow.dataset as ds
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +137,8 @@ class FlightProcessor:
     def process_all(
         self,
         flight_registry: Dict[str, Union[Path, Tuple[Path, str, str]]],
-        min_length: int = 1
+        min_length: int = 1,
+        num_workers: int = 1,
     ) -> Tuple[List[str], Dict[str, Dict]]:
         """
         Process all flights with automatic caching.
@@ -143,6 +146,7 @@ class FlightProcessor:
         Args:
             flight_registry: Dictionary mapping flight_id -> source
             min_length: Minimum number of timesteps (flights shorter are skipped)
+            num_workers: Number of threads for parallel flight processing
 
         Returns:
             Tuple of (successful flight IDs, metadata dict keyed by flight_id)
@@ -150,6 +154,8 @@ class FlightProcessor:
         successful_flights: List[str] = []
         processed_metadata: Dict[str, Dict] = {}
         existing_metadata = self._load_existing_metadata()
+
+        tasks: List[Tuple[str, Union[Path, Tuple[Path, str, str]]]] = []
 
         for flight_id, source in flight_registry.items():
             source_path = source[0] if isinstance(source, tuple) else source
@@ -167,22 +173,28 @@ class FlightProcessor:
                         processed_metadata[flight_id] = stored
                         continue
                 else:
-                    # Log why cache was invalidated for debugging
                     if flight_id in existing_metadata:
-                        logger.debug(f"Cache invalidated for {flight_id}: config or source changed")
+                        logger.debug(
+                            "Cache invalidated for %s: config or source changed", flight_id
+                        )
 
-            # Process flight
-            result = self.process_flight(flight_id, source)
+            tasks.append((flight_id, source))
+
+        def handle_result(
+            flight_id: str,
+            result: Optional[Tuple[Path, int]],
+            signature: str,
+        ) -> None:
             if result is None:
-                continue
+                return
 
             output_path, length = result
             if length < min_length:
                 logger.warning(
-                    f"Flight {flight_id} too short ({length} < {min_length}), skipping"
+                    "Flight %s too short (%d < %d), skipping", flight_id, length, min_length
                 )
                 output_path.unlink(missing_ok=True)
-                continue
+                return
 
             successful_flights.append(flight_id)
             processed_metadata[flight_id] = {
@@ -192,6 +204,32 @@ class FlightProcessor:
                 "processed_path": str(output_path),
                 "processed_mtime": output_path.stat().st_mtime,
             }
+
+        if num_workers <= 1 or len(tasks) <= 1:
+            for flight_id, source in tasks:
+                signature = self._compute_source_signature(
+                    Path(source[0] if isinstance(source, tuple) else source)
+                )
+                handle_result(flight_id, self.process_flight(flight_id, source), signature)
+        else:
+            with ThreadPoolExecutor(max_workers=num_workers) as executor:
+                future_to_id = {}
+                for flight_id, source in tasks:
+                    future = executor.submit(self.process_flight, flight_id, source)
+                    future_to_id[future] = (flight_id, source)
+
+                for future in as_completed(future_to_id):
+                    flight_id, source = future_to_id[future]
+                    signature = self._compute_source_signature(
+                        Path(source[0] if isinstance(source, tuple) else source)
+                    )
+                    try:
+                        result = future.result()
+                    except Exception as exc:  # pragma: no cover - logged per flight
+                        logger.error("Failed to process flight %s: %s", flight_id, exc)
+                        continue
+
+                    handle_result(flight_id, result, signature)
 
         # Save metadata for future runs
         if self.metadata_path:
