@@ -255,13 +255,53 @@ class ONNXExporter:
                 output_names=['output'],
                 dynamic_axes=dynamic_axes,
                 verbose=False,
+                # Use legacy exporter for better compatibility with complex models
+                # and dynamic axes. The new dynamo exporter (torch.export) has
+                # stricter tracing requirements that fail with ProbSparse attention
+                # and other dynamic control flow patterns.
+                dynamo=False,
             )
 
             if verbose:
-                print(f"✓ Model exported to: {output_path}")
+                print(f"[OK] Model exported to: {output_path}")
 
         except Exception as e:
-            print(f"Error during ONNX export: {e}")
+            error_msg = str(e)
+            print(f"\n[FAILED] ONNX export failed:")
+            print(f"  {type(e).__name__}: {error_msg[:200]}...")
+
+            # Provide context-aware troubleshooting guidance
+            if any(keyword in error_msg.lower() for keyword in ["dynamic", "symbolic", "constraint"]):
+                print("\nTroubleshooting: Dynamic Shape Issues")
+                print("  1. Try exporting with fixed batch_size and sequence_length")
+                print("  2. Consider removing dynamic_axes if deployment doesn't need them")
+                print("  3. Check if your model has dynamic control flow (if/else on tensor shapes)")
+                print(f"\n  Try: export(..., dynamic_axes=None)")
+
+            elif "opset" in error_msg.lower():
+                print("\nTroubleshooting: ONNX Opset Version Issues")
+                print("  1. Try a different opset version (current: {})".format(opset_version))
+                print("  2. Newer opsets (17-18) have better operator support")
+                print("  3. Older opsets (13-14) have wider runtime compatibility")
+                print(f"\n  Try: export(..., opset_version=17) or export(..., opset_version=13)")
+
+            elif any(keyword in error_msg for keyword in ["prim::", "aten::", "Not implemented"]):
+                print("\nTroubleshooting: Unsupported Operations")
+                print("  1. Your model contains operations not supported in ONNX")
+                print("  2. Try simplifying the model architecture")
+                print("  3. Check for custom PyTorch operations that need conversion")
+                print(f"\n  Consider: Implementing custom ONNX operators or using torch.jit.script")
+
+            else:
+                # Generic error - provide diagnostic information
+                print("\nDiagnostic Information:")
+                print(f"  Model type: {self.model.__class__.__name__}")
+                print(f"  Input shape: {dummy_input.shape}")
+                print(f"  Opset version: {opset_version}")
+                print(f"  End-to-end mode: {end_to_end}")
+                print("\n  If this error persists, please report it with the above information.")
+
+            print()  # Add blank line before re-raising
             raise
 
         # Save additional metadata
@@ -274,7 +314,7 @@ class ONNXExporter:
             exported_files["transform_stats"] = stats_path
 
             if verbose:
-                print(f"✓ Transform statistics saved to: {stats_path}")
+                print(f"[OK] Transform statistics saved to: {stats_path}")
 
         # Save config
         config_path = output_path.with_suffix('.config.yaml')
@@ -282,7 +322,7 @@ class ONNXExporter:
         exported_files["config"] = config_path
 
         if verbose:
-            print(f"✓ Configuration saved to: {config_path}")
+            print(f"[OK] Configuration saved to: {config_path}")
 
         # Save metadata
         metadata_path = output_path.with_suffix('.metadata.json')
@@ -298,8 +338,8 @@ class ONNXExporter:
         exported_files["metadata"] = metadata_path
 
         if verbose:
-            print(f"✓ Metadata saved to: {metadata_path}")
-            print(f"\n✓ Export complete! {len(exported_files)} files created.")
+            print(f"[OK] Metadata saved to: {metadata_path}")
+            print(f"\n[OK] Export complete! {len(exported_files)} files created.")
 
         return exported_files
 
@@ -333,8 +373,18 @@ class ONNXExporter:
         Args:
             path: Path to save the configuration
         """
-        config_str = OmegaConf.to_yaml(self.config, resolve=True)
-        with open(path, 'w') as f:
+        # Try to resolve interpolations, but fall back to unresolved if it fails
+        # (e.g., if config has runtime resolvers like ${now:...})
+        try:
+            config_str = OmegaConf.to_yaml(self.config, resolve=True)
+        except Exception as e:
+            # Runtime resolvers (like ${now:...}) can't be resolved during export
+            print(f"Warning: Could not resolve all config interpolations: {type(e).__name__}")
+            print("  This is normal if your config uses runtime resolvers like ${{now:...}}")
+            print("  Saving unresolved config instead.")
+            config_str = OmegaConf.to_yaml(self.config, resolve=False)
+
+        with open(path, 'w', encoding='utf-8') as f:
             f.write(config_str)
 
     def verify_export(
@@ -418,16 +468,16 @@ class ONNXExporter:
 
             if max_diff > tolerance:
                 if verbose:
-                    print(" ✗ FAILED")
+                    print(" [FAILED]")
                 passed = False
             else:
                 if verbose:
-                    print(" ✓")
+                    print(" [OK]")
 
         if verbose:
             if passed:
-                print("\n✓ Verification passed! ONNX model outputs match PyTorch model.")
+                print("\n[OK] Verification passed! ONNX model outputs match PyTorch model.")
             else:
-                print("\n✗ Verification failed! ONNX outputs differ from PyTorch.")
+                print("\n[FAILED] Verification failed! ONNX outputs differ from PyTorch.")
 
         return passed

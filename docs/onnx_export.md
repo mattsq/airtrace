@@ -321,6 +321,17 @@ airtrace export onnx --checkpoint best.ckpt --opset-version 13
 
 **Solution**: Ensure you're using a checkpoint saved by AirTrace's training pipeline.
 
+### Export Failed with Dynamo Exporter
+
+**Symptoms**: Errors mentioning "Constraints violated", "torch.export", or "symbolic shapes"
+
+**Cause**: PyTorch 2.0+ introduced a new export path (`torch.export`) with stricter tracing requirements that can fail with complex models like Informer (ProbSparse attention) or models with dynamic control flow.
+
+**Solution**: AirTrace automatically uses `dynamo=False` to use the legacy ONNX exporter, which has better compatibility with complex models and dynamic axes. If you see this error, it means the legacy exporter also failed. Try:
+- Simplifying the model architecture
+- Using fixed input shapes (remove dynamic_axes)
+- Checking for unsupported operations in your model
+
 ### ONNX Runtime Not Found
 
 **Error**: `ModuleNotFoundError: No module named 'onnxruntime'`
