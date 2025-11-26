@@ -43,3 +43,11 @@ def test_block_shuffle_sampler_validates_block_size() -> None:
     dataset = list(range(10))
     with pytest.raises(ValueError):
         BlockShuffleSampler(dataset, block_size=0)
+
+
+def test_block_shuffle_sampler_len_and_empty_dataset() -> None:
+    empty_dataset: list[int] = []
+    sampler = BlockShuffleSampler(empty_dataset, block_size=4)
+
+    assert len(sampler) == 0
+    assert list(iter(sampler)) == []
