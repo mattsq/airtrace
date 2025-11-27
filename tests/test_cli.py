@@ -186,6 +186,16 @@ def test_resolve_version_falls_back_to_package_file(monkeypatch):
     assert cli._resolve_version() == __version__
 
 
+def test_resolve_version_returns_default_when_init_missing(monkeypatch):
+    def raise_not_found(_: str) -> str:
+        raise cli.metadata.PackageNotFoundError
+
+    monkeypatch.setattr(cli.metadata, "version", raise_not_found)
+    monkeypatch.setattr(cli.Path, "exists", lambda self: False)
+
+    assert cli._resolve_version() == "0.0.0"
+
+
 def test_print_run_summary_lists_transforms_and_flags(tmp_path, capsys):
     cfg = OmegaConf.create(
         {
@@ -214,6 +224,20 @@ def test_print_run_summary_lists_transforms_and_flags(tmp_path, capsys):
     assert "Dry run:     enabled" in captured
 
 
+def test_format_metric_value_with_flaky_item():
+    class FlakyValue:
+        def __init__(self):
+            self.calls = 0
+
+        def item(self):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("boom")
+            return 1.2345
+
+    assert cli._format_metric_value(FlakyValue()) == "1.2345"
+
+
 def test_print_data_guidance_for_synthetic_dataset(capsys):
     cli._print_data_guidance({"dataset_name": "synthetic_cruise"}, [Path("/missing.parquet")])
     output = capsys.readouterr().out
@@ -240,6 +264,17 @@ def test_train_data_check_short_circuits_before_training(tmp_path, capsys):
     assert "Data check complete" in output
     assert "Building model" not in output
     assert not Path(cfg.log_dir).exists()
+
+
+def test_train_missing_data_dry_run_skips_exit(tmp_path, capsys):
+    missing_root = tmp_path / "missing_data_root"
+    cfg = _build_train_cfg(missing_root, data_check=False, dry_run=True)
+
+    cli.train(cfg)
+
+    output = capsys.readouterr().out
+    assert "missing data assets will be skipped" in output
+    assert "Building model" not in output
 
 
 def test_train_runs_minimal_pipeline(tmp_path, capsys):
