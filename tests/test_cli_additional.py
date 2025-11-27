@@ -39,14 +39,14 @@ def test_prepare_hydra_overrides_export_options(tmp_path):
 
     overrides = cli.prepare_hydra_overrides(args)
 
-    assert overrides[:2] == ["mode=export", "cli.export_format=onnx"]
+    assert overrides[:2] == ["mode=export", "+cli.export_format=onnx"]
     assert f"checkpoint={checkpoint}" in overrides
-    assert "cli.output=exported.onnx" in overrides
-    assert "cli.end_to_end=true" in overrides
-    assert "cli.batch_size=4" in overrides
-    assert "cli.sequence_length=32" in overrides
-    assert "cli.verify=false" in overrides
-    assert "cli.opset_version=17" in overrides
+    assert "+cli.output=exported.onnx" in overrides
+    assert "+cli.end_to_end=true" in overrides
+    assert "+cli.batch_size=4" in overrides
+    assert "+cli.sequence_length=32" in overrides
+    assert "+cli.verify=false" in overrides
+    assert "+cli.opset_version=17" in overrides
     assert overrides[-1] == "extra.override=true"
 
 

@@ -6,7 +6,7 @@ from typing import Dict, Any, Optional, Tuple
 
 import torch
 import numpy as np
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, ListConfig, OmegaConf
 
 from .end_to_end_model import EndToEndModel, ModelOnlyWrapper
 from .transform_wrappers import (
@@ -228,9 +228,10 @@ class ONNXExporter:
         sensors_config = data_config.get("sensors", {})
 
         # Handle both old format (list) and new format (dict with 'use' key)
-        if isinstance(sensors_config, list):
+        # Also handle OmegaConf types (ListConfig, DictConfig)
+        if isinstance(sensors_config, (list, ListConfig)):
             sensors = sensors_config
-        elif isinstance(sensors_config, dict):
+        elif isinstance(sensors_config, (dict, DictConfig)):
             sensors = sensors_config.get("use", [])
         else:
             sensors = []
