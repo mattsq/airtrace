@@ -73,7 +73,7 @@ class ARBaseModel(nn.Module, ABC):
 
         Override this method for custom initialization.
         """
-        for module in self.modules():
+        for module in self.children():
             if hasattr(module, 'reset_parameters'):
                 module.reset_parameters()
 
