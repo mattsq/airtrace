@@ -50,3 +50,10 @@ def test_get_profile_validates_presence():
     with pytest.raises(KeyError, match="Profile 'missing' not found"):
         get_profile("missing")
 
+
+def test_get_profile_returns_requested_profile():
+    informer_profile = get_profile("informer")
+
+    assert isinstance(informer_profile, ExportProfile)
+    assert informer_profile.name == "informer"
+
