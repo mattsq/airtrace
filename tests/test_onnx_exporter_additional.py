@@ -50,8 +50,9 @@ def test_infer_dimensions_variants():
     inferred = ONNXExporter._infer_dimensions(weights, DictConfig({}))
     assert inferred == (7, 2)
 
-    fallback = ONNXExporter._infer_dimensions({}, DictConfig({}))
-    assert fallback == (15, 15)
+    # New behavior: raises ValueError instead of silent fallback to (15, 15)
+    with pytest.raises(ValueError, match="Could not infer dimensions"):
+        ONNXExporter._infer_dimensions({}, DictConfig({}))
 
 
 def test_from_checkpoint_without_config(tmp_path: Path):

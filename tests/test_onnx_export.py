@@ -516,6 +516,259 @@ class TestModelOnlyWrapper:
         assert output.shape == x.shape
 
 
+class TestDimensionInference:
+    """Tests for dimension inference from checkpoints and configs."""
+
+    def test_infer_with_context_transform(self):
+        """Test dimension inference when context transform adds static features."""
+        from airtrace.export.onnx_exporter import ONNXExporter
+        from omegaconf import OmegaConf
+
+        # Simulate a checkpoint with context transform
+        # 11 base sensors + 2 static features = 13 input_dim
+        model_state = {
+            "value_embedding.proj.weight": torch.randn(96, 13),  # input_dim=13
+            "projection.weight": torch.randn(11, 96),  # output_dim=11
+            "projection.bias": torch.randn(11),
+        }
+
+        config = OmegaConf.create({
+            "model": {"name": "informer"},
+            "data": {
+                "sensors": {"use": ["sensor_" + str(i) for i in range(11)]},
+            },
+            "transforms": {
+                "pipeline": [
+                    {"name": "zscore"},
+                    {"name": "context", "use_static": ["aircraft_type", "route_id"]},
+                ]
+            },
+        })
+
+        input_dim, output_dim = ONNXExporter._infer_dimensions(model_state, config)
+
+        # Should correctly infer 13 (11 sensors + 2 static) and 11
+        assert input_dim == 13, f"Expected input_dim=13, got {input_dim}"
+        assert output_dim == 11, f"Expected output_dim=11, got {output_dim}"
+
+    def test_infer_without_context_transform(self):
+        """Test dimension inference when no transforms modify dimensions."""
+        from airtrace.export.onnx_exporter import ONNXExporter
+        from omegaconf import OmegaConf
+
+        model_state = {
+            "value_embedding.proj.weight": torch.randn(96, 11),
+            "projection.weight": torch.randn(11, 96),
+            "projection.bias": torch.randn(11),
+        }
+
+        config = OmegaConf.create({
+            "model": {"name": "informer"},
+            "data": {
+                "sensors": {"use": ["sensor_" + str(i) for i in range(11)]},
+            },
+            "transforms": {
+                "pipeline": [
+                    {"name": "zscore"},
+                ]
+            },
+        })
+
+        input_dim, output_dim = ONNXExporter._infer_dimensions(model_state, config)
+
+        assert input_dim == 11
+        assert output_dim == 11
+
+    def test_infer_from_informer_weights(self):
+        """Test dimension inference from Informer model weights."""
+        from airtrace.export.onnx_exporter import ONNXExporter
+        from omegaconf import OmegaConf
+
+        model_state = {
+            "value_embedding.proj.weight": torch.randn(96, 15),
+            "projection.weight": torch.randn(12, 96),
+            "projection.bias": torch.randn(12),
+        }
+
+        # Empty config - should infer from weights
+        config = OmegaConf.create({
+            "model": {},
+            "data": {},
+            "transforms": {"pipeline": []},
+        })
+
+        input_dim, output_dim = ONNXExporter._infer_dimensions(model_state, config)
+
+        assert input_dim == 15
+        assert output_dim == 12
+
+    def test_infer_from_gru_weights(self):
+        """Test dimension inference from GRU model weights."""
+        from airtrace.export.onnx_exporter import ONNXExporter
+        from omegaconf import OmegaConf
+
+        # GRU weight_ih_l0 has shape [3*hidden_size, input_size]
+        model_state = {
+            "encoder.weight_ih_l0": torch.randn(384, 10),  # 3*128, input_dim=10
+            "decoder.weight": torch.randn(8, 128),  # output_dim=8
+            "decoder.bias": torch.randn(8),
+        }
+
+        config = OmegaConf.create({
+            "model": {},
+            "data": {},
+            "transforms": {"pipeline": []},
+        })
+
+        input_dim, output_dim = ONNXExporter._infer_dimensions(model_state, config)
+
+        assert input_dim == 10
+        assert output_dim == 8
+
+    def test_infer_raises_on_missing_info(self):
+        """Test that inference raises clear error when information is missing."""
+        from airtrace.export.onnx_exporter import ONNXExporter
+        from omegaconf import OmegaConf
+
+        # Empty model state and config
+        model_state = {}
+        config = OmegaConf.create({
+            "model": {},
+            "data": {},
+            "transforms": {"pipeline": []},
+        })
+
+        with pytest.raises(ValueError, match="Could not infer dimensions"):
+            ONNXExporter._infer_dimensions(model_state, config)
+
+    def test_config_weight_mismatch_uses_weights(self):
+        """Test that when config and weights disagree, weights are preferred."""
+        from airtrace.export.onnx_exporter import ONNXExporter
+        from omegaconf import OmegaConf
+
+        # Config suggests 11, but weights show 13 (missing context transform in config)
+        model_state = {
+            "value_embedding.proj.weight": torch.randn(96, 13),
+            "projection.weight": torch.randn(11, 96),
+        }
+
+        config = OmegaConf.create({
+            "model": {},
+            "data": {
+                "sensors": {"use": ["sensor_" + str(i) for i in range(11)]},
+            },
+            "transforms": {
+                "pipeline": [
+                    {"name": "zscore"},
+                ]
+            },
+        })
+
+        input_dim, output_dim = ONNXExporter._infer_dimensions(model_state, config)
+
+        # Should use weight-based dimension when there's a mismatch
+        # (This is the critical behavior - weights are ground truth)
+        assert input_dim == 13
+        assert output_dim == 11
+
+
+class TestValidation:
+    """Tests for ONNX export validation and dry-run."""
+
+    def test_validate_passes_for_good_model(self):
+        """Test that validation passes for a properly configured model."""
+        from airtrace.export import ONNXExporter
+        from omegaconf import OmegaConf
+
+        model = DummyModel(input_dim=3, output_dim=3)
+        model.eval()
+
+        config = OmegaConf.create({
+            "model": {"name": "dummy"},
+            "data": {"window_size_in": 10},
+        })
+
+        exporter = ONNXExporter(model=model, config=config, transform_stats=None)
+        results = exporter.validate(end_to_end=False, verbose=False)
+
+        assert results['passed'] is True
+        assert len(results['errors']) == 0
+
+    def test_validate_fails_without_dimensions(self):
+        """Test that validation fails when model lacks dimensions."""
+        from airtrace.export import ONNXExporter
+        from omegaconf import OmegaConf
+
+        # Model without input_dim/output_dim attributes
+        model = nn.Linear(3, 3)
+
+        config = OmegaConf.create({
+            "model": {"name": "dummy"},
+            "data": {"window_size_in": 10},
+        })
+
+        exporter = ONNXExporter(model=model, config=config, transform_stats=None)
+        results = exporter.validate(end_to_end=False, verbose=False)
+
+        assert results['passed'] is False
+        assert len(results['errors']) > 0
+
+    def test_validate_fails_for_end_to_end_without_stats(self):
+        """Test that validation fails for end-to-end without transform stats."""
+        from airtrace.export import ONNXExporter
+        from omegaconf import OmegaConf
+
+        model = DummyModel(input_dim=3, output_dim=3)
+        model.eval()
+
+        config = OmegaConf.create({
+            "model": {"name": "dummy"},
+            "data": {"window_size_in": 10},
+        })
+
+        exporter = ONNXExporter(model=model, config=config, transform_stats=None)
+        results = exporter.validate(end_to_end=True, verbose=False)
+
+        assert results['passed'] is False
+        assert any("transform" in str(e).lower() for e in results['errors'])
+
+    def test_dry_run_succeeds(self):
+        """Test that dry-run succeeds for a good model."""
+        from airtrace.export import ONNXExporter
+        from omegaconf import OmegaConf
+
+        model = DummyModel(input_dim=3, output_dim=3)
+        model.eval()
+
+        config = OmegaConf.create({
+            "model": {"name": "dummy"},
+            "data": {"window_size_in": 10},
+        })
+
+        exporter = ONNXExporter(model=model, config=config, transform_stats=None)
+        success = exporter.dry_run(end_to_end=False, verbose=False)
+
+        assert success is True
+
+    def test_dry_run_fails_for_bad_model(self):
+        """Test that dry-run fails when model is misconfigured."""
+        from airtrace.export import ONNXExporter
+        from omegaconf import OmegaConf
+
+        # Model without required attributes
+        model = nn.Linear(3, 3)
+
+        config = OmegaConf.create({
+            "model": {"name": "dummy"},
+            "data": {"window_size_in": 10},
+        })
+
+        exporter = ONNXExporter(model=model, config=config, transform_stats=None)
+        success = exporter.dry_run(end_to_end=False, verbose=False)
+
+        assert success is False
+
+
 class TestONNXExport:
     """Tests for ONNX export functionality."""
 

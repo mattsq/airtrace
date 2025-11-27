@@ -272,10 +272,13 @@ def export_onnx(cfg: DictConfig):
     batch_size = cli_opts.get("batch_size", 1)
     sequence_length = cli_opts.get("sequence_length", None)
     verify = cli_opts.get("verify", True)
-    opset_version = cli_opts.get("opset_version", 14)
+    opset_version = cli_opts.get("opset_version", None)  # None triggers auto-selection
+    validate_only = cli_opts.get("validate_only", False)
+    dry_run = cli_opts.get("dry_run", False)
 
     print(f"Checkpoint: {checkpoint_path}")
-    print(f"Output: {output_path}")
+    if not validate_only and not dry_run:
+        print(f"Output: {output_path}")
 
     # Create exporter from checkpoint
     print("\nLoading checkpoint...")
@@ -284,6 +287,36 @@ def export_onnx(cfg: DictConfig):
     except Exception as e:
         print(f"Error loading checkpoint: {e}")
         sys.exit(1)
+
+    # Handle validation-only mode
+    if validate_only:
+        print("\n" + "=" * 80)
+        print("Validation Mode (--validate-only)")
+        print("=" * 80 + "\n")
+        results = exporter.validate(end_to_end=end_to_end, verbose=True)
+        if results['passed']:
+            print("Validation passed. Ready to export!")
+            sys.exit(0)
+        else:
+            print("Validation failed. Fix errors before exporting.")
+            sys.exit(1)
+
+    # Handle dry-run mode
+    if dry_run:
+        print("\n" + "=" * 80)
+        print("Dry-Run Mode (--dry-run)")
+        print("=" * 80 + "\n")
+        success = exporter.dry_run(end_to_end=end_to_end, verbose=True)
+        if success:
+            print("\n" + "=" * 80)
+            print("Dry-run succeeded. Export should work!")
+            print("=" * 80)
+            sys.exit(0)
+        else:
+            print("\n" + "=" * 80)
+            print("Dry-run failed. Fix errors before exporting.")
+            print("=" * 80)
+            sys.exit(1)
 
     # Export model
     try:
@@ -444,8 +477,18 @@ def _add_export_onnx_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--opset-version",
         type=int,
-        default=14,
-        help="ONNX opset version (default: 14)",
+        default=None,
+        help="ONNX opset version (default: auto-select based on model type)",
+    )
+    parser.add_argument(
+        "--validate-only",
+        action="store_true",
+        help="Only validate export readiness without exporting",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Test export pipeline (model wrapping, forward pass) without writing files",
     )
 
 
@@ -464,25 +507,29 @@ def prepare_hydra_overrides(argv: Iterable[str]) -> List[str]:
             print("Error: No export format specified. Use 'airtrace export onnx ...'")
             sys.exit(1)
         hydra_overrides = [f"mode=export"]
-        hydra_overrides.append(f"cli.export_format={export_format}")
+        hydra_overrides.append(f"+cli.export_format={export_format}")
 
-        # Add export-specific flags
+        # Add export-specific flags (use + prefix since these aren't in default config)
         if getattr(args, "checkpoint", None):
             hydra_overrides.append(f"checkpoint={args.checkpoint}")
         if getattr(args, "output", None):
-            hydra_overrides.append(f"cli.output={args.output}")
+            hydra_overrides.append(f"+cli.output={args.output}")
         if getattr(args, "end_to_end", False):
-            hydra_overrides.append("cli.end_to_end=true")
+            hydra_overrides.append("+cli.end_to_end=true")
         if getattr(args, "batch_size", None):
-            hydra_overrides.append(f"cli.batch_size={args.batch_size}")
+            hydra_overrides.append(f"+cli.batch_size={args.batch_size}")
         if getattr(args, "sequence_length", None):
-            hydra_overrides.append(f"cli.sequence_length={args.sequence_length}")
+            hydra_overrides.append(f"+cli.sequence_length={args.sequence_length}")
         if getattr(args, "no_verify", False):
-            hydra_overrides.append("cli.verify=false")
+            hydra_overrides.append("+cli.verify=false")
         else:
-            hydra_overrides.append("cli.verify=true")
+            hydra_overrides.append("+cli.verify=true")
         if getattr(args, "opset_version", None):
-            hydra_overrides.append(f"cli.opset_version={args.opset_version}")
+            hydra_overrides.append(f"+cli.opset_version={args.opset_version}")
+        if getattr(args, "validate_only", False):
+            hydra_overrides.append("+cli.validate_only=true")
+        if getattr(args, "dry_run", False):
+            hydra_overrides.append("cli.dry_run=true")  # No + prefix - field exists in default config
     else:
         hydra_overrides = [f"mode={command}"]
 
