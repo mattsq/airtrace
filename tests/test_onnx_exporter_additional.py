@@ -193,3 +193,130 @@ def test_save_transform_stats_serializes_numpy_scalars(tmp_path: Path):
     assert saved_stats["CustomTransform"]["int_value"] == 5
     assert saved_stats["CustomTransform"]["float_value"] == pytest.approx(3.5)
     assert saved_stats["CustomTransform"]["label"] == "ok"
+
+
+def test_export_with_fixed_sequence_length_metadata(tmp_path: Path, monkeypatch):
+    """Test that fixed_sequence_length flag is recorded in metadata."""
+    model = DummyModel(output_len=2)
+    config = DictConfig({"data": {"window_size_in": 10}, "model": {"name": "dummy"}})
+    exporter = ONNXExporter(model=model, config=config)
+
+    def fake_export(model_arg, args, output_file, *_, **__):
+        Path(output_file).write_bytes(b"onnx")
+
+    monkeypatch.setattr(torch.onnx, "export", fake_export)
+
+    output_path = tmp_path / "model.onnx"
+    files = exporter.export(
+        output_path=output_path,
+        sequence_length=10,
+        fixed_sequence_length=True,
+        verbose=False,
+    )
+
+    # Verify metadata includes fixed_sequence_length
+    metadata_path = output_path.with_suffix(".metadata.json")
+    with metadata_path.open() as f:
+        metadata = json.load(f)
+
+    assert metadata["export"]["fixed_sequence_length"] is True
+
+
+def test_export_uses_profile_dynamic_axes(tmp_path: Path, monkeypatch):
+    """Test that export uses profile.dynamic_axes instead of hardcoding."""
+    model = DummyModel(output_len=2)
+    config = DictConfig({"data": {"window_size_in": 10}, "model": {"name": "dummy"}})
+    exporter = ONNXExporter(model=model, config=config)
+
+    # Get profile and verify it has dynamic_axes
+    profile = exporter.get_export_profile()
+    assert profile.dynamic_axes is not None
+    assert 'input' in profile.dynamic_axes
+    assert 'output' in profile.dynamic_axes
+
+    # Track what dynamic_axes were passed to torch.onnx.export
+    captured_dynamic_axes = None
+
+    def fake_export(model_arg, args, output_file, *_, dynamic_axes=None, **__):
+        nonlocal captured_dynamic_axes
+        captured_dynamic_axes = dynamic_axes
+        Path(output_file).write_bytes(b"onnx")
+
+    monkeypatch.setattr(torch.onnx, "export", fake_export)
+
+    output_path = tmp_path / "model.onnx"
+    exporter.export(
+        output_path=output_path,
+        sequence_length=10,
+        verbose=False,
+    )
+
+    # Verify dynamic_axes were passed and match profile structure
+    assert captured_dynamic_axes is not None
+    assert 'input' in captured_dynamic_axes
+    assert 'output' in captured_dynamic_axes
+    assert 0 in captured_dynamic_axes['input']  # batch_size
+    assert 1 in captured_dynamic_axes['input']  # sequence_length
+
+
+def test_default_export_unchanged(tmp_path: Path, monkeypatch):
+    """Test that default export behavior is unchanged (both axes dynamic)."""
+    model = DummyModel(output_len=2)
+    config = DictConfig({"data": {"window_size_in": 10}, "model": {"name": "dummy"}})
+    exporter = ONNXExporter(model=model, config=config)
+
+    def fake_export(model_arg, args, output_file, *_, **__):
+        Path(output_file).write_bytes(b"onnx")
+
+    monkeypatch.setattr(torch.onnx, "export", fake_export)
+
+    output_path = tmp_path / "model.onnx"
+    # Export without fixed_sequence_length flag (default behavior)
+    files = exporter.export(
+        output_path=output_path,
+        sequence_length=10,
+        verbose=False,
+    )
+
+    # Verify metadata shows fixed_sequence_length=False by default
+    metadata_path = output_path.with_suffix(".metadata.json")
+    with metadata_path.open() as f:
+        metadata = json.load(f)
+
+    assert metadata["export"]["fixed_sequence_length"] is False
+
+
+def test_fixed_sequence_removes_dynamic_axes(tmp_path: Path, monkeypatch):
+    """Test that fixed_sequence_length removes sequence from dynamic axes."""
+    model = DummyModel(output_len=2)
+    config = DictConfig({"data": {"window_size_in": 10}, "model": {"name": "dummy"}})
+    exporter = ONNXExporter(model=model, config=config)
+
+    # Track what dynamic_axes were passed to torch.onnx.export
+    captured_dynamic_axes = None
+
+    def fake_export(model_arg, args, output_file, *_, dynamic_axes=None, **__):
+        nonlocal captured_dynamic_axes
+        captured_dynamic_axes = dynamic_axes
+        Path(output_file).write_bytes(b"onnx")
+
+    monkeypatch.setattr(torch.onnx, "export", fake_export)
+
+    output_path = tmp_path / "model.onnx"
+    exporter.export(
+        output_path=output_path,
+        sequence_length=10,
+        fixed_sequence_length=True,
+        verbose=False,
+    )
+
+    # Verify dynamic_axes only have axis 0 (batch_size), not axis 1 (sequence_length)
+    assert captured_dynamic_axes is not None
+    assert 'input' in captured_dynamic_axes
+    assert 'output' in captured_dynamic_axes
+
+    # Should only have batch_size (axis 0), not sequence_length (axis 1)
+    assert 0 in captured_dynamic_axes['input']
+    assert 1 not in captured_dynamic_axes['input']  # sequence_length removed
+    assert 0 in captured_dynamic_axes['output']
+    assert 1 not in captured_dynamic_axes['output']  # output_length removed

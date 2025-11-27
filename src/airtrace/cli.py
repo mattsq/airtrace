@@ -275,6 +275,7 @@ def export_onnx(cfg: DictConfig):
     opset_version = cli_opts.get("opset_version", None)  # None triggers auto-selection
     validate_only = cli_opts.get("validate_only", False)
     dry_run = cli_opts.get("dry_run", False)
+    fixed_sequence_length = cli_opts.get("fixed_sequence_length", False)
 
     print(f"Checkpoint: {checkpoint_path}")
     if not validate_only and not dry_run:
@@ -327,6 +328,7 @@ def export_onnx(cfg: DictConfig):
             sequence_length=sequence_length,
             opset_version=opset_version,
             verbose=True,
+            fixed_sequence_length=fixed_sequence_length,
         )
     except Exception as e:
         print(f"Error during export: {e}")
@@ -490,6 +492,12 @@ def _add_export_onnx_flags(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Test export pipeline (model wrapping, forward pass) without writing files",
     )
+    parser.add_argument(
+        "--fixed-sequence-length",
+        action="store_true",
+        help="Export with fixed sequence length (only batch size dynamic). "
+             "Use when deployment system doesn't support multiple dynamic axes.",
+    )
 
 
 def prepare_hydra_overrides(argv: Iterable[str]) -> List[str]:
@@ -530,6 +538,8 @@ def prepare_hydra_overrides(argv: Iterable[str]) -> List[str]:
             hydra_overrides.append("+cli.validate_only=true")
         if getattr(args, "dry_run", False):
             hydra_overrides.append("cli.dry_run=true")  # No + prefix - field exists in default config
+        if getattr(args, "fixed_sequence_length", False):
+            hydra_overrides.append("+cli.fixed_sequence_length=true")
     else:
         hydra_overrides = [f"mode={command}"]
 
