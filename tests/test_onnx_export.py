@@ -672,6 +672,103 @@ class TestDimensionInference:
         assert output_dim == 11
 
 
+class TestValidation:
+    """Tests for ONNX export validation and dry-run."""
+
+    def test_validate_passes_for_good_model(self):
+        """Test that validation passes for a properly configured model."""
+        from airtrace.export import ONNXExporter
+        from omegaconf import OmegaConf
+
+        model = DummyModel(input_dim=3, output_dim=3)
+        model.eval()
+
+        config = OmegaConf.create({
+            "model": {"name": "dummy"},
+            "data": {"window_size_in": 10},
+        })
+
+        exporter = ONNXExporter(model=model, config=config, transform_stats=None)
+        results = exporter.validate(end_to_end=False, verbose=False)
+
+        assert results['passed'] is True
+        assert len(results['errors']) == 0
+
+    def test_validate_fails_without_dimensions(self):
+        """Test that validation fails when model lacks dimensions."""
+        from airtrace.export import ONNXExporter
+        from omegaconf import OmegaConf
+
+        # Model without input_dim/output_dim attributes
+        model = nn.Linear(3, 3)
+
+        config = OmegaConf.create({
+            "model": {"name": "dummy"},
+            "data": {"window_size_in": 10},
+        })
+
+        exporter = ONNXExporter(model=model, config=config, transform_stats=None)
+        results = exporter.validate(end_to_end=False, verbose=False)
+
+        assert results['passed'] is False
+        assert len(results['errors']) > 0
+
+    def test_validate_fails_for_end_to_end_without_stats(self):
+        """Test that validation fails for end-to-end without transform stats."""
+        from airtrace.export import ONNXExporter
+        from omegaconf import OmegaConf
+
+        model = DummyModel(input_dim=3, output_dim=3)
+        model.eval()
+
+        config = OmegaConf.create({
+            "model": {"name": "dummy"},
+            "data": {"window_size_in": 10},
+        })
+
+        exporter = ONNXExporter(model=model, config=config, transform_stats=None)
+        results = exporter.validate(end_to_end=True, verbose=False)
+
+        assert results['passed'] is False
+        assert any("transform" in str(e).lower() for e in results['errors'])
+
+    def test_dry_run_succeeds(self):
+        """Test that dry-run succeeds for a good model."""
+        from airtrace.export import ONNXExporter
+        from omegaconf import OmegaConf
+
+        model = DummyModel(input_dim=3, output_dim=3)
+        model.eval()
+
+        config = OmegaConf.create({
+            "model": {"name": "dummy"},
+            "data": {"window_size_in": 10},
+        })
+
+        exporter = ONNXExporter(model=model, config=config, transform_stats=None)
+        success = exporter.dry_run(end_to_end=False, verbose=False)
+
+        assert success is True
+
+    def test_dry_run_fails_for_bad_model(self):
+        """Test that dry-run fails when model is misconfigured."""
+        from airtrace.export import ONNXExporter
+        from omegaconf import OmegaConf
+
+        # Model without required attributes
+        model = nn.Linear(3, 3)
+
+        config = OmegaConf.create({
+            "model": {"name": "dummy"},
+            "data": {"window_size_in": 10},
+        })
+
+        exporter = ONNXExporter(model=model, config=config, transform_stats=None)
+        success = exporter.dry_run(end_to_end=False, verbose=False)
+
+        assert success is False
+
+
 class TestONNXExport:
     """Tests for ONNX export functionality."""
 

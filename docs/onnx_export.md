@@ -68,7 +68,9 @@ airtrace export onnx --checkpoint <checkpoint_path> --output <output_path> [OPTI
 - `--batch-size N` - Batch size for dummy input (default: 1)
 - `--sequence-length N` - Input sequence length (inferred from config if not specified)
 - `--no-verify` - Skip verification after export
-- `--opset-version N` - ONNX opset version (default: 14)
+- `--opset-version N` - ONNX opset version (default: auto-select based on model type)
+- `--validate-only` - Only validate export readiness without exporting
+- `--dry-run` - Test export pipeline (model wrapping, forward pass) without writing files
 
 ### Examples
 
@@ -102,6 +104,117 @@ airtrace export onnx \
   --checkpoint runs/exp_001/checkpoints/best.ckpt \
   --output model.onnx \
   --no-verify
+```
+
+**Validate export readiness (fast pre-flight check):**
+```bash
+airtrace export onnx \
+  --checkpoint runs/exp_001/checkpoints/best.ckpt \
+  --validate-only
+```
+
+**Dry-run export (test without writing files):**
+```bash
+airtrace export onnx \
+  --checkpoint runs/exp_001/checkpoints/best.ckpt \
+  --dry-run
+```
+
+**Specify custom opset version:**
+```bash
+airtrace export onnx \
+  --checkpoint runs/exp_001/checkpoints/best.ckpt \
+  --output model.onnx \
+  --opset-version 18
+```
+
+## Validation and Dry-Run
+
+### Validation Mode (`--validate-only`)
+
+Before exporting, you can validate that your checkpoint is ready for ONNX export:
+
+```bash
+airtrace export onnx --checkpoint best.ckpt --validate-only
+```
+
+This performs fast checks including:
+- Model has `input_dim` and `output_dim` attributes
+- Config contains `window_size_in` (or you'll need to specify `--sequence-length`)
+- Transform statistics available (if `--end-to-end` requested)
+- Model is in eval mode
+- Checks for runtime resolvers in config (e.g., `${now:...}`)
+- Warns about complex architectures (Informer, Transformer) that may have export issues
+
+**Example output:**
+```
+ONNX Export Validation
+============================================================
+[OK] model_input_dim: Model input_dim = 13
+[OK] model_output_dim: Model output_dim = 11
+[WARNING] config_window_size: Missing window_size_in, will need to specify sequence_length
+[OK] model_eval_mode: Model in eval mode
+[WARNING] model_architecture: InformerModel has complex attention
+
+Warnings:
+  - Missing window_size_in in config
+  - InformerModel may have attention-related export issues
+
+============================================================
+[OK] Validation passed - export should succeed
+```
+
+### Dry-Run Mode (`--dry-run`)
+
+Test the full export pipeline without writing any files:
+
+```bash
+airtrace export onnx --checkpoint best.ckpt --dry-run
+```
+
+This performs:
+1. **Validation**: Runs all validation checks
+2. **Model wrapping**: Tests wrapping model for ONNX compatibility
+3. **Forward pass**: Runs a test forward pass to ensure the model works
+
+**Example output:**
+```
+ONNX Export Dry-Run
+============================================================
+Running validation...
+[OK] Validation passed
+Testing with input shape: [1, 100, 13]
+[OK] Model-only wrapping successful
+[OK] Forward pass successful, output shape: torch.Size([1, 1, 11])
+============================================================
+[OK] Dry-run successful - export should work!
+```
+
+**When to use:**
+- Before expensive export operations
+- To catch issues early in CI/CD pipelines
+- When debugging export problems
+
+## Automatic Opset Version Selection
+
+The exporter automatically selects the best ONNX opset version based on your model architecture:
+
+| Model Type | Opset Version | Reasoning |
+|------------|---------------|-----------|
+| Informer, Transformer, TimeXer | 17 | Better attention operator support |
+| GRU, LSTM, RNN | 14 | Widest compatibility for recurrent ops |
+| Linear, Baseline | 14 | Maximum compatibility |
+| Other models | 17 | Balanced default |
+
+**Example:**
+```bash
+airtrace export onnx --checkpoint runs/informer/best.ckpt --output model.onnx
+# Output: Auto-selected opset version 17 for InformerModel
+```
+
+You can always override with `--opset-version`:
+```bash
+airtrace export onnx --checkpoint best.ckpt --opset-version 18
 ```
 
 ## Using Exported Models

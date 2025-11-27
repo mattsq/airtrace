@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict
 
 import torch
+from omegaconf import DictConfig, OmegaConf
 
 
 class Task(ABC):
@@ -19,8 +20,13 @@ class Task(ABC):
         """Initialize task.
 
         Args:
-            config: Task configuration dictionary
+            config: Task configuration dictionary (can be DictConfig or regular dict)
         """
+        # Convert OmegaConf DictConfig to regular Python dict to ensure
+        # proper handling of lists and .get() method behavior
+        if isinstance(config, DictConfig):
+            config = OmegaConf.to_container(config, resolve=True)
+
         self.config = config
         self.loss_fn = self._build_loss_fn(config.get("loss", "mse"))
         self.metric_names = config.get("metrics", ["rmse", "mae"])

@@ -275,13 +275,287 @@ class ONNXExporter:
             "or manually specify dimensions using model.input_dim and model.output_dim in config."
         )
 
+    @staticmethod
+    def _recommend_opset_version(model: torch.nn.Module) -> int:
+        """Recommend ONNX opset version based on model architecture.
+
+        Args:
+            model: The PyTorch model
+
+        Returns:
+            Recommended opset version (14, 17, or 18)
+
+        Reasoning:
+            - Attention-based models (Informer, Transformer, TimeXer): opset 17+
+              These models benefit from better attention operator support in newer opsets
+            - Recurrent models (GRU, LSTM): opset 14
+              Widest compatibility, well-established support for recurrent ops
+            - Linear/baseline models: opset 14
+              Simple operations, maximize compatibility
+            - Default: opset 17
+              Balanced choice for most modern models
+        """
+        model_class = model.__class__.__name__.lower()
+
+        # Attention-based models: use opset 17 for better attention support
+        attention_models = ["informer", "transformer", "timexer", "attention"]
+        if any(name in model_class for name in attention_models):
+            return 17
+
+        # Recurrent models: use opset 14 for widest compatibility
+        recurrent_models = ["gru", "lstm", "rnn"]
+        if any(name in model_class for name in recurrent_models):
+            return 14
+
+        # Linear/baseline models: use opset 14 for compatibility
+        baseline_models = ["linear", "baseline", "persistence"]
+        if any(name in model_class for name in baseline_models):
+            return 14
+
+        # Default: opset 17 (balanced)
+        return 17
+
+    def validate(self, end_to_end: bool = False, verbose: bool = True) -> Dict[str, Any]:
+        """Validate that the model and config are ready for ONNX export.
+
+        This performs fast pre-flight checks without actually exporting.
+
+        Args:
+            end_to_end: Whether validation is for end-to-end export
+            verbose: Whether to print validation results
+
+        Returns:
+            Dictionary with validation results:
+                - 'passed': bool - overall validation status
+                - 'checks': dict - individual check results
+                - 'warnings': list - non-critical issues
+                - 'errors': list - critical issues
+        """
+        results = {
+            'passed': True,
+            'checks': {},
+            'warnings': [],
+            'errors': [],
+        }
+
+        if verbose:
+            print("ONNX Export Validation")
+            print("=" * 60)
+
+        # Check 1: Model has required attributes
+        has_input_dim = hasattr(self.model, 'input_dim')
+        has_output_dim = hasattr(self.model, 'output_dim')
+        results['checks']['model_input_dim'] = has_input_dim
+        results['checks']['model_output_dim'] = has_output_dim
+
+        if not has_input_dim:
+            results['errors'].append("Model missing input_dim attribute")
+            results['passed'] = False
+
+        if not has_output_dim:
+            results['errors'].append("Model missing output_dim attribute")
+            results['passed'] = False
+
+        if verbose:
+            status = "[OK]" if has_input_dim else "[FAILED]"
+            print(f"{status} model_input_dim: ", end="")
+            if has_input_dim:
+                print(f"Model input_dim = {self.model.input_dim}")
+            else:
+                print("Model missing input_dim attribute")
+
+            status = "[OK]" if has_output_dim else "[FAILED]"
+            print(f"{status} model_output_dim: ", end="")
+            if has_output_dim:
+                print(f"Model output_dim = {self.model.output_dim}")
+            else:
+                print("Model missing output_dim attribute")
+
+        # Check 2: Config has window_size_in
+        data_config = self.config.get("data", {})
+        has_window_size = "window_size_in" in data_config
+        results['checks']['config_window_size'] = has_window_size
+
+        if verbose:
+            status = "[OK]" if has_window_size else "[WARNING]"
+            print(f"{status} config_window_size: ", end="")
+            if has_window_size:
+                print(f"Window size = {data_config['window_size_in']}")
+            else:
+                print("Missing window_size_in, will need to specify sequence_length")
+                results['warnings'].append("Missing window_size_in in config")
+
+        # Check 3: Transform stats available if end-to-end requested
+        if end_to_end:
+            has_transform_stats = self.transform_stats is not None
+            results['checks']['transform_stats'] = has_transform_stats
+
+            if not has_transform_stats:
+                results['errors'].append("End-to-end export requires transform_stats")
+                results['passed'] = False
+
+            if verbose:
+                status = "[OK]" if has_transform_stats else "[FAILED]"
+                print(f"{status} transform_stats: ", end="")
+                if has_transform_stats:
+                    print(f"Statistics available for {len(self.transform_stats)} transforms")
+                else:
+                    print("No transform statistics (required for end-to-end export)")
+
+        # Check 4: Model in eval mode
+        is_eval = not self.model.training
+        results['checks']['model_eval_mode'] = is_eval
+
+        if verbose:
+            status = "[OK]" if is_eval else "[WARNING]"
+            print(f"{status} model_eval_mode: ", end="")
+            if is_eval:
+                print("Model in eval mode")
+            else:
+                print("Model in training mode (should use eval)")
+                results['warnings'].append("Model should be in eval mode")
+
+        # Check 5: Check for runtime resolvers in config
+        config_str = str(self.config)
+        has_runtime_resolvers = "${now:" in config_str or "${oc.env:" in config_str
+        results['checks']['config_runtime_resolvers'] = not has_runtime_resolvers
+
+        if verbose and has_runtime_resolvers:
+            print("[WARNING] config_runtime_resolvers: Config contains runtime resolvers")
+            results['warnings'].append("Config has runtime resolvers (${now:...}, ${oc.env:...})")
+
+        # Check 6: Model architecture complexity
+        model_class = self.model.__class__.__name__
+        complex_models = ["Informer", "Transformer", "TimeXer"]
+        is_complex = any(name in model_class for name in complex_models)
+        results['checks']['model_architecture'] = model_class
+
+        if verbose and is_complex:
+            print(f"[WARNING] model_architecture: {model_class} has complex attention")
+            results['warnings'].append(f"{model_class} may have attention-related export issues")
+
+        # Summary
+        if verbose:
+            print()
+            if results['warnings']:
+                print("Warnings:")
+                for warning in results['warnings']:
+                    print(f"  - {warning}")
+                print()
+
+            if results['errors']:
+                print("Errors:")
+                for error in results['errors']:
+                    print(f"  - {error}")
+                print()
+
+            print("=" * 60)
+            if results['passed']:
+                print("[OK] Validation passed - export should succeed")
+            else:
+                print("[FAILED] Validation failed - fix errors before exporting")
+            print()
+
+        return results
+
+    def dry_run(self, end_to_end: bool = False, verbose: bool = True) -> bool:
+        """Perform a dry-run of ONNX export without actually exporting.
+
+        This tests the full export pipeline including model wrapping and
+        forward pass, but doesn't write any files.
+
+        Args:
+            end_to_end: Whether to test end-to-end export
+            verbose: Whether to print progress
+
+        Returns:
+            True if dry-run succeeded, False otherwise
+        """
+        if verbose:
+            print("ONNX Export Dry-Run")
+            print("=" * 60)
+
+        # Step 1: Run validation
+        if verbose:
+            print("Running validation...")
+        validation_results = self.validate(end_to_end=end_to_end, verbose=False)
+
+        if not validation_results['passed']:
+            if verbose:
+                print("[FAILED] Validation failed")
+                for error in validation_results['errors']:
+                    print(f"  - {error}")
+            return False
+
+        if verbose:
+            print("[OK] Validation passed")
+
+        # Step 2: Infer input shape
+        data_config = self.config.get("data", {})
+        sequence_length = data_config.get("window_size_in", 100)
+
+        if verbose:
+            print(f"Testing with input shape: [1, {sequence_length}, {self.model.input_dim}]")
+
+        # Step 3: Create dummy input
+        try:
+            dummy_input = torch.randn(1, sequence_length, self.model.input_dim)
+        except Exception as e:
+            if verbose:
+                print(f"[FAILED] Could not create dummy input: {e}")
+            return False
+
+        # Step 4: Test model wrapping
+        try:
+            if end_to_end and self.transform_stats:
+                from .transform_wrappers import create_forward_transform_pipeline, create_inverse_transform_pipeline
+
+                forward_transforms = create_forward_transform_pipeline(self.transform_stats)
+                inverse_transforms = create_inverse_transform_pipeline(self.transform_stats)
+                test_model = EndToEndModel(
+                    model=self.model,
+                    preprocess=forward_transforms,
+                    postprocess=inverse_transforms,
+                )
+                if verbose:
+                    print("[OK] End-to-end model wrapping successful")
+            else:
+                test_model = ModelOnlyWrapper(self.model)
+                if verbose:
+                    print("[OK] Model-only wrapping successful")
+        except Exception as e:
+            if verbose:
+                print(f"[FAILED] Model wrapping failed: {e}")
+            return False
+
+        # Step 5: Test forward pass
+        try:
+            test_model.eval()
+            with torch.no_grad():
+                output = test_model(dummy_input, None)
+
+            if verbose:
+                print(f"[OK] Forward pass successful, output shape: {output.shape}")
+        except Exception as e:
+            if verbose:
+                print(f"[FAILED] Forward pass failed: {e}")
+            return False
+
+        # Success
+        if verbose:
+            print("=" * 60)
+            print("[OK] Dry-run successful - export should work!")
+            print()
+
+        return True
+
     def export(
         self,
         output_path: Path,
         end_to_end: bool = False,
         batch_size: int = 1,
         sequence_length: Optional[int] = None,
-        opset_version: int = 14,
+        opset_version: Optional[int] = None,
         verbose: bool = True,
     ) -> Dict[str, Path]:
         """Export model to ONNX format.
@@ -291,7 +565,7 @@ class ONNXExporter:
             end_to_end: If True, export with preprocessing and postprocessing
             batch_size: Batch size for dummy input (use 1 for dynamic)
             sequence_length: Sequence length for input (if None, inferred from config)
-            opset_version: ONNX opset version
+            opset_version: ONNX opset version (if None, auto-selected based on model type)
             verbose: Whether to print export info
 
         Returns:
@@ -300,6 +574,12 @@ class ONNXExporter:
         output_path = Path(output_path)
         output_dir = output_path.parent
         output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Auto-select opset version if not provided
+        if opset_version is None:
+            opset_version = self._recommend_opset_version(self.model)
+            if verbose:
+                print(f"Auto-selected opset version {opset_version} for {self.model.__class__.__name__}")
 
         # Infer input shape from config if not provided
         if sequence_length is None:
