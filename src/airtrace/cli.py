@@ -276,6 +276,7 @@ def export_onnx(cfg: DictConfig):
     validate_only = cli_opts.get("validate_only", False)
     dry_run = cli_opts.get("dry_run", False)
     fixed_sequence_length = cli_opts.get("fixed_sequence_length", False)
+    single_batch_mode = cli_opts.get("single_batch", False)
 
     print(f"Checkpoint: {checkpoint_path}")
     if not validate_only and not dry_run:
@@ -307,7 +308,11 @@ def export_onnx(cfg: DictConfig):
         print("\n" + "=" * 80)
         print("Dry-Run Mode (--dry-run)")
         print("=" * 80 + "\n")
-        success = exporter.dry_run(end_to_end=end_to_end, verbose=True)
+        success = exporter.dry_run(
+            end_to_end=end_to_end,
+            verbose=True,
+            single_batch_mode=single_batch_mode,
+        )
         if success:
             print("\n" + "=" * 80)
             print("Dry-run succeeded. Export should work!")
@@ -329,6 +334,7 @@ def export_onnx(cfg: DictConfig):
             opset_version=opset_version,
             verbose=True,
             fixed_sequence_length=fixed_sequence_length,
+            single_batch_mode=single_batch_mode,
         )
     except Exception as e:
         print(f"Error during export: {e}")
@@ -341,6 +347,7 @@ def export_onnx(cfg: DictConfig):
                 onnx_path=exported_files["onnx_model"],
                 end_to_end=end_to_end,
                 verbose=True,
+                single_batch_mode=single_batch_mode,
             )
         except Exception as e:
             print(f"Warning: Could not verify export: {e}")
@@ -498,6 +505,11 @@ def _add_export_onnx_flags(parser: argparse.ArgumentParser) -> None:
         help="Export with fixed sequence length (only batch size dynamic). "
              "Use when deployment system doesn't support multiple dynamic axes.",
     )
+    parser.add_argument(
+        "--single-batch",
+        action="store_true",
+        help="Export with [sequence, features] input (batch dimension removed).",
+    )
 
 
 def prepare_hydra_overrides(argv: Iterable[str]) -> List[str]:
@@ -540,6 +552,8 @@ def prepare_hydra_overrides(argv: Iterable[str]) -> List[str]:
             hydra_overrides.append("cli.dry_run=true")  # No + prefix - field exists in default config
         if getattr(args, "fixed_sequence_length", False):
             hydra_overrides.append("+cli.fixed_sequence_length=true")
+        if getattr(args, "single_batch", False):
+            hydra_overrides.append("+cli.single_batch=true")
     else:
         hydra_overrides = [f"mode={command}"]
 

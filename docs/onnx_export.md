@@ -72,6 +72,7 @@ airtrace export onnx --checkpoint <checkpoint_path> --output <output_path> [OPTI
 - `--validate-only` - Only validate export readiness without exporting
 - `--dry-run` - Test export pipeline (model wrapping, forward pass) without writing files
 - `--fixed-sequence-length` - Export with fixed sequence length (only batch size dynamic). Use when deployment system doesn't support multiple dynamic axes
+- `--single-batch` - Export with a 2D `[sequence, features]` input for runtimes that don't accept batched tensors
 
 ### Examples
 
@@ -105,6 +106,14 @@ airtrace export onnx \
   --checkpoint runs/exp_001/checkpoints/best.ckpt \
   --output model.onnx \
   --no-verify
+```
+
+**Export for single-sample runtimes (no batch dimension):**
+```bash
+airtrace export onnx \
+  --checkpoint runs/exp_001/checkpoints/best.ckpt \
+  --output single_batch.onnx \
+  --single-batch
 ```
 
 **Validate export readiness (fast pre-flight check):**

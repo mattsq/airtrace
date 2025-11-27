@@ -101,3 +101,34 @@ class ModelOnlyWrapper(nn.Module):
         if isinstance(output, dict):
             return output["preds"]
         return output
+
+
+class SingleBatchInputWrapper(nn.Module):
+    """Wrapper that adapts unbatched inputs for models expecting a batch dimension."""
+
+    def __init__(self, model: nn.Module):
+        """Initialize single-batch wrapper.
+
+        Args:
+            model: The wrapped model that expects [B, T, D] inputs
+        """
+        super().__init__()
+        self.model = model
+
+    def forward(self, x: torch.Tensor, context: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """Add batch dimension to inputs and remove it from outputs.
+
+        Args:
+            x: Input tensor [T, D]
+            context: Optional context tensor
+
+        Returns:
+            Model predictions with batch dimension removed.
+        """
+        if x.dim() == 2:
+            x = x.unsqueeze(0)
+
+        output = self.model(x, context)
+
+        # Remove the batch dimension for compatibility with unbatched consumers
+        return output.squeeze(0)
