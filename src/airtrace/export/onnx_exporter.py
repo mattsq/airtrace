@@ -575,6 +575,7 @@ class ONNXExporter:
         sequence_length: Optional[int] = None,
         opset_version: Optional[int] = None,
         verbose: bool = True,
+        fixed_sequence_length: bool = False,
     ) -> Dict[str, Path]:
         """Export model to ONNX format.
 
@@ -585,6 +586,7 @@ class ONNXExporter:
             sequence_length: Sequence length for input (if None, inferred from config)
             opset_version: ONNX opset version (if None, auto-selected based on model type)
             verbose: Whether to print export info
+            fixed_sequence_length: If True, only batch_size is dynamic (sequence_length fixed)
 
         Returns:
             Dictionary with paths to exported files
@@ -615,6 +617,7 @@ class ONNXExporter:
             print(f"  Input shape: [{batch_size}, {sequence_length}, {input_dim}]")
             print(f"  Output dim: {output_dim}")
             print(f"  Opset version: {opset_version}")
+            print(f"  Fixed sequence length: {fixed_sequence_length}")
 
         # Create dummy input
         dummy_input = torch.randn(batch_size, sequence_length, input_dim)
@@ -645,11 +648,23 @@ class ONNXExporter:
 
         export_model.eval()
 
-        # Dynamic axes for variable batch size and sequence length
-        dynamic_axes = {
-            'input': {0: 'batch_size', 1: 'sequence_length'},
-            'output': {0: 'batch_size', 1: 'output_length'},
-        }
+        # Get dynamic axes from profile (fixes architectural issue where axes were hardcoded)
+        profile = self.get_export_profile()
+        dynamic_axes = profile.dynamic_axes.copy() if profile.dynamic_axes else None
+
+        # If fixed_sequence_length is set, remove sequence dimension from dynamic axes
+        if fixed_sequence_length and dynamic_axes:
+            # Remove axis 1 (sequence_length) from input, keep axis 0 (batch_size)
+            if 'input' in dynamic_axes and 1 in dynamic_axes['input']:
+                dynamic_axes['input'] = {0: 'batch_size'}
+
+            # Remove axis 1 (output_length) from output, keep axis 0 (batch_size)
+            if 'output' in dynamic_axes and 1 in dynamic_axes['output']:
+                dynamic_axes['output'] = {0: 'batch_size'}
+
+            if verbose:
+                print("  Fixed sequence length mode: Only batch_size is dynamic")
+                print(f"  Input will be fixed at: [batch_size, {sequence_length}, {input_dim}]")
 
         # Export to ONNX
         if verbose:
@@ -760,6 +775,7 @@ class ONNXExporter:
                 "sequence_length": sequence_length,
                 "opset_version": opset_version,
                 "dynamic_axes": bool(profile.dynamic_axes),
+                "fixed_sequence_length": fixed_sequence_length,
             },
 
             # Transform information

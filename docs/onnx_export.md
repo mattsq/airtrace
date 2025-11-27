@@ -71,6 +71,7 @@ airtrace export onnx --checkpoint <checkpoint_path> --output <output_path> [OPTI
 - `--opset-version N` - ONNX opset version (default: auto-select based on model type)
 - `--validate-only` - Only validate export readiness without exporting
 - `--dry-run` - Test export pipeline (model wrapping, forward pass) without writing files
+- `--fixed-sequence-length` - Export with fixed sequence length (only batch size dynamic). Use when deployment system doesn't support multiple dynamic axes
 
 ### Examples
 
@@ -194,6 +195,52 @@ Testing with input shape: [1, 100, 13]
 - Before expensive export operations
 - To catch issues early in CI/CD pipelines
 - When debugging export problems
+
+## Fixed vs Dynamic Sequence Length
+
+By default, ONNX exports create models with two dynamic axes: `batch_size` and `sequence_length`. This allows the model to accept inputs of any batch size and any sequence length at inference time.
+
+However, some deployment systems (e.g., certain hardware accelerators, optimized runtimes) only support models with a single dynamic axis. For these cases, use the `--fixed-sequence-length` flag to export a model where only batch_size is dynamic and sequence_length is fixed to the training window size.
+
+### Dynamic Sequence (Default)
+
+Both `batch_size` and `sequence_length` are dynamic - model accepts any batch size and any sequence length:
+
+```bash
+airtrace export onnx --checkpoint best.ckpt --output model.onnx
+```
+
+**Input shape:** `[batch_size (dynamic), sequence_length (dynamic), input_dim (static)]`
+**Output shape:** `[batch_size (dynamic), output_length (dynamic), output_dim (static)]`
+
+### Fixed Sequence
+
+Only `batch_size` is dynamic - model requires exact training sequence length:
+
+```bash
+airtrace export onnx --checkpoint best.ckpt --output model.onnx --fixed-sequence-length
+```
+
+**Input shape:** `[batch_size (dynamic), 128 (static), input_dim (static)]`
+**Output shape:** `[batch_size (dynamic), 1 (static), output_dim (static)]`
+
+### When to Use Fixed Sequence
+
+Use `--fixed-sequence-length` when:
+- Deployment runtime supports only single dynamic axis
+- Inference always uses same window size as training
+- Additional optimization opportunities from fixed shapes
+- Hardware accelerator has restrictions on dynamic dimensions
+
+### Example
+
+```bash
+# Export model with fixed sequence length for deployment
+airtrace export onnx \
+  --checkpoint runs/exp_001/checkpoints/best.ckpt \
+  --output exports/model_fixed.onnx \
+  --fixed-sequence-length
+```
 
 ## Automatic Opset Version Selection
 
