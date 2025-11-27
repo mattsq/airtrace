@@ -3,6 +3,8 @@
 import json
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
+from datetime import datetime
+import platform
 
 import torch
 import numpy as np
@@ -13,6 +15,7 @@ from .transform_wrappers import (
     create_forward_transform_pipeline,
     create_inverse_transform_pipeline,
 )
+from .profiles import get_profile_for_model, ExportProfile
 
 
 class ONNXExporter:
@@ -316,6 +319,20 @@ class ONNXExporter:
         # Default: opset 17 (balanced)
         return 17
 
+    def get_export_profile(self) -> ExportProfile:
+        """Get recommended export profile for the model.
+
+        Returns:
+            ExportProfile with model-specific settings
+
+        Example:
+            >>> exporter = ONNXExporter.from_checkpoint("model.ckpt")
+            >>> profile = exporter.get_export_profile()
+            >>> print(f"Model: {profile.name}, Opset: {profile.opset_version}")
+            >>> print(f"Notes: {profile.notes}")
+        """
+        return get_profile_for_model(self.model)
+
     def validate(self, end_to_end: bool = False, verbose: bool = True) -> Dict[str, Any]:
         """Validate that the model and config are ready for ONNX export.
 
@@ -558,6 +575,7 @@ class ONNXExporter:
         sequence_length: Optional[int] = None,
         opset_version: Optional[int] = None,
         verbose: bool = True,
+        fixed_sequence_length: bool = False,
     ) -> Dict[str, Path]:
         """Export model to ONNX format.
 
@@ -568,6 +586,7 @@ class ONNXExporter:
             sequence_length: Sequence length for input (if None, inferred from config)
             opset_version: ONNX opset version (if None, auto-selected based on model type)
             verbose: Whether to print export info
+            fixed_sequence_length: If True, only batch_size is dynamic (sequence_length fixed)
 
         Returns:
             Dictionary with paths to exported files
@@ -598,6 +617,7 @@ class ONNXExporter:
             print(f"  Input shape: [{batch_size}, {sequence_length}, {input_dim}]")
             print(f"  Output dim: {output_dim}")
             print(f"  Opset version: {opset_version}")
+            print(f"  Fixed sequence length: {fixed_sequence_length}")
 
         # Create dummy input
         dummy_input = torch.randn(batch_size, sequence_length, input_dim)
@@ -628,11 +648,23 @@ class ONNXExporter:
 
         export_model.eval()
 
-        # Dynamic axes for variable batch size and sequence length
-        dynamic_axes = {
-            'input': {0: 'batch_size', 1: 'sequence_length'},
-            'output': {0: 'batch_size', 1: 'output_length'},
-        }
+        # Get dynamic axes from profile (fixes architectural issue where axes were hardcoded)
+        profile = self.get_export_profile()
+        dynamic_axes = profile.dynamic_axes.copy() if profile.dynamic_axes else None
+
+        # If fixed_sequence_length is set, remove sequence dimension from dynamic axes
+        if fixed_sequence_length and dynamic_axes:
+            # Remove axis 1 (sequence_length) from input, keep axis 0 (batch_size)
+            if 'input' in dynamic_axes and 1 in dynamic_axes['input']:
+                dynamic_axes['input'] = {0: 'batch_size'}
+
+            # Remove axis 1 (output_length) from output, keep axis 0 (batch_size)
+            if 'output' in dynamic_axes and 1 in dynamic_axes['output']:
+                dynamic_axes['output'] = {0: 'batch_size'}
+
+            if verbose:
+                print("  Fixed sequence length mode: Only batch_size is dynamic")
+                print(f"  Input will be fixed at: [batch_size, {sequence_length}, {input_dim}]")
 
         # Export to ONNX
         if verbose:
@@ -719,15 +751,61 @@ class ONNXExporter:
         if verbose:
             print(f"[OK] Configuration saved to: {config_path}")
 
-        # Save metadata
+        # Save enriched metadata
         metadata_path = output_path.with_suffix('.metadata.json')
+
+        # Get export profile for additional metadata
+        profile = self.get_export_profile()
+
         metadata = {
+            # Model information
+            "model": {
+                "class": self.model.__class__.__name__,
+                "module": self.model.__class__.__module__,
+                "input_dim": input_dim,
+                "output_dim": output_dim,
+                "profile": profile.name,
+            },
+
+            # Export configuration
+            "export": {
+                "timestamp": datetime.now().isoformat(),
+                "end_to_end": end_to_end,
+                "batch_size": batch_size,
+                "sequence_length": sequence_length,
+                "opset_version": opset_version,
+                "dynamic_axes": bool(profile.dynamic_axes),
+                "fixed_sequence_length": fixed_sequence_length,
+            },
+
+            # Transform information
+            "transforms": {
+                "has_statistics": self.transform_stats is not None,
+                "num_transforms": len(self.transform_stats) if self.transform_stats else 0,
+            },
+
+            # Profile settings
+            "profile_settings": {
+                "verification_tolerance": profile.verification_tolerance,
+                "description": profile.description,
+                "notes": profile.notes,
+            },
+
+            # Environment
+            "environment": {
+                "pytorch_version": torch.__version__,
+                "python_version": platform.python_version(),
+                "platform": platform.platform(),
+            },
+
+            # Legacy fields for backward compatibility (top-level)
             "input_shape": [batch_size, sequence_length, input_dim],
             "output_dim": output_dim,
             "end_to_end": end_to_end,
             "has_transforms": self.transform_stats is not None,
             "opset_version": opset_version,
         }
+
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2)
         exported_files["metadata"] = metadata_path
@@ -787,7 +865,7 @@ class ONNXExporter:
         onnx_path: Path,
         end_to_end: bool = False,
         num_samples: int = 5,
-        tolerance: float = 1e-5,
+        tolerance: Optional[float] = None,
         verbose: bool = True,
     ) -> bool:
         """Verify ONNX export by comparing outputs with PyTorch model.
@@ -796,7 +874,7 @@ class ONNXExporter:
             onnx_path: Path to the exported ONNX model
             end_to_end: Whether the export was end-to-end (with transforms)
             num_samples: Number of random samples to test
-            tolerance: Numerical tolerance for comparison
+            tolerance: Numerical tolerance for comparison (if None, uses profile recommendation)
             verbose: Whether to print verification results
 
         Returns:
@@ -808,6 +886,13 @@ class ONNXExporter:
             print("Warning: onnxruntime not installed. Skipping verification.")
             print("Install with: pip install onnxruntime")
             return False
+
+        # Use profile-recommended tolerance if not specified
+        if tolerance is None:
+            profile = self.get_export_profile()
+            tolerance = profile.verification_tolerance
+            if verbose:
+                print(f"Using {profile.name} profile tolerance: {tolerance}")
 
         if verbose:
             print("\nVerifying ONNX export...")

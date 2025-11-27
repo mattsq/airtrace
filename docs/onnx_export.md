@@ -71,6 +71,7 @@ airtrace export onnx --checkpoint <checkpoint_path> --output <output_path> [OPTI
 - `--opset-version N` - ONNX opset version (default: auto-select based on model type)
 - `--validate-only` - Only validate export readiness without exporting
 - `--dry-run` - Test export pipeline (model wrapping, forward pass) without writing files
+- `--fixed-sequence-length` - Export with fixed sequence length (only batch size dynamic). Use when deployment system doesn't support multiple dynamic axes
 
 ### Examples
 
@@ -195,6 +196,52 @@ Testing with input shape: [1, 100, 13]
 - To catch issues early in CI/CD pipelines
 - When debugging export problems
 
+## Fixed vs Dynamic Sequence Length
+
+By default, ONNX exports create models with two dynamic axes: `batch_size` and `sequence_length`. This allows the model to accept inputs of any batch size and any sequence length at inference time.
+
+However, some deployment systems (e.g., certain hardware accelerators, optimized runtimes) only support models with a single dynamic axis. For these cases, use the `--fixed-sequence-length` flag to export a model where only batch_size is dynamic and sequence_length is fixed to the training window size.
+
+### Dynamic Sequence (Default)
+
+Both `batch_size` and `sequence_length` are dynamic - model accepts any batch size and any sequence length:
+
+```bash
+airtrace export onnx --checkpoint best.ckpt --output model.onnx
+```
+
+**Input shape:** `[batch_size (dynamic), sequence_length (dynamic), input_dim (static)]`
+**Output shape:** `[batch_size (dynamic), output_length (dynamic), output_dim (static)]`
+
+### Fixed Sequence
+
+Only `batch_size` is dynamic - model requires exact training sequence length:
+
+```bash
+airtrace export onnx --checkpoint best.ckpt --output model.onnx --fixed-sequence-length
+```
+
+**Input shape:** `[batch_size (dynamic), 128 (static), input_dim (static)]`
+**Output shape:** `[batch_size (dynamic), 1 (static), output_dim (static)]`
+
+### When to Use Fixed Sequence
+
+Use `--fixed-sequence-length` when:
+- Deployment runtime supports only single dynamic axis
+- Inference always uses same window size as training
+- Additional optimization opportunities from fixed shapes
+- Hardware accelerator has restrictions on dynamic dimensions
+
+### Example
+
+```bash
+# Export model with fixed sequence length for deployment
+airtrace export onnx \
+  --checkpoint runs/exp_001/checkpoints/best.ckpt \
+  --output exports/model_fixed.onnx \
+  --fixed-sequence-length
+```
+
 ## Automatic Opset Version Selection
 
 The exporter automatically selects the best ONNX opset version based on your model architecture:
@@ -216,6 +263,98 @@ You can always override with `--opset-version`:
 ```bash
 airtrace export onnx --checkpoint best.ckpt --opset-version 18
 ```
+
+## Export Profiles
+
+AirTrace uses **export profiles** to provide model-specific export settings that have been optimized for each architecture type. Profiles automatically configure opset versions, verification tolerances, and other settings.
+
+### Available Profiles
+
+| Profile | Opset | Tolerance | Description |
+|---------|-------|-----------|-------------|
+| `informer` | 17 | 1e-4 | Informer with ProbSparse attention (more lenient tolerance) |
+| `transformer` | 17 | 1e-5 | Standard Transformer with multi-head attention |
+| `timexer` | 17 | 1e-5 | TimeXer time-series model |
+| `gru` | 14 | 1e-6 | GRU (widest compatibility) |
+| `lstm` | 14 | 1e-6 | LSTM (widest compatibility) |
+| `rnn` | 14 | 1e-6 | Basic RNN |
+| `tcn` | 14 | 1e-6 | Temporal Convolutional Network |
+| `linear` | 14 | 1e-7 | Simple linear model |
+| `persistence` | 14 | 1e-7 | Persistence baseline |
+| `default` | 17 | 1e-5 | For unknown model types |
+
+### Using Profiles Programmatically
+
+```python
+from airtrace.export import ONNXExporter, get_profile_for_model
+
+# Load checkpoint
+exporter = ONNXExporter.from_checkpoint("best.ckpt")
+
+# Get recommended profile
+profile = exporter.get_export_profile()
+print(f"Model: {profile.name}")
+print(f"Recommended opset: {profile.opset_version}")
+print(f"Verification tolerance: {profile.verification_tolerance}")
+print(f"Notes: {profile.notes}")
+
+# Profiles are automatically applied during export
+exported_files = exporter.export(
+    output_path="model.onnx",
+    # opset_version and tolerance are auto-selected from profile
+)
+```
+
+### Profile Benefits
+
+- **Optimized settings**: Each profile has been tested with its model type
+- **Automatic selection**: Profiles are detected from model class name
+- **Verification tolerance**: Appropriate tolerances for different architectures
+- **Documentation**: Each profile includes notes about best practices
+
+## Enriched Metadata
+
+Exported models include comprehensive metadata in `model.metadata.json`:
+
+```json
+{
+  "model": {
+    "class": "InformerModel",
+    "module": "airtrace.models.informer",
+    "input_dim": 13,
+    "output_dim": 11,
+    "profile": "informer"
+  },
+  "export": {
+    "timestamp": "2025-11-27T12:34:56.789012",
+    "end_to_end": false,
+    "batch_size": 1,
+    "sequence_length": 100,
+    "opset_version": 17,
+    "dynamic_axes": true
+  },
+  "transforms": {
+    "has_statistics": true,
+    "num_transforms": 2
+  },
+  "profile_settings": {
+    "verification_tolerance": 0.0001,
+    "description": "Informer model with ProbSparse attention",
+    "notes": "Uses legacy ONNX exporter..."
+  },
+  "environment": {
+    "pytorch_version": "2.1.0",
+    "python_version": "3.11.5",
+    "platform": "Windows-10-..."
+  }
+}
+```
+
+This metadata helps with:
+- **Model tracking**: Know exactly which model and settings were used
+- **Reproducibility**: Record export environment and configuration
+- **Debugging**: Understand model structure and export settings
+- **Deployment**: Verify model compatibility before deployment
 
 ## Using Exported Models
 
