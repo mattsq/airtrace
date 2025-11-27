@@ -10,7 +10,11 @@ import torch
 from omegaconf import DictConfig
 
 from airtrace.export.onnx_exporter import ONNXExporter
-from airtrace.export.end_to_end_model import EndToEndModel, ModelOnlyWrapper
+from airtrace.export.end_to_end_model import (
+    EndToEndModel,
+    ModelOnlyWrapper,
+    SingleBatchInputWrapper,
+)
 
 
 class DummyModel(torch.nn.Module):
@@ -284,6 +288,47 @@ def test_default_export_unchanged(tmp_path: Path, monkeypatch):
         metadata = json.load(f)
 
     assert metadata["export"]["fixed_sequence_length"] is False
+
+
+def test_single_batch_mode_exports_unbatched_input(tmp_path: Path, monkeypatch):
+    """Export should allow systems that accept only [sequence, features] inputs."""
+    model = DummyModel(output_len=2)
+    config = DictConfig({"data": {"window_size_in": 6}, "model": {"name": "dummy"}})
+    exporter = ONNXExporter(model=model, config=config)
+
+    captured_dynamic_axes = None
+    captured_input_shape = None
+    exported_model = None
+
+    def fake_export(model_arg, args, output_file, *_, dynamic_axes=None, **__):
+        nonlocal captured_dynamic_axes, captured_input_shape, exported_model
+        exported_model = model_arg
+        captured_dynamic_axes = dynamic_axes
+        captured_input_shape = list(args.shape)
+        Path(output_file).write_bytes(b"onnx")
+
+    monkeypatch.setattr(torch.onnx, "export", fake_export)
+
+    output_path = tmp_path / "single_batch.onnx"
+    exporter.export(
+        output_path=output_path,
+        sequence_length=6,
+        single_batch_mode=True,
+        verbose=False,
+    )
+
+    assert isinstance(exported_model, SingleBatchInputWrapper)
+    assert captured_input_shape == [6, 2]
+    assert captured_dynamic_axes is not None
+    assert captured_dynamic_axes["input"] == {0: "sequence_length"}
+    assert captured_dynamic_axes["output"] == {0: "output_length"}
+
+    metadata_path = output_path.with_suffix(".metadata.json")
+    with metadata_path.open() as f:
+        metadata = json.load(f)
+
+    assert metadata["export"]["single_batch_mode"] is True
+    assert metadata["input_shape"] == [6, 2]
 
 
 def test_fixed_sequence_removes_dynamic_axes(tmp_path: Path, monkeypatch):

@@ -10,7 +10,7 @@ import torch
 import numpy as np
 from omegaconf import DictConfig, ListConfig, OmegaConf
 
-from .end_to_end_model import EndToEndModel, ModelOnlyWrapper
+from .end_to_end_model import EndToEndModel, ModelOnlyWrapper, SingleBatchInputWrapper
 from .transform_wrappers import (
     create_forward_transform_pipeline,
     create_inverse_transform_pipeline,
@@ -476,7 +476,12 @@ class ONNXExporter:
 
         return results
 
-    def dry_run(self, end_to_end: bool = False, verbose: bool = True) -> bool:
+    def dry_run(
+        self,
+        end_to_end: bool = False,
+        verbose: bool = True,
+        single_batch_mode: bool = False,
+    ) -> bool:
         """Perform a dry-run of ONNX export without actually exporting.
 
         This tests the full export pipeline including model wrapping and
@@ -485,6 +490,7 @@ class ONNXExporter:
         Args:
             end_to_end: Whether to test end-to-end export
             verbose: Whether to print progress
+            single_batch_mode: Whether to test with an unbatched [sequence, features] input
 
         Returns:
             True if dry-run succeeded, False otherwise
@@ -513,11 +519,18 @@ class ONNXExporter:
         sequence_length = data_config.get("window_size_in", 100)
 
         if verbose:
-            print(f"Testing with input shape: [1, {sequence_length}, {self.model.input_dim}]")
+            if single_batch_mode:
+                print(f"Testing with input shape: [{sequence_length}, {self.model.input_dim}] (single batch mode)")
+            else:
+                print(f"Testing with input shape: [1, {sequence_length}, {self.model.input_dim}]")
 
         # Step 3: Create dummy input
         try:
-            dummy_input = torch.randn(1, sequence_length, self.model.input_dim)
+            dummy_input = (
+                torch.randn(sequence_length, self.model.input_dim)
+                if single_batch_mode
+                else torch.randn(1, sequence_length, self.model.input_dim)
+            )
         except Exception as e:
             if verbose:
                 print(f"[FAILED] Could not create dummy input: {e}")
@@ -545,6 +558,9 @@ class ONNXExporter:
             if verbose:
                 print(f"[FAILED] Model wrapping failed: {e}")
             return False
+
+        if single_batch_mode:
+            test_model = SingleBatchInputWrapper(test_model)
 
         # Step 5: Test forward pass
         try:
@@ -576,6 +592,7 @@ class ONNXExporter:
         opset_version: Optional[int] = None,
         verbose: bool = True,
         fixed_sequence_length: bool = False,
+        single_batch_mode: bool = False,
     ) -> Dict[str, Path]:
         """Export model to ONNX format.
 
@@ -587,6 +604,7 @@ class ONNXExporter:
             opset_version: ONNX opset version (if None, auto-selected based on model type)
             verbose: Whether to print export info
             fixed_sequence_length: If True, only batch_size is dynamic (sequence_length fixed)
+            single_batch_mode: If True, expect [sequence_length, input_dim] inputs with batch removed
 
         Returns:
             Dictionary with paths to exported files
@@ -614,13 +632,25 @@ class ONNXExporter:
             print(f"\nONNX Export Configuration:")
             print(f"  Output path: {output_path}")
             print(f"  End-to-end: {end_to_end}")
+        if single_batch_mode:
+            print(f"  Input shape: [{sequence_length}, {input_dim}] (single batch mode)")
+        else:
             print(f"  Input shape: [{batch_size}, {sequence_length}, {input_dim}]")
-            print(f"  Output dim: {output_dim}")
-            print(f"  Opset version: {opset_version}")
-            print(f"  Fixed sequence length: {fixed_sequence_length}")
+        print(f"  Output dim: {output_dim}")
+        print(f"  Opset version: {opset_version}")
+        print(f"  Fixed sequence length: {fixed_sequence_length}")
+
+        if single_batch_mode and batch_size != 1:
+            batch_size = 1
+            if verbose:
+                print("  Single batch mode enabled: overriding batch_size to 1")
 
         # Create dummy input
-        dummy_input = torch.randn(batch_size, sequence_length, input_dim)
+        dummy_input = (
+            torch.randn(sequence_length, input_dim)
+            if single_batch_mode
+            else torch.randn(batch_size, sequence_length, input_dim)
+        )
 
         # Prepare model for export
         if end_to_end and self.transform_stats:
@@ -646,25 +676,63 @@ class ONNXExporter:
             if verbose:
                 print("  Mode: Model only")
 
+        if single_batch_mode:
+            export_model = SingleBatchInputWrapper(export_model)
+            if verbose:
+                print("  Single batch mode: Expecting [sequence_length, features] input")
+
         export_model.eval()
 
         # Get dynamic axes from profile (fixes architectural issue where axes were hardcoded)
         profile = self.get_export_profile()
         dynamic_axes = profile.dynamic_axes.copy() if profile.dynamic_axes else None
 
-        # If fixed_sequence_length is set, remove sequence dimension from dynamic axes
-        if fixed_sequence_length and dynamic_axes:
-            # Remove axis 1 (sequence_length) from input, keep axis 0 (batch_size)
-            if 'input' in dynamic_axes and 1 in dynamic_axes['input']:
-                dynamic_axes['input'] = {0: 'batch_size'}
+        if single_batch_mode and dynamic_axes:
+            input_axes = {}
+            output_axes = {}
 
-            # Remove axis 1 (output_length) from output, keep axis 0 (batch_size)
-            if 'output' in dynamic_axes and 1 in dynamic_axes['output']:
-                dynamic_axes['output'] = {0: 'batch_size'}
+            if 'input' in dynamic_axes:
+                if 1 in dynamic_axes['input']:
+                    input_axes[0] = dynamic_axes['input'][1]
+                elif 0 in dynamic_axes['input']:
+                    input_axes[0] = dynamic_axes['input'][0]
+
+            if 'output' in dynamic_axes:
+                if 1 in dynamic_axes['output']:
+                    output_axes[0] = dynamic_axes['output'][1]
+                elif 0 in dynamic_axes['output']:
+                    output_axes[0] = dynamic_axes['output'][0]
+
+            dynamic_axes = {}
+            if input_axes:
+                dynamic_axes['input'] = input_axes
+            if output_axes:
+                dynamic_axes['output'] = output_axes
+
+            if not dynamic_axes:
+                dynamic_axes = None
 
             if verbose:
-                print("  Fixed sequence length mode: Only batch_size is dynamic")
-                print(f"  Input will be fixed at: [batch_size, {sequence_length}, {input_dim}]")
+                print("  Single batch mode: Dynamic axes remapped to unbatched input")
+
+        # If fixed_sequence_length is set, remove sequence dimension from dynamic axes
+        if fixed_sequence_length and dynamic_axes:
+            if single_batch_mode:
+                dynamic_axes = None
+                if verbose:
+                    print("  Fixed sequence length mode: dynamic axes disabled for single-batch input")
+            else:
+                # Remove axis 1 (sequence_length) from input, keep axis 0 (batch_size)
+                if 'input' in dynamic_axes and 1 in dynamic_axes['input']:
+                    dynamic_axes['input'] = {0: 'batch_size'}
+
+                # Remove axis 1 (output_length) from output, keep axis 0 (batch_size)
+                if 'output' in dynamic_axes and 1 in dynamic_axes['output']:
+                    dynamic_axes['output'] = {0: 'batch_size'}
+
+                if verbose:
+                    print("  Fixed sequence length mode: Only batch_size is dynamic")
+                    print(f"  Input will be fixed at: [batch_size, {sequence_length}, {input_dim}]")
 
         # Export to ONNX
         if verbose:
@@ -774,8 +842,9 @@ class ONNXExporter:
                 "batch_size": batch_size,
                 "sequence_length": sequence_length,
                 "opset_version": opset_version,
-                "dynamic_axes": bool(profile.dynamic_axes),
+                "dynamic_axes": bool(dynamic_axes),
                 "fixed_sequence_length": fixed_sequence_length,
+                "single_batch_mode": single_batch_mode,
             },
 
             # Transform information
@@ -799,7 +868,11 @@ class ONNXExporter:
             },
 
             # Legacy fields for backward compatibility (top-level)
-            "input_shape": [batch_size, sequence_length, input_dim],
+            "input_shape": (
+                [sequence_length, input_dim]
+                if single_batch_mode
+                else [batch_size, sequence_length, input_dim]
+            ),
             "output_dim": output_dim,
             "end_to_end": end_to_end,
             "has_transforms": self.transform_stats is not None,
@@ -867,6 +940,7 @@ class ONNXExporter:
         num_samples: int = 5,
         tolerance: Optional[float] = None,
         verbose: bool = True,
+        single_batch_mode: bool = False,
     ) -> bool:
         """Verify ONNX export by comparing outputs with PyTorch model.
 
@@ -919,13 +993,20 @@ class ONNXExporter:
             # Use ModelOnlyWrapper (extracts "preds" from dict)
             pytorch_model = ModelOnlyWrapper(self.model)
 
+        if single_batch_mode:
+            pytorch_model = SingleBatchInputWrapper(pytorch_model)
+
         pytorch_model.eval()
 
         # Test with multiple random inputs
         passed = True
         for i in range(num_samples):
             # Generate random input
-            dummy_input = torch.randn(1, sequence_length, input_dim)
+            dummy_input = (
+                torch.randn(sequence_length, input_dim)
+                if single_batch_mode
+                else torch.randn(1, sequence_length, input_dim)
+            )
 
             # PyTorch inference with wrapped model
             with torch.no_grad():
