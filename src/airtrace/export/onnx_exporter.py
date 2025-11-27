@@ -3,6 +3,8 @@
 import json
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
+from datetime import datetime
+import platform
 
 import torch
 import numpy as np
@@ -13,6 +15,7 @@ from .transform_wrappers import (
     create_forward_transform_pipeline,
     create_inverse_transform_pipeline,
 )
+from .profiles import get_profile_for_model, ExportProfile
 
 
 class ONNXExporter:
@@ -315,6 +318,20 @@ class ONNXExporter:
 
         # Default: opset 17 (balanced)
         return 17
+
+    def get_export_profile(self) -> ExportProfile:
+        """Get recommended export profile for the model.
+
+        Returns:
+            ExportProfile with model-specific settings
+
+        Example:
+            >>> exporter = ONNXExporter.from_checkpoint("model.ckpt")
+            >>> profile = exporter.get_export_profile()
+            >>> print(f"Model: {profile.name}, Opset: {profile.opset_version}")
+            >>> print(f"Notes: {profile.notes}")
+        """
+        return get_profile_for_model(self.model)
 
     def validate(self, end_to_end: bool = False, verbose: bool = True) -> Dict[str, Any]:
         """Validate that the model and config are ready for ONNX export.
@@ -719,15 +736,60 @@ class ONNXExporter:
         if verbose:
             print(f"[OK] Configuration saved to: {config_path}")
 
-        # Save metadata
+        # Save enriched metadata
         metadata_path = output_path.with_suffix('.metadata.json')
+
+        # Get export profile for additional metadata
+        profile = self.get_export_profile()
+
         metadata = {
+            # Model information
+            "model": {
+                "class": self.model.__class__.__name__,
+                "module": self.model.__class__.__module__,
+                "input_dim": input_dim,
+                "output_dim": output_dim,
+                "profile": profile.name,
+            },
+
+            # Export configuration
+            "export": {
+                "timestamp": datetime.now().isoformat(),
+                "end_to_end": end_to_end,
+                "batch_size": batch_size,
+                "sequence_length": sequence_length,
+                "opset_version": opset_version,
+                "dynamic_axes": bool(profile.dynamic_axes),
+            },
+
+            # Transform information
+            "transforms": {
+                "has_statistics": self.transform_stats is not None,
+                "num_transforms": len(self.transform_stats) if self.transform_stats else 0,
+            },
+
+            # Profile settings
+            "profile_settings": {
+                "verification_tolerance": profile.verification_tolerance,
+                "description": profile.description,
+                "notes": profile.notes,
+            },
+
+            # Environment
+            "environment": {
+                "pytorch_version": torch.__version__,
+                "python_version": platform.python_version(),
+                "platform": platform.platform(),
+            },
+
+            # Legacy fields for backward compatibility (top-level)
             "input_shape": [batch_size, sequence_length, input_dim],
             "output_dim": output_dim,
             "end_to_end": end_to_end,
             "has_transforms": self.transform_stats is not None,
             "opset_version": opset_version,
         }
+
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2)
         exported_files["metadata"] = metadata_path
@@ -787,7 +849,7 @@ class ONNXExporter:
         onnx_path: Path,
         end_to_end: bool = False,
         num_samples: int = 5,
-        tolerance: float = 1e-5,
+        tolerance: Optional[float] = None,
         verbose: bool = True,
     ) -> bool:
         """Verify ONNX export by comparing outputs with PyTorch model.
@@ -796,7 +858,7 @@ class ONNXExporter:
             onnx_path: Path to the exported ONNX model
             end_to_end: Whether the export was end-to-end (with transforms)
             num_samples: Number of random samples to test
-            tolerance: Numerical tolerance for comparison
+            tolerance: Numerical tolerance for comparison (if None, uses profile recommendation)
             verbose: Whether to print verification results
 
         Returns:
@@ -808,6 +870,13 @@ class ONNXExporter:
             print("Warning: onnxruntime not installed. Skipping verification.")
             print("Install with: pip install onnxruntime")
             return False
+
+        # Use profile-recommended tolerance if not specified
+        if tolerance is None:
+            profile = self.get_export_profile()
+            tolerance = profile.verification_tolerance
+            if verbose:
+                print(f"Using {profile.name} profile tolerance: {tolerance}")
 
         if verbose:
             print("\nVerifying ONNX export...")
