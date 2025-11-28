@@ -1,7 +1,7 @@
 defaults:
   - override /data: qantas_737
   - override /model: tcn
-  - override /transforms: zscore_diff
+  - override /transforms: zscore_diff_with_context
   - override /task: multi_step
   - override /train: long_context
 

@@ -9,7 +9,7 @@ AirTrace enables rapid experimentation with different sequence models (RNNs, TCN
 ### Key Features
 
 - **Model-agnostic architecture**: Plug in GRU, TCN, Transformer, or custom models through a common interface
-- **Composable data transforms**: Mix and match scaling, differencing, context features via config
+- **Composable data transforms**: Mix and match scaling, differencing, and optional context features via config
 - **Task abstraction**: Same model for one-step prediction, multi-step forecasting, or anomaly detection
 - **Reproducible experiments**: One command = one experiment, tracked by config + seed
 - **Hydra configuration**: Override any parameter from command line or config files
@@ -342,6 +342,11 @@ Transforms preprocess your data. Common pipelines:
 airtrace train data=my_dataset transforms=zscore_diff
 ```
 
+**Z-score normalization + differencing + context features** (adds static metadata like aircraft_type):
+```bash
+airtrace train data=my_dataset transforms=zscore_diff_with_context
+```
+
 **Min-max scaling only** (for bounded sensors):
 ```bash
 airtrace train data=my_dataset transforms=minmax_only
@@ -573,7 +578,7 @@ AirTrace uses Hydra for hierarchical configuration. Experiments are defined by c
 
 1. **Data**: Which dataset and window configuration to use
 2. **Model**: Architecture (GRU, TCN, Transformer, etc.)
-3. **Transforms**: Data preprocessing pipeline (scaling, differencing, context)
+3. **Transforms**: Data preprocessing pipeline (scaling, differencing, optional context features)
 4. **Task**: Prediction objective (one-step, multi-step, anomaly)
 5. **Train**: Optimization hyperparameters
 
@@ -583,7 +588,7 @@ Example experiment config (`configs/exp/exp_001_gru_zscore.yaml`):
 defaults:
   - override /data: qantas_737
   - override /model: gru_ar
-  - override /transforms: zscore_diff
+  - override /transforms: zscore_diff_with_context  # Use zscore_diff for no context
   - override /task: one_step
   - override /train: default
 

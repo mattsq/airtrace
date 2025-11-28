@@ -1,4 +1,7 @@
 # @package _global_
+# NOTE: This config does NOT include context features (static metadata like aircraft_type, route_length).
+# If you need context features, use 'zscore_diff_with_context.yaml' instead.
+# This change was made in 2025-11-28 to make the default transform behavior more explicit.
 
 transforms:
   pipeline:
@@ -9,5 +12,3 @@ transforms:
     - name: diff
       sensors: ["fuel_flow"]
       order: 1
-    - name: context
-      use_static: ["aircraft_type", "route_length"]

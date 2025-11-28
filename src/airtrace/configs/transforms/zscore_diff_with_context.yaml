@@ -1,0 +1,13 @@
+# @package _global_
+
+transforms:
+  pipeline:
+    - name: zscore
+      per_sensor: true
+      center: true
+      scale: true
+    - name: diff
+      sensors: ["fuel_flow"]
+      order: 1
+    - name: context
+      use_static: ["aircraft_type", "route_length"]
