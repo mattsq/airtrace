@@ -25,7 +25,7 @@ Experiments are defined in `configs/exp/`. Example:
 defaults:
   - override /data: qantas_737
   - override /model: gru_ar
-  - override /transforms: zscore_diff
+  - override /transforms: zscore_diff_with_context  # Use zscore_diff for no context
   - override /task: one_step
   - override /train: default
 

@@ -46,7 +46,8 @@ def forward(self, x, context=None) -> Dict[str, torch.Tensor]:
     """
     Args:
         x: [B, T_in, D_in]
-        context: Optional [B, C]
+        context: Optional [B, C] - Static features added by ContextTransform
+                 (use transforms=zscore_diff_with_context to enable)
 
     Returns:
         {
@@ -186,7 +187,7 @@ config.yaml (base)
 defaults:
   - data: qantas_737
   - model: gru_ar
-  - transforms: zscore_diff
+  - transforms: zscore_diff  # or zscore_diff_with_context for static features
   - task: one_step
   - train: default
   ↓

@@ -49,6 +49,17 @@ airtrace export onnx --checkpoint runs/exp_001/checkpoints/best.ckpt --output mo
 - `model.config.yaml` - Full training configuration
 - `model.metadata.json` - Input/output shape information
 
+### Input Dimensions and Transform Configs
+
+The exported model's input dimension depends on the transform configuration used during training:
+
+- **`transforms=zscore_diff`** (default): Input dimension = number of sensors only
+  - Example: 11 sensors → `input_dim = 11`
+- **`transforms=zscore_diff_with_context`**: Input dimension = sensors + context features
+  - Example: 11 sensors + 2 context features (aircraft_type, route_length) → `input_dim = 13`
+
+The ONNX exporter automatically infers the correct input dimension from the checkpoint's transform configuration and model weights.
+
 ## CLI Reference
 
 ### Basic Usage
@@ -151,7 +162,7 @@ This performs fast checks including:
 ```
 ONNX Export Validation
 ============================================================
-[OK] model_input_dim: Model input_dim = 13
+[OK] model_input_dim: Model input_dim = 13  # 11 sensors + 2 context features
 [OK] model_output_dim: Model output_dim = 11
 [WARNING] config_window_size: Missing window_size_in, will need to specify sequence_length
 [OK] model_eval_mode: Model in eval mode
@@ -321,7 +332,7 @@ Exported models include comprehensive metadata in `model.metadata.json`:
   "model": {
     "class": "InformerModel",
     "module": "airtrace.models.informer",
-    "input_dim": 13,
+    "input_dim": 13,  # Varies based on sensors + context features in transform config
     "output_dim": 11,
     "profile": "informer"
   },

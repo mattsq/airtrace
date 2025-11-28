@@ -1,7 +1,7 @@
 defaults:
   - override /data: synthetic_cruise
   - override /model: timer
-  - override /transforms: zscore_diff
+  - override /transforms: zscore_diff_with_context
   - override /task: multi_step
   - override /train: default
 
