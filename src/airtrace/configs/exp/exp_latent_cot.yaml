@@ -1,0 +1,21 @@
+defaults:
+  - override /data: qantas_737
+  - override /model: latent_cot
+  - override /transforms: zscore_diff_with_context
+  - override /task: cot_one_step
+  - override /train: default
+
+exp_name: "latent_cot_zscore_one_step"
+seed: 123
+
+# Optional: Override model params for this experiment
+# model:
+#   params:
+#     latent_dim: 512
+#     max_ponder_steps: 15
+#     act_loss_weight: 0.02
+
+# Optional: Override task params for this experiment
+# task:
+#   act_loss_weight: 0.02
+#   act_warmup_steps: 100

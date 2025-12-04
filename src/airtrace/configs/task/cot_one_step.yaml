@@ -1,0 +1,17 @@
+# @package _global_
+
+task:
+  name: cot_one_step
+  loss: mse
+  metrics:
+    - rmse
+    - mae
+    - mape
+
+  # One-step prediction: predict x[t+1] from x[:t]
+  horizon: 1
+
+  # ACT loss configuration
+  act_loss_weight: 0.01  # Weight for Adaptive Computation Time regularization
+  act_loss_schedule: constant  # Options: constant, linear_decay, cosine_decay
+  act_warmup_steps: 0  # Steps before applying full ACT loss

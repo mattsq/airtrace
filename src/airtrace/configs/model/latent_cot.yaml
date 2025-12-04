@@ -1,0 +1,26 @@
+# @package _global_
+
+model:
+  name: latent_cot
+  params:
+    # Latent space configuration
+    latent_dim: 256  # Dimension of latent reasoning space
+
+    # Encoder configuration
+    encoder_type: gru  # Options: "gru", "lstm", "mlp"
+    encoder_hidden_dim: 512
+    encoder_num_layers: 2
+
+    # Pondering configuration
+    ponder_hidden_dim: 512  # Hidden dim for ponder block MLPs
+    max_ponder_steps: 10  # Maximum number of pondering iterations
+    use_residual: true  # Use residual connections in ponder blocks
+
+    # Halting configuration
+    halting_threshold: 0.99  # Cumulative halt prob threshold (inference only)
+
+    # Loss weighting
+    act_loss_weight: 0.01  # Weight for Adaptive Computation Time regularization
+
+    # Regularization
+    ponder_dropout: 0.1

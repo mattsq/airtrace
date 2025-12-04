@@ -538,7 +538,7 @@ airtrace train --checkpoint path/to/checkpoint.ckpt exp=my_experiment
 
 ### Next Steps
 
-- **Explore models**: See [Model Registry](#model-registry) for 45+ available models
+- **Explore models**: See [Model Registry](#model-registry) for 48 available models
 - **Custom components**: See [Adding New Components](#adding-new-components)
 - **Advanced features**: Check `docs/architecture.md` for design details
 - **Experiment tracking**: Review `docs/experiments.md` for best practices
@@ -671,7 +671,7 @@ See [Synthetic Data Documentation](docs/synthetic_data.md) for details on the ph
 
 ## Model Registry
 
-AirTrace includes 47 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
+AirTrace includes 48 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
 
 ### Recurrent Neural Networks
 
@@ -679,6 +679,7 @@ AirTrace includes 47 registered models spanning from simple baselines to sophist
 |------------|-------|-------------|
 | `gru_ar` | `GRUARModel` | GRU-based autoregressive encoder with optional attention mechanism |
 | `lstm_ar` | `LSTMARModel` | LSTM-based autoregressive encoder with cell state for longer-term dependencies |
+| `latent_cot` | `LatentCOTModel` | Latent Chain-of-Thought model with adaptive computation time - iteratively refines latent representations via learned pondering with PonderNet-style halting mechanism before prediction |
 
 ### Sequence-to-Sequence Models
 

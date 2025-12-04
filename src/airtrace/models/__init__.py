@@ -31,6 +31,7 @@ from .frets import FreTSModel
 from .gru_ar import GRUARModel
 from .itransformer import iTransformerModel
 from .lag_llama import LagLlamaModel
+from .latent_cot import LatentCOTModel
 from .lstm_ar import LSTMARModel
 from .mamba2 import Mamba2Model
 from .mambats import MambaTSModel
@@ -85,6 +86,7 @@ __all__ = [
     "Mamba2Model",
     "MambaTSModel",
     "LagLlamaModel",
+    "LatentCOTModel",
     "DLinearModel",
     "NLinearModel",
     "TemporalFusionTransformer",
