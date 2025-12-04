@@ -53,6 +53,8 @@ class OneStepTask(Task):
 
         # Compute metrics
         metrics = self.compute_metrics(preds, targets)
+        loss, extra_metrics = self._apply_extras(output, loss, targets)
+        metrics.update(extra_metrics)
 
         return {
             "loss": loss,  # Tensor for backprop

@@ -1,7 +1,7 @@
 """Base classes for prediction tasks."""
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 
 import torch
 from omegaconf import DictConfig, OmegaConf
@@ -129,6 +129,58 @@ class Task(ABC):
             metrics["mse"] = torch.mean((preds - targets) ** 2).item()
 
         return metrics
+
+    def _apply_extras(
+        self,
+        output: Dict[str, Any],
+        loss: torch.Tensor,
+        targets: torch.Tensor,
+    ) -> Tuple[torch.Tensor, Dict[str, float]]:
+        """Augment loss/metrics with model extras (pondering, auxiliaries)."""
+
+        extras = output.get("extras", {}) if isinstance(output, dict) else {}
+        metrics: Dict[str, float] = {}
+
+        if not extras:
+            return loss, metrics
+
+        ponder_loss = extras.get("ponder_loss")
+        if ponder_loss is not None:
+            loss = loss + ponder_loss
+            if isinstance(ponder_loss, torch.Tensor):
+                metrics["ponder_loss"] = float(ponder_loss.detach())
+
+        ponder_cost = extras.get("ponder_cost")
+        if ponder_cost is not None:
+            if isinstance(ponder_cost, torch.Tensor):
+                ponder_cost = float(ponder_cost.detach())
+            metrics["ponder_cost"] = float(ponder_cost)
+
+        mean_steps = extras.get("mean_ponder_steps")
+        if mean_steps is not None:
+            if isinstance(mean_steps, torch.Tensor):
+                mean_steps = float(mean_steps.detach())
+            metrics["ponder_steps"] = float(mean_steps)
+
+        halt_distribution = extras.get("halt_distribution")
+        if isinstance(halt_distribution, torch.Tensor):
+            metrics["halt_prob_mean"] = float(halt_distribution.mean().detach())
+
+        aux_preds = extras.get("aux_preds")
+        aux_weight = float(extras.get("aux_weight", 0.0))
+        if aux_preds is not None and aux_weight > 0:
+            target_expanded = targets.unsqueeze(1).expand_as(aux_preds)
+            aux_loss = self.loss_fn(aux_preds, target_expanded)
+            if isinstance(aux_loss, torch.Tensor):
+                aux_loss = aux_loss.mean()
+            loss = loss + aux_weight * aux_loss
+            metrics["aux_loss"] = float(aux_loss.detach())
+
+        max_steps_used = extras.get("max_steps_used")
+        if max_steps_used is not None:
+            metrics["max_steps_used"] = float(max_steps_used)
+
+        return loss, metrics
 
     def __repr__(self):
         return (

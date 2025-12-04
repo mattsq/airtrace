@@ -32,6 +32,7 @@ from .gru_ar import GRUARModel
 from .itransformer import iTransformerModel
 from .lag_llama import LagLlamaModel
 from .lstm_ar import LSTMARModel
+from .latent_ponder import LatentPonderWrapper
 from .mamba2 import Mamba2Model
 from .mambats import MambaTSModel
 from .moderntcn import ModernTCNModel
@@ -60,6 +61,7 @@ __all__ = [
     # Deep learning models
     "GRUARModel",
     "LSTMARModel",
+    "LatentPonderWrapper",
     "GRUSeq2SeqModel",
     "LSTMSeq2SeqModel",
     "TCNModel",

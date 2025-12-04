@@ -80,6 +80,9 @@ class AnomalyTask(Task):
         pred_metrics = self.compute_metrics(preds, targets)
         metrics.update(pred_metrics)
 
+        loss, extra_metrics = self._apply_extras(output, loss, targets)
+        metrics.update(extra_metrics)
+
         return {
             "loss": loss,
             **metrics
@@ -129,6 +132,9 @@ class AnomalyTask(Task):
             # Standard metrics
             pred_metrics = self.compute_metrics(preds, targets)
             metrics.update(pred_metrics)
+
+            loss, extra_metrics = self._apply_extras(output, loss, targets)
+            metrics.update(extra_metrics)
 
             return {
                 "loss": loss,

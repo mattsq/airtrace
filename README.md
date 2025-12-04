@@ -671,7 +671,7 @@ See [Synthetic Data Documentation](docs/synthetic_data.md) for details on the ph
 
 ## Model Registry
 
-AirTrace includes 47 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
+AirTrace includes 48 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
 
 ### Recurrent Neural Networks
 
@@ -701,6 +701,12 @@ AirTrace includes 47 registered models spanning from simple baselines to sophist
 | `crossformer` | `CrossformerModel` | Crossformer - two-stage temporal then cross-dimension attention with DSW embeddings for explicit cross-sensor dependency modeling (ICLR 2023) |
 | `tft` | `TemporalFusionTransformer` | Temporal Fusion Transformer combining variable selection, LSTM encoders/decoders, and interpretable attention for multi-horizon forecasting |
 | `timexer` | `TimeXerModel` | TimeXer - transformer with explicit exogenous variable handling using dual patch-level and variate-level representations with global endogenous tokens bridging endogenous and exogenous information (NeurIPS 2024) |
+
+### Pondering & Wrapper Models
+
+| Model Name | Class | Description |
+|------------|-------|-------------|
+| `latent_ponder` | `LatentPonderWrapper` | Wraps any base predictor with latent ponder steps, adaptive halting, and optional auxiliary supervision for compute-aware refinement |
 
 ### Foundation Models
 
