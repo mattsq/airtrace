@@ -706,7 +706,7 @@ AirTrace includes 48 registered models spanning from simple baselines to sophist
 
 | Model Name | Class | Description |
 |------------|-------|-------------|
-| `latent_ponder` | `LatentPonderWrapper` | Wraps any base predictor with latent ponder steps, adaptive halting, and optional auxiliary supervision for compute-aware refinement |
+| `latent_ponder` | `LatentPonderWrapper` | Wraps any base predictor with latent ponder steps, adaptive halting, and optional TRM-style `(y, h)` refinement plus auxiliary supervision for compute-aware refinement |
 
 ### Foundation Models
 

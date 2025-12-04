@@ -66,6 +66,33 @@ def test_halting_bias_controls_depth():
     assert fast_steps.float().mean() < slow_steps.float().mean()
 
 
+def test_trm_mode_refines_predictions_and_tracks_halting():
+    torch.manual_seed(4)
+    inputs = _make_batch(batch_size=2, seq_len=6, dim=3)["x"]
+
+    model = LatentPonderWrapper(
+        input_dim=3,
+        output_dim=2,
+        base_model={"name": "gru_ar", "params": {"dropout": 0.0, "hidden_size": 16}},
+        trm_mode=True,
+        max_steps=2,
+        min_steps=2,
+        halt_bias=-10.0,
+        ponder_penalty=0.0,
+        refine_head="mlp",
+    )
+    model.eval()
+
+    base_only = model.base_model(inputs)
+    output = model(inputs)
+
+    assert output["preds"].shape == base_only["preds"].shape
+    # TRM refinement should change the draft relative to the initial base prediction
+    assert not torch.allclose(output["preds"], base_only["preds"])
+    assert output["extras"]["halt_distribution"].shape[1] == 2
+    assert torch.all(output["extras"]["ponder_steps"] >= 2)
+
+
 def test_latent_ponder_builds_from_config():
     cfg = OmegaConf.load("src/airtrace/configs/model/latent_ponder.yaml")
     model = build_model(cfg.model, input_dim=3, output_dim=2)
@@ -96,3 +123,24 @@ def test_task_applies_ponder_penalty():
     assert "ponder_steps" in result
     assert result["loss"].requires_grad
     assert result["ponder_cost"] >= 0
+
+
+def test_supervision_steps_respect_aux_selection():
+    torch.manual_seed(5)
+    model = LatentPonderWrapper(
+        input_dim=2,
+        output_dim=2,
+        max_steps=3,
+        min_steps=1,
+        aux_weight=0.5,
+        supervision_steps=[1, -1],
+    )
+    inputs = torch.randn(2, 4, 2)
+
+    output = model(inputs)
+
+    aux_preds = output["extras"].get("aux_preds")
+    assert aux_preds is not None
+    # We expect one early supervision snapshot and one final snapshot
+    assert aux_preds.shape[1] == 2
+    assert aux_preds.shape[-1] == 2
