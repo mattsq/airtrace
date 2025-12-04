@@ -17,3 +17,6 @@ model:
     halt_bias: 0.0
     max_eval_steps: 4
     dropout: 0.1
+    trm_mode: false
+    refine_head: mlp
+    supervision_steps: null
