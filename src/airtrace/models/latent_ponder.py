@@ -129,7 +129,7 @@ class LatentPonderWrapper(ARBaseModel):
             active = ~halted
             new_halts = active & (decision | (step + 1 == max_steps))
             if new_halts.any():
-                final_h[new_halts] = h[new_halts]
+                final_h = torch.where(new_halts.unsqueeze(-1), h, final_h)
                 steps_taken[new_halts] = step + 1
             halted = halted | new_halts
 
@@ -137,7 +137,7 @@ class LatentPonderWrapper(ARBaseModel):
                 aux_preds.append(self._decode(h, pred_len))
 
         if not halted.all():
-            final_h[~halted] = h[~halted]
+            final_h = torch.where((~halted).unsqueeze(-1), h, final_h)
             steps_taken[~halted] = float(max_steps)
 
         preds = self._decode(final_h, pred_len)
