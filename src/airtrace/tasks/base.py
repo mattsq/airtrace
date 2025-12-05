@@ -7,6 +7,8 @@ import torch
 import torch.nn.functional as F
 from omegaconf import DictConfig, OmegaConf
 
+from airtrace.models.halting_losses import pondernet_loss, trm_halting_loss
+
 
 class Task(ABC):
     """Base class for all prediction tasks.
@@ -100,12 +102,8 @@ class Task(ABC):
 
         return loss_map[loss_name]
 
-    def _per_example_loss(self, preds: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        """Compute element-wise loss averaged per example.
-
-        This mirrors the configured loss_fn but returns a loss per batch
-        element rather than a single scalar.
-        """
+    def _elementwise_loss(self, preds: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        """Compute loss with no reduction over batch or sequence dimensions."""
 
         if self.loss_name in {"mae"}:
             losses = F.l1_loss(preds, targets, reduction="none")
@@ -116,6 +114,17 @@ class Task(ABC):
         else:
             # Default to MSE (covers "mse" and "nll" alias)
             losses = F.mse_loss(preds, targets, reduction="none")
+
+        return losses
+
+    def _per_example_loss(self, preds: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        """Compute element-wise loss averaged per example.
+
+        This mirrors the configured loss_fn but returns a loss per batch
+        element rather than a single scalar.
+        """
+
+        losses = self._elementwise_loss(preds, targets)
 
         if losses.ndim > 1:
             reduce_dims = tuple(range(1, losses.ndim))
@@ -171,14 +180,32 @@ class Task(ABC):
         halting_mode = extras.get("halting_mode")
         halt_logits = extras.get("halt_logits")
         step_preds = extras.get("step_preds")
+        ponder_penalty = extras.get("ponder_penalty")
+        halting_weight = float(extras.get("halting_weight", 1.0))
 
-        if halting_mode == "pondernet" and halt_logits is not None and step_preds is not None:
-            ponder_penalty = float(extras.get("ponder_penalty", 0.0))
+        if halting_mode in {None, "none"}:
+            ponder_loss = extras.get("ponder_loss")
+            if ponder_loss is not None:
+                loss = loss + ponder_loss
+                if isinstance(ponder_loss, torch.Tensor):
+                    metrics["ponder_loss"] = float(ponder_loss.detach())
 
-            per_step_losses = []
-            for t in range(step_preds.shape[1]):
-                per_step_losses.append(self._per_example_loss(step_preds[:, t], targets))
-            per_step_losses_tensor = torch.stack(per_step_losses, dim=1)  # [B, T]
+        elif halting_mode == "trm" and halt_logits is not None and step_preds is not None:
+            halting_loss = trm_halting_loss(halt_logits, step_preds, targets)
+            total_halting_loss = halting_weight * halting_loss
+            loss = loss + total_halting_loss
+            metrics["halting_loss"] = float(total_halting_loss.detach())
+
+        elif halting_mode == "pondernet" and halt_logits is not None and step_preds is not None:
+            ponder_penalty_value = float(ponder_penalty if ponder_penalty is not None else 0.0)
+            loss = pondernet_loss(
+                halt_logits=halt_logits,
+                step_preds=step_preds,
+                targets=targets,
+                base_loss_fn=self._elementwise_loss,
+                ponder_penalty=ponder_penalty_value,
+            )
+            metrics["pondernet_loss"] = float(loss.detach())
 
             q = torch.sigmoid(halt_logits)
             c = 1 - q
@@ -192,42 +219,11 @@ class Task(ABC):
             p_halt = q * c_prefix
             p_rest = c_prefix[:, -1]
 
-            exp_task_loss = (p_halt * per_step_losses_tensor).sum(dim=1).mean()
-            steps = torch.arange(1, halt_logits.shape[1] + 1, device=halt_logits.device, dtype=halt_logits.dtype)
+            steps = torch.arange(
+                1, halt_logits.shape[1] + 1, device=halt_logits.device, dtype=halt_logits.dtype
+            )
             exp_steps = (p_halt * steps).sum(dim=1) + p_rest * steps[-1]
-            exp_steps_mean = exp_steps.mean()
-
-            loss = exp_task_loss + ponder_penalty * exp_steps_mean
-            metrics["pondernet_loss"] = float(loss.detach())
-            metrics["ponder_exp_steps"] = float(exp_steps_mean.detach())
-
-        elif halting_mode == "trm" and halt_logits is not None and step_preds is not None:
-            per_step_losses = []
-            for t in range(step_preds.shape[1]):
-                per_step_losses.append(self._per_example_loss(step_preds[:, t], targets))
-            per_step_losses_tensor = torch.stack(per_step_losses, dim=1)  # [B, T]
-
-            best_step = per_step_losses_tensor.argmin(dim=1)
-            target_probs = torch.zeros_like(halt_logits)
-            target_probs.scatter_(1, best_step.unsqueeze(1), 1.0)
-
-            q = torch.sigmoid(halt_logits)
-            bce = F.binary_cross_entropy(q, target_probs)
-
-            entropy = -(q * (q + 1e-6).log() + (1 - q) * (1 - q + 1e-6).log())
-            halting_entropy = entropy.mean()
-
-            halting_weight = float(extras.get("halting_weight", 1.0))
-            halting_loss = halting_weight * (bce + 0.01 * halting_entropy)
-            loss = loss + halting_loss
-            metrics["halting_loss"] = float(halting_loss.detach())
-
-        else:
-            ponder_loss = extras.get("ponder_loss")
-            if ponder_loss is not None and halting_mode in {None, "none"}:
-                loss = loss + ponder_loss
-                if isinstance(ponder_loss, torch.Tensor):
-                    metrics["ponder_loss"] = float(ponder_loss.detach())
+            metrics["ponder_exp_steps"] = float(exp_steps.mean().detach())
 
         ponder_cost = extras.get("ponder_cost")
         if ponder_cost is not None:
