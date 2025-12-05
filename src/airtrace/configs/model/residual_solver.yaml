@@ -1,0 +1,19 @@
+# @package _global_
+
+model:
+  name: residual_solver
+  params:
+    hidden_dim: 128
+    residual_hidden: 128
+    update_hidden: 128
+    n_residual_layers: 2
+    n_update_layers: 2
+    max_steps: 20
+    residual_halt_threshold: 0.01
+    residual_bonus_logit: 1.0
+    halt_eps: 1.0e-6
+    lambda_step: 1.0
+    lambda_consistency: 0.1
+    lambda_compute: 0.01
+    halt_prior_p: 0.2
+    halt_bias: 0.0

@@ -671,7 +671,7 @@ See [Synthetic Data Documentation](docs/synthetic_data.md) for details on the ph
 
 ## Model Registry
 
-AirTrace includes 48 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
+AirTrace includes 49 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
 
 ### Recurrent Neural Networks
 
@@ -707,6 +707,7 @@ AirTrace includes 48 registered models spanning from simple baselines to sophist
 | Model Name | Class | Description |
 |------------|-------|-------------|
 | `latent_ponder` | `LatentPonderWrapper` | Wraps any base predictor with latent ponder steps, adaptive halting, and optional TRM-style `(y, h)` refinement plus auxiliary supervision for compute-aware refinement |
+| `residual_solver` | `ResidualSolver` | Iterative residual-refinement solver with residual-aware halting, stepwise loss weighting, and latent GRU updates for compute–accuracy trade-offs |
 
 ### Foundation Models
 
