@@ -297,7 +297,9 @@ class LatentPonderWrapper(ARBaseModel):
         ponder_cost = self.ponder_penalty * steps_taken.mean()
         halting_regularizer = halt_probs.clamp_min(1e-6).log().mean().neg()
         ponder_loss = ponder_cost + halting_regularizer
-        ponder_loss_entry = ponder_loss if self.halting_mode == "none" else ponder_loss.detach()
+        ponder_loss_entry = (
+            ponder_loss if self.halting_mode == "none" else torch.zeros((), device=h.device)
+        )
 
         extras: Dict[str, Any] = {
             "base_extras": base_output.get("extras", {}),
