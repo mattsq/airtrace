@@ -19,6 +19,9 @@ def trm_halting_loss(
     """
     B, T, pred_len, D = step_preds.shape
 
+    if targets.dim() >= 3:
+        targets = targets.argmax(dim=-1)
+
     with torch.no_grad():
         step_correct = []
         for t in range(T):
