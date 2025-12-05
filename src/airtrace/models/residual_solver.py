@@ -135,9 +135,8 @@ class ResidualSolver(ARBaseModel):
         self.halting_head = nn.Linear(hidden_dim + output_dim + 1 + hidden_dim, 1)
         nn.init.constant_(self.halting_head.bias, halt_bias)
 
-    def _init_state(self, x: torch.Tensor) -> SolverState:
-        x_summary = x.mean(dim=1)
-        h0 = torch.tanh(self.input_proj(x_summary))
+    def _init_state(self, x_features: torch.Tensor) -> SolverState:
+        h0 = x_features
         y0 = self.initial_decoder(h0)
         r0 = torch.zeros_like(y0)
         return SolverState(h=h0, y=y0, r=r0, step=0)
@@ -152,12 +151,12 @@ class ResidualSolver(ARBaseModel):
         logits = logits + self.config.residual_bonus_logit * small_residual
         return logits
 
-    def _solver_step(self, x_summary: torch.Tensor, state: SolverState) -> SolverState:
-        residual_inp = torch.cat([state.y, x_summary, state.h], dim=-1)
+    def _solver_step(self, x_features: torch.Tensor, state: SolverState) -> SolverState:
+        residual_inp = torch.cat([state.y, x_features, state.h], dim=-1)
         r_t = self.residual_net(residual_inp)
         delta = self.update_net(torch.cat([r_t, state.h], dim=-1))
         y_next = state.y + delta
-        h_inp = torch.cat([x_summary, y_next], dim=-1)
+        h_inp = torch.cat([x_features, y_next], dim=-1)
         h_next = self.hidden_update(h_inp, state.h)
         return SolverState(h=h_next, y=y_next, r=r_t, step=state.step + 1)
 
@@ -179,7 +178,8 @@ class ResidualSolver(ARBaseModel):
         del context
         batch, _, _ = x.shape
         x_summary = x.mean(dim=1)
-        state = self._init_state(x)
+        x_features = torch.tanh(self.input_proj(x_summary))
+        state = self._init_state(x_features)
 
         step_preds: List[torch.Tensor] = []
         residuals: List[torch.Tensor] = []
@@ -190,7 +190,7 @@ class ResidualSolver(ARBaseModel):
             halt_logits.append(logits)
             step_preds.append(state.y)
             residuals.append(state.r)
-            state = self._solver_step(x_summary, state)
+            state = self._solver_step(x_features, state)
 
         halt_logits_tensor = torch.stack(halt_logits, dim=1)
         step_preds_tensor = torch.stack(step_preds, dim=1)  # [B, T, D]
@@ -217,7 +217,8 @@ class ResidualSolver(ARBaseModel):
     def inference(self, x: torch.Tensor, halt_threshold: float = 0.9) -> Tuple[torch.Tensor, torch.Tensor]:
         batch, _, _ = x.shape
         x_summary = x.mean(dim=1)
-        state = self._init_state(x)
+        x_features = torch.tanh(self.input_proj(x_summary))
+        state = self._init_state(x_features)
 
         survival = torch.ones(batch, device=x.device)
         mass = torch.zeros(batch, device=x.device)
@@ -238,7 +239,7 @@ class ResidualSolver(ARBaseModel):
             if torch.all(mass >= halt_threshold):
                 break
 
-            state = self._solver_step(x_summary, state)
+            state = self._solver_step(x_features, state)
 
         if torch.any(mass < 1 - self.config.halt_eps):
             residual_mass = 1 - mass
