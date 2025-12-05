@@ -143,6 +143,7 @@ class LatentPonderWrapper(ARBaseModel):
         refine_head: str = "mlp",
         supervision_steps: Optional[Sequence[int]] = None,
         halting_mode: str = "none",  # "none" | "pondernet" | "trm"
+        halting_weight: float = 1.0,
         **kwargs: Any,
     ) -> None:
         super().__init__(input_dim, output_dim, **kwargs)
@@ -162,6 +163,7 @@ class LatentPonderWrapper(ARBaseModel):
         self.supervision_steps = list(supervision_steps) if supervision_steps is not None else None
         assert halting_mode in {"none", "pondernet", "trm"}
         self.halting_mode = halting_mode
+        self.halting_weight = halting_weight
 
         self.encoder = nn.Sequential(
             nn.Linear(output_dim, hidden_dim),
@@ -307,6 +309,9 @@ class LatentPonderWrapper(ARBaseModel):
             "mean_ponder_steps": steps_taken.mean().detach(),
             "ponder_cost": ponder_cost.detach(),
             "ponder_loss": ponder_loss_entry,
+            "ponder_penalty": float(self.ponder_penalty),
+            "halting_weight": float(self.halting_weight),
+            "halting_mode": self.halting_mode,
             "max_steps_used": float(max_steps),
         }
 
