@@ -293,14 +293,20 @@ class LatentPonderWrapper(ARBaseModel):
         halt_logits = torch.stack(halt_logits_list, dim=1)
         halt_probs = torch.sigmoid(halt_logits)
         step_preds_tensor = torch.stack(step_preds, dim=1)
+        ponder_cost = self.ponder_penalty * steps_taken.mean()
+        halting_regularizer = halt_probs.clamp_min(1e-6).log().mean().neg()
+        ponder_loss = ponder_cost + halting_regularizer
 
         extras: Dict[str, Any] = {
             "base_extras": base_output.get("extras", {}),
             "halt_logits": halt_logits,
             "halt_probs": halt_probs,
+            "halt_distribution": halt_probs.detach(),
             "step_preds": step_preds_tensor,
             "ponder_steps": steps_taken.detach(),
             "mean_ponder_steps": steps_taken.mean().detach(),
+            "ponder_cost": ponder_cost.detach(),
+            "ponder_loss": ponder_loss,
             "max_steps_used": float(max_steps),
         }
 
