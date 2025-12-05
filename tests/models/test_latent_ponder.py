@@ -104,6 +104,8 @@ def test_latent_ponder_builds_from_config():
     assert output["preds"].shape[0] == data.shape[0]
     assert "ponder_cost" in output["extras"]
     assert output["extras"]["halt_distribution"].shape[1] == cfg.model.params.max_steps
+    assert model.halting_mode == cfg.model.params.halting_mode
+    assert model.halting_weight == cfg.model.params.halting_weight
 
 
 def test_task_applies_ponder_penalty():

@@ -20,3 +20,5 @@ model:
     trm_mode: false
     refine_head: mlp
     supervision_steps: null
+    halting_mode: none
+    halting_weight: 1.0
