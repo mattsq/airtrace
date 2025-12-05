@@ -143,6 +143,7 @@ class LatentPonderWrapper(ARBaseModel):
         refine_head: str = "mlp",
         supervision_steps: Optional[Sequence[int]] = None,
         halting_mode: str = "none",  # "none" | "pondernet" | "trm"
+        halting_weight: float = 1.0,
         **kwargs: Any,
     ) -> None:
         super().__init__(input_dim, output_dim, **kwargs)
@@ -162,6 +163,7 @@ class LatentPonderWrapper(ARBaseModel):
         self.supervision_steps = list(supervision_steps) if supervision_steps is not None else None
         assert halting_mode in {"none", "pondernet", "trm"}
         self.halting_mode = halting_mode
+        self.halting_weight = halting_weight
 
         self.encoder = nn.Sequential(
             nn.Linear(output_dim, hidden_dim),
@@ -256,7 +258,6 @@ class LatentPonderWrapper(ARBaseModel):
             step_preds.append(current_pred)
 
             if self.training and self.halting_mode in {"pondernet", "trm"}:
-                prob = torch.sigmoid(logit)
                 decision = torch.zeros_like(logit, dtype=torch.bool)
             elif not self.training and self.halting_mode == "trm":
                 prob = torch.sigmoid(logit)
@@ -296,6 +297,7 @@ class LatentPonderWrapper(ARBaseModel):
         ponder_cost = self.ponder_penalty * steps_taken.mean()
         halting_regularizer = halt_probs.clamp_min(1e-6).log().mean().neg()
         ponder_loss = ponder_cost + halting_regularizer
+        ponder_loss_entry = ponder_loss if self.halting_mode == "none" else ponder_loss.detach()
 
         extras: Dict[str, Any] = {
             "base_extras": base_output.get("extras", {}),
@@ -306,7 +308,10 @@ class LatentPonderWrapper(ARBaseModel):
             "ponder_steps": steps_taken.detach(),
             "mean_ponder_steps": steps_taken.mean().detach(),
             "ponder_cost": ponder_cost.detach(),
-            "ponder_loss": ponder_loss,
+            "ponder_loss": ponder_loss_entry,
+            "ponder_penalty": float(self.ponder_penalty),
+            "halting_weight": float(self.halting_weight),
+            "halting_mode": self.halting_mode,
             "max_steps_used": float(max_steps),
         }
 

@@ -1,4 +1,5 @@
 import torch
+import torch
 from omegaconf import OmegaConf
 
 from airtrace.models.latent_ponder import LatentPonderWrapper
@@ -123,6 +124,49 @@ def test_task_applies_ponder_penalty():
     assert "ponder_steps" in result
     assert result["loss"].requires_grad
     assert result["ponder_cost"] >= 0
+
+
+def test_trm_mode_uses_halting_loss_in_training():
+    torch.manual_seed(7)
+    model = LatentPonderWrapper(
+        input_dim=3,
+        output_dim=3,
+        trm_mode=True,
+        halting_mode="trm",
+        max_steps=2,
+        min_steps=1,
+        halt_bias=0.0,
+        dropout=0.0,
+    )
+    task = OneStepTask({"loss": "mse", "metrics": []})
+    batch = _make_batch(batch_size=2, seq_len=4, dim=3)
+
+    result = task.training_step(batch, model)
+
+    assert "halting_loss" in result
+    assert "ponder_loss" not in result
+    assert result["loss"].requires_grad
+
+
+def test_pondernet_replaces_task_loss_with_expected_objective():
+    torch.manual_seed(8)
+    model = LatentPonderWrapper(
+        input_dim=2,
+        output_dim=2,
+        halting_mode="pondernet",
+        max_steps=3,
+        min_steps=1,
+        ponder_penalty=0.1,
+        dropout=0.0,
+    )
+    task = OneStepTask({"loss": "mae", "metrics": []})
+    batch = _make_batch(batch_size=2, seq_len=3, dim=2)
+
+    result = task.training_step(batch, model)
+
+    assert "pondernet_loss" in result
+    assert abs(result["loss"].item() - result["pondernet_loss"]) < 1e-5
+    assert "ponder_loss" not in result
 
 
 def test_supervision_steps_respect_aux_selection():
