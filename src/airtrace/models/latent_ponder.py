@@ -142,6 +142,7 @@ class LatentPonderWrapper(ARBaseModel):
         trm_mode: bool = False,
         refine_head: str = "mlp",
         supervision_steps: Optional[Sequence[int]] = None,
+        halting_mode: str = "none",  # "none" | "pondernet" | "trm"
         **kwargs: Any,
     ) -> None:
         super().__init__(input_dim, output_dim, **kwargs)
@@ -159,6 +160,8 @@ class LatentPonderWrapper(ARBaseModel):
         self.trm_mode = trm_mode
         self.refine_head_mode = refine_head
         self.supervision_steps = list(supervision_steps) if supervision_steps is not None else None
+        assert halting_mode in {"none", "pondernet", "trm"}
+        self.halting_mode = halting_mode
 
         self.encoder = nn.Sequential(
             nn.Linear(output_dim, hidden_dim),
@@ -226,7 +229,8 @@ class LatentPonderWrapper(ARBaseModel):
         steps_taken = torch.zeros(h.shape[0], device=h.device)
         final_h = torch.zeros_like(h)
         final_y = torch.zeros_like(base_preds) if self.trm_mode else None
-        halt_probs = []
+        halt_logits_list: List[torch.Tensor] = []
+        step_preds: List[torch.Tensor] = []
         aux_preds = []
 
         max_steps = self._get_effective_max_steps()
@@ -248,13 +252,24 @@ class LatentPonderWrapper(ARBaseModel):
                 current_pred = self._decode(h, pred_len)
 
             logit = self.halt_head(halt_features).squeeze(-1)
-            prob = torch.sigmoid(logit)
-            halt_probs.append(prob)
+            halt_logits_list.append(logit)
+            step_preds.append(current_pred)
 
-            if step + 1 < self.min_steps:
-                decision = torch.zeros_like(prob, dtype=torch.bool)
+            if self.training and self.halting_mode in {"pondernet", "trm"}:
+                prob = torch.sigmoid(logit)
+                decision = torch.zeros_like(logit, dtype=torch.bool)
+            elif not self.training and self.halting_mode == "trm":
+                prob = torch.sigmoid(logit)
+                if step + 1 < self.min_steps:
+                    decision = torch.zeros_like(prob, dtype=torch.bool)
+                else:
+                    decision = prob > 0.5
             else:
-                decision = torch.bernoulli(prob).bool()
+                prob = torch.sigmoid(logit)
+                if step + 1 < self.min_steps:
+                    decision = torch.zeros_like(prob, dtype=torch.bool)
+                else:
+                    decision = torch.bernoulli(prob).bool()
 
             active = ~halted
             new_halts = active & (decision | (step + 1 == max_steps))
@@ -271,23 +286,21 @@ class LatentPonderWrapper(ARBaseModel):
             final_h = torch.where((~halted).unsqueeze(-1), h, final_h)
             if final_y is not None and state is not None:
                 final_y = torch.where((~halted).view(-1, 1, 1), state.y, final_y)
-            steps_taken[~halted] = float(max_steps)
+        steps_taken[~halted] = float(max_steps)
 
         preds = final_y if final_y is not None else self._decode(final_h, pred_len)
 
-        halt_distribution = torch.stack(halt_probs, dim=1)
-        ponder_cost = self.ponder_penalty * steps_taken.mean()
-        # Encourage confident halting while keeping compute small
-        halting_regularizer = (halt_distribution.clamp_min(1e-6).log().mean().neg())
-        ponder_loss = ponder_cost + halting_regularizer
+        halt_logits = torch.stack(halt_logits_list, dim=1)
+        halt_probs = torch.sigmoid(halt_logits)
+        step_preds_tensor = torch.stack(step_preds, dim=1)
 
         extras: Dict[str, Any] = {
             "base_extras": base_output.get("extras", {}),
-            "halt_distribution": halt_distribution.detach(),
+            "halt_logits": halt_logits,
+            "halt_probs": halt_probs,
+            "step_preds": step_preds_tensor,
             "ponder_steps": steps_taken.detach(),
             "mean_ponder_steps": steps_taken.mean().detach(),
-            "ponder_cost": ponder_cost.detach(),
-            "ponder_loss": ponder_loss,
             "max_steps_used": float(max_steps),
         }
 
