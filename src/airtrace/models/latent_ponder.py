@@ -256,7 +256,6 @@ class LatentPonderWrapper(ARBaseModel):
             step_preds.append(current_pred)
 
             if self.training and self.halting_mode in {"pondernet", "trm"}:
-                prob = torch.sigmoid(logit)
                 decision = torch.zeros_like(logit, dtype=torch.bool)
             elif not self.training and self.halting_mode == "trm":
                 prob = torch.sigmoid(logit)
@@ -296,6 +295,7 @@ class LatentPonderWrapper(ARBaseModel):
         ponder_cost = self.ponder_penalty * steps_taken.mean()
         halting_regularizer = halt_probs.clamp_min(1e-6).log().mean().neg()
         ponder_loss = ponder_cost + halting_regularizer
+        ponder_loss_entry = ponder_loss if self.halting_mode == "none" else ponder_loss.detach()
 
         extras: Dict[str, Any] = {
             "base_extras": base_output.get("extras", {}),
@@ -306,7 +306,7 @@ class LatentPonderWrapper(ARBaseModel):
             "ponder_steps": steps_taken.detach(),
             "mean_ponder_steps": steps_taken.mean().detach(),
             "ponder_cost": ponder_cost.detach(),
-            "ponder_loss": ponder_loss,
+            "ponder_loss": ponder_loss_entry,
             "max_steps_used": float(max_steps),
         }
 
