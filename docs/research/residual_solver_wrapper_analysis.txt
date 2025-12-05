@@ -1,0 +1,231 @@
+================================================================================
+AirTrace Model Registry Analysis for Residual Solver Wrapper Refactoring
+================================================================================
+Date: 2025-12-05
+Purpose: Quantify effort required to standardize all models for wrapper pattern
+Methodology: Programmatic analysis of 49 registered models
+
+================================================================================
+EXECUTIVE SUMMARY
+================================================================================
+
+Total models analyzed: 49
+Trainable models: 32 (65.3%)
+Baseline models: 17 (34.7%)
+
+Wrapper compatibility:
+  - Ready or easy to adapt: 15/32 (46.9%)
+  - Needs significant work: 17/32 (53.1%)
+
+Total effort to standardize all trainable models: ~180 hours (~22.5 dev days)
+
+Recommendation: Option C (status quo) or Option B (pluggable encoder)
+                 DO NOT pursue Option A (full wrapper) - poor ROI
+
+================================================================================
+DETAILED BREAKDOWN
+================================================================================
+
+CATEGORY 1: Ready for Wrapper (6 models, 18.8%)
+Effort: ~2 hours per model (extract interface, add wrapper config)
+Total: 12 hours
+
+  ✅ autoformer                - AutoformerModel                (enc:✓ dec:✓)
+  ✅ fedformer                 - FEDformerModel                 (enc:✓ dec:✓)
+  ✅ gru_seq2seq               - GRUSeq2SeqModel                (enc:✓ dec:✓)
+  ✅ informer                  - InformerModel                  (enc:✓ dec:✓)
+  ✅ lstm_seq2seq              - LSTMSeq2SeqModel               (enc:✓ dec:✓)
+  ✅ mambats                   - MambaTSModel                   (enc:✓ head:✓)
+
+CATEGORY 2: Easy Adaptation (8 models, 25.0%)
+Effort: ~4 hours per model (refactor to expose encoder/decoder)
+Total: 32 hours
+
+  ⚠️  chronos_bolt              - ChronosBoltModel               (head only)
+  ⚠️  crossformer               - CrossformerModel               (encoder only)
+  ⚠️  lag_llama                 - LagLlamaModel                  (decoder only)
+  ⚠️  mamba2                    - Mamba2Model                    (head only)
+  ⚠️  moirai                    - MoiraiModel                    (head only)
+  ⚠️  nonstationary_transformer - NonStationaryTransformerModel  (encoder only)
+  ⚠️  patchtst                  - PatchTSTModel                  (head only)
+  ⚠️  timexer                   - TimeXerModel                   (head only)
+
+CATEGORY 3: Needs Refactoring (17 models, 53.1%)
+Effort: ~8 hours per model (significant restructuring)
+Total: 136 hours
+
+  ❌ cyclenet                  - CycleNetModel
+  ❌ dlinear                   - DLinearModel
+  ❌ frets                     - FreTSModel
+  ❌ gru_ar                    - GRUARModel                     ⚠️ POPULAR
+  ❌ itransformer              - iTransformerModel
+  ❌ lstm_ar                   - LSTMARModel
+  ❌ moderntcn                 - ModernTCNModel
+  ❌ nbeats                    - NBeatsModel
+  ❌ nlinear                   - NLinearModel
+  ❌ softs                     - SOFTS
+  ❌ tcn                       - TCNModel                       ⚠️ POPULAR
+  ❌ tft                       - TemporalFusionTransformer      ⚠️ SOTA
+  ❌ timemixer                 - TimeMixerModel
+  ❌ timer                     - TimerModel                     ⚠️ SOTA
+  ❌ timesnet                  - TimesNetModel                  ⚠️ SOTA
+  ❌ transformer               - TransformerModel               ⚠️ POPULAR
+  ❌ tsmixer                   - TSMixerModel
+
+CATEGORY 4: Existing Wrappers (1 model, 3.1%)
+Already implemented:
+
+  🔄 latent_ponder             - LatentPonderWrapper
+
+CATEGORY 5: Baseline Models (17 models, N/A)
+Non-trainable, not applicable for wrapper pattern:
+
+  ⊘  drift                     - DriftModel
+  ⊘  exponential_smoothing     - ExponentialSmoothingModel
+  ⊘  holt_linear_trend         - HoltLinearTrendModel
+  ⊘  holt_winters              - HoltWintersModel
+  ⊘  linear_ar                 - LinearARModel
+  ⊘  linear_trend              - LinearTrendModel
+  ⊘  mean                      - MeanModel
+  ⊘  median                    - MedianModel
+  ⊘  mlp_ar                    - MLPARModel
+  ⊘  moving_average            - MovingAverageModel
+  ⊘  persistence               - PersistenceModel
+  ⊘  polynomial_trend          - PolynomialTrendModel
+  ⊘  sarima                    - SARIMAModel
+  ⊘  seasonal_naive            - SeasonalNaiveModel
+  ⊘  theta                     - ThetaModel
+  ⊘  var                       - VARModel
+  ⊘  zero                      - ZeroModel
+
+================================================================================
+COST-BENEFIT ANALYSIS
+================================================================================
+
+Option A: Full Wrapper Refactoring
+  Costs:
+    - 180 hours of engineering time (~22.5 developer days)
+    - Breaking changes to 17 popular models
+    - Ongoing maintenance burden for standard interface
+    - Testing and validation overhead
+    - Documentation updates
+  Benefits:
+    - Consistency with latent_ponder pattern
+    - Ability to compose residual_solver with any base model
+    - Fair ablation studies (e.g., "gru vs gru+residual")
+
+  Code reuse in residual_solver:
+    - Only initial encoding step (~10% of model)
+    - Refinement loop (90%) is unique to residual solver
+
+  ROI Assessment: POOR
+    - Massive effort for minimal code reuse
+    - Benefits apply to <50% of models
+    - Breaks popular existing models
+
+Option B: Pluggable Encoder
+  Costs:
+    - ~20 hours to implement
+    - Slight increase in model complexity
+  Benefits:
+    - Some flexibility (MLP vs GRU vs Transformer initial encoding)
+    - No breaking changes
+    - Incremental improvement
+  ROI Assessment: GOOD
+    - Low effort, tangible benefit
+    - Can be added later if demand exists
+
+Option C: Status Quo (Standalone)
+  Costs:
+    - Inconsistency with latent_ponder
+  Benefits:
+    - Zero additional engineering effort
+    - Cleanest architecture for purpose-built model
+    - No breaking changes
+  ROI Assessment: EXCELLENT
+    - Immediate readiness
+    - Appropriate for residual solver's unique architecture
+
+================================================================================
+CRITICAL OBSERVATIONS
+================================================================================
+
+1. The wrapper pattern is NOT a good fit for most AirTrace models:
+   - 53.1% lack encoder/decoder separation
+   - Many SOTA models (timer, timesnet, tft) use integrated architectures
+   - Only seq2seq models naturally expose encoder/decoder
+
+2. Popular models require refactoring:
+   - gru_ar, lstm_ar (main RNN workhorses)
+   - transformer, tcn (core architectures)
+   - Modern SOTA models (timer, timesnet, tft)
+
+3. Foundation models have complex internal structure:
+   - chronos_bolt, moirai (tokenization, patching)
+   - lag_llama (diffusion sampling)
+   - Wrapping these would add significant complexity
+
+4. Residual solver's unique requirements:
+   - Needs residual estimation R(y, x, h)
+   - Needs update network U(r, h)
+   - Needs residual-aware halting Halt(h, r, ||r||)
+   - Only 10% overlap with base models (initial encoding)
+
+================================================================================
+RECOMMENDATION
+================================================================================
+
+**For immediate merge:**
+  ✅ Option C (Status Quo)
+     - Document rationale in enhanced docstring
+     - Explain design choice in review document
+     - No engineering effort required
+
+**For future enhancement (if users request flexibility):**
+  ✅ Option B (Pluggable Encoder)
+     - ~20 hours to implement
+     - Provides some architectural variety
+     - Backward compatible
+
+**Against full refactoring:**
+  ❌ Option A (Full Wrapper)
+     - ~180 hours is prohibitive
+     - Breaking changes to 53% of models
+     - Poor ROI: massive effort for ~10% code reuse
+     - Should only be considered as a separate strategic initiative
+       to standardize ALL models, not specific to residual_solver
+
+================================================================================
+IMPLEMENTATION NOTES
+================================================================================
+
+If Option B is pursued in the future:
+
+1. Add encoder_type parameter to ResidualSolver:
+   - "mlp" (default, current behavior)
+   - "gru" (GRU encoder)
+   - "transformer" (Transformer encoder)
+
+2. Conditional instantiation in __init__:
+   if encoder_type == "mlp":
+       self.input_proj = nn.Linear(input_dim, hidden_dim)
+   elif encoder_type == "gru":
+       self.input_proj = nn.GRU(input_dim, hidden_dim, ...)
+   # etc.
+
+3. Update configs/model/residual_solver.yaml:
+   Add encoder_type and encoder_params fields
+
+4. Update _init_state method:
+   Handle different encoder outputs (pooling strategies, etc.)
+
+5. Testing requirements:
+   - Test each encoder type
+   - Verify shapes match
+   - Check gradient flow
+
+Estimated effort: 20 hours
+
+================================================================================
+END OF ANALYSIS
+================================================================================
