@@ -343,6 +343,253 @@ The `residual_solver` complements `latent_ponder` well:
 
 Both models belong in the **Pondering & Wrapper Models** category (as listed in README.md).
 
+### 6.1 Design Discussion: Wrapper vs Standalone Architecture
+
+**Current State:** `residual_solver` is implemented as a **standalone model**, while `latent_ponder` is a **wrapper** that composes with base models. This asymmetry raises the question: should they follow the same pattern?
+
+#### Why `latent_ponder` Wraps and `residual_solver` Doesn't
+
+The architectural difference stems from **what gets reused vs. what's custom**:
+
+**`latent_ponder` (wrapper):**
+```python
+# REUSABLE from base model:
+encoder = base_model.encoder     # ✓ x → h0
+decoder = base_model.head        # ✓ h → y (called at every ponder step)
+update_logic = LatentPonderBlock # ✓ Generic h_{t+1} = f(h_t)
+
+# Key insight: 60-80% of computation comes from the base model
+```
+
+**`residual_solver` (standalone):**
+```python
+# REUSABLE from base model:
+initial_encoding = base_model.encoder  # ✓ x → h0 (only once)
+initial_decode = base_model.head       # ✓ h0 → y0 (only once)
+
+# CUSTOM to residual solver (90% of the model):
+residual_net = R(y, x, h) → r         # ✗ Unique
+update_net = U(r, h) → Δy             # ✗ Unique
+hidden_update = GRU(x, y, h) → h'     # ✗ Unique
+halting_head = Halt(h, r, ||r||)      # ✗ Unique
+
+# Key insight: Only 10-20% could be reused; refinement loop is novel
+```
+
+**Conclusion:** Wrapping provides minimal benefit for `residual_solver` because the refinement machinery is fundamentally different from standard encoder-decoder architectures.
+
+#### Proposal: Refactor as a Wrapper
+
+Despite the low reuse, there are **consistency and flexibility arguments** for adopting a wrapper pattern:
+
+##### Option A: Full Wrapper (Maximal Consistency)
+
+```python
+@register("residual_solver_wrapper")
+class ResidualSolverWrapper(ARBaseModel):
+    """Wraps a base model with iterative residual refinement and learned halting.
+
+    Architecture:
+    - Uses base model's encoder for initial state: x → h0
+    - Uses base model's decoder for initial prediction: h0 → y0
+    - Applies custom refinement loop with residual-aware halting
+    - Supports any base model that exposes encoder/decoder interface
+
+    Config example:
+        model:
+          name: residual_solver_wrapper
+          base_model:
+            name: gru_ar
+            hidden_dim: 128
+          solver_params:
+            max_steps: 20
+            residual_hidden: 128
+            ...
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        output_dim: int,
+        base_model_config: Dict[str, Any],
+        *,
+        hidden_dim: int = 128,
+        max_steps: int = 20,
+        # ... other solver params
+    ):
+        super().__init__(input_dim, output_dim)
+
+        # Build and possibly freeze base model
+        self.base_model = build_model(base_model_config, input_dim, output_dim)
+
+        # Extract reusable components
+        self.encoder = self.base_model.encoder if hasattr(...) else nn.Linear(...)
+        self.initial_decoder = self.base_model.head if hasattr(...) else nn.Linear(...)
+
+        # Custom refinement machinery
+        self.residual_net = _mlp(
+            in_dim=output_dim + input_dim + hidden_dim,
+            hidden_dim=residual_hidden,
+            out_dim=output_dim,
+            n_layers=n_residual_layers,
+            zero_last=True,
+        )
+        self.update_net = _mlp(...)
+        self.hidden_update = nn.GRUCell(...)
+        self.halting_head = nn.Linear(...)
+
+    def _init_state(self, x: torch.Tensor) -> SolverState:
+        # Use base model's encoder
+        if hasattr(self.base_model, 'encode'):
+            h0 = self.base_model.encode(x)  # Structured interface
+        else:
+            h0 = self.encoder(x.mean(dim=1))  # Fallback
+
+        y0 = self.initial_decoder(h0)
+        r0 = torch.zeros_like(y0)
+        return SolverState(h=h0, y=y0, r=r0, step=0)
+
+    # Rest of refinement loop unchanged
+    ...
+```
+
+**Pros:**
+- ✅ Consistent with `latent_ponder` pattern
+- ✅ Users can compare "gru_ar" vs "gru_ar + residual_solver" for fair ablations
+- ✅ Leverages pre-trained base models (if available)
+- ✅ Allows experimenting with different base architectures (GRU vs Transformer encoder)
+
+**Cons:**
+- ❌ Adds wrapper boilerplate (~50 lines)
+- ❌ Only ~10% of base model is actually reused
+- ❌ Requires defining a standard encoder/decoder interface for all base models
+- ❌ More complex to configure (nested config with `base_model` section)
+
+##### Option B: Pluggable Initial Encoding (Hybrid)
+
+Keep the standalone design but make the **initial encoding step** swappable:
+
+```python
+@register("residual_solver")
+class ResidualSolver(ARBaseModel):
+    def __init__(
+        self,
+        input_dim: int,
+        output_dim: int,
+        *,
+        encoder_type: str = "mlp",  # "mlp", "gru", "transformer"
+        encoder_params: Optional[Dict] = None,
+        # ... rest unchanged
+    ):
+        super().__init__(input_dim, output_dim)
+
+        # Pluggable encoder
+        if encoder_type == "mlp":
+            self.input_proj = nn.Linear(input_dim, hidden_dim)
+        elif encoder_type == "gru":
+            self.input_proj = nn.GRU(
+                input_dim, hidden_dim,
+                num_layers=encoder_params.get("layers", 1),
+                batch_first=True
+            )
+        elif encoder_type == "transformer":
+            self.input_proj = nn.TransformerEncoder(...)
+        else:
+            raise ValueError(f"Unknown encoder_type: {encoder_type}")
+
+        # Rest of model unchanged
+        self.initial_decoder = nn.Linear(hidden_dim, output_dim)
+        self.residual_net = _mlp(...)
+        ...
+
+    def _init_state(self, x: torch.Tensor) -> SolverState:
+        if isinstance(self.input_proj, nn.Linear):
+            h0 = torch.tanh(self.input_proj(x.mean(dim=1)))
+        elif isinstance(self.input_proj, nn.GRU):
+            _, h0 = self.input_proj(x)
+            h0 = h0[-1]  # Last layer
+        elif isinstance(self.input_proj, nn.TransformerEncoder):
+            encoded = self.input_proj(x)
+            h0 = encoded.mean(dim=1)
+
+        y0 = self.initial_decoder(h0)
+        r0 = torch.zeros_like(y0)
+        return SolverState(h=h0, y=y0, r=r0, step=0)
+```
+
+**Config example:**
+```yaml
+# configs/model/residual_solver_gru.yaml
+model:
+  name: residual_solver
+  params:
+    encoder_type: gru
+    encoder_params:
+      layers: 2
+    hidden_dim: 128
+    max_steps: 20
+    # ... rest
+```
+
+**Pros:**
+- ✅ Some flexibility without full wrapper complexity
+- ✅ Easier to implement (no nested configs)
+- ✅ Allows comparing MLP vs GRU vs Transformer initial encoding
+- ✅ Refinement loop remains clean and standalone
+
+**Cons:**
+- ❌ Still can't reuse pre-trained base models
+- ❌ Adds complexity to a single model class
+- ❌ Doesn't fully address the consistency concern
+
+##### Option C: Keep Standalone, Document Rationale (Status Quo)
+
+Explicitly document that `residual_solver` is **purposefully standalone** due to low reuse:
+
+Add to docstring:
+```python
+"""Residual solver with iterative refinement and learned halting.
+
+Unlike `latent_ponder` (which wraps base models), `residual_solver` is a
+standalone architecture because the refinement loop (residual estimation,
+output-space updates, residual-aware halting) is fundamentally different
+from standard encoder-decoder models. Only the initial encoding could be
+reused (~10% of computation), so wrapping provides minimal benefit while
+adding significant complexity.
+
+For consistency with other adaptive compute models, consider using
+`latent_ponder` to wrap a base predictor if you want to add adaptive
+depth without changing the core architecture.
+"""
+```
+
+**Pros:**
+- ✅ No code changes needed
+- ✅ Cleanest architecture (purpose-built)
+- ✅ Simplest to use and maintain
+
+**Cons:**
+- ❌ Inconsistent with `latent_ponder` pattern
+- ❌ Harder to do fair comparisons (different architectures)
+- ❌ Doesn't address categorical inconsistency
+
+#### Recommendation
+
+**For immediate merge:** Option C (document rationale) — the current design is sound and well-tested.
+
+**For long-term consistency:** Option B (pluggable encoder) — strikes a balance between flexibility and simplicity, and can be added incrementally without breaking changes.
+
+**For maximal flexibility:** Option A (full wrapper) — but only if:
+1. You expect users to want residual refinement with many different base architectures
+2. You're willing to define a standard encoder/decoder interface across all AirTrace models
+3. You value consistency over simplicity
+
+**Suggested next steps:**
+1. Merge current implementation (standalone) with documentation explaining the design choice
+2. Gather user feedback: do people want to use residual refinement with different encoders?
+3. If yes, implement Option B (pluggable encoder) in a follow-up PR
+4. If you decide consistency is paramount, refactor both `latent_ponder` and `residual_solver` to follow a unified wrapper pattern in a future release
+
 ---
 
 ## 7. Final Recommendations
@@ -381,12 +628,18 @@ Both models belong in the **Pondering & Wrapper Models** category (as listed in 
 
 ### Low Priority (Nice-to-Have)
 
-7. **🎨 Visualization utilities**
+7. **🔄 Consider wrapper refactoring** (see Section 6.1)
+   - **Short-term:** Add docstring explaining standalone design choice (Option C)
+   - **Medium-term:** Implement pluggable encoder (Option B) if users request flexibility
+   - **Long-term:** Full wrapper implementation (Option A) if consistency becomes critical
+   - Gather user feedback before committing to major refactoring
+
+8. **🎨 Visualization utilities**
    - Plot halting distributions during training (histogram of expected steps)
    - Visualize residual norms across refinement steps
    - Show prediction evolution `y_0 → y_1 → ... → y_T`
 
-8. **🔬 Ablation study configs**
+9. **🔬 Ablation study configs**
    - `residual_solver_no_consistency.yaml` (λ_consistency=0)
    - `residual_solver_no_compute.yaml` (λ_compute=0)
    - `residual_solver_fixed_depth.yaml` (max_steps=k, no halting)
@@ -409,7 +662,10 @@ The `residual_solver` implementation is **high-quality, well-tested, and aligned
 - ⚠️ Minimal inline documentation (medium impact)
 - ⚠️ Duplicate compute penalties (low impact)
 
-**Verdict:** **Approve with minor revisions.** The model is production-ready after addressing the loss integration issue (Recommendation #1).
+**Design Discussion:**
+- 🤔 Standalone vs wrapper architecture (Section 6.1): The current standalone design is sound, but differs from `latent_ponder`'s wrapper pattern. Three refactoring options are proposed, with recommendation to document the design choice in the short term and gather user feedback before committing to major changes.
+
+**Verdict:** **Approve with minor revisions.** The model is production-ready after addressing the loss integration issue (Recommendation #1). The wrapper vs standalone design discussion is informational and does not block merging.
 
 ---
 
