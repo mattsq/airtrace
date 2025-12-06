@@ -1,7 +1,7 @@
 """Model implementations."""
 
 from .autoformer import AutoformerModel
-from .base import ARBaseModel
+from .base import ARBaseModel, ResidualWrapperCompatible
 from .baselines import (
     DriftModel,
     ExponentialSmoothingModel,
@@ -59,6 +59,7 @@ __all__ = [
     "register",
     "build_model",
     "list_models",
+    "ResidualWrapperCompatible",
     # Deep learning models
     "GRUARModel",
     "LSTMARModel",

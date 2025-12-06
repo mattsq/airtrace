@@ -53,3 +53,7 @@ Wrapper can then:
 3. Optionally reuse `step` for models that can refine hidden state without re-encoding inputs.
 
 High-difficulty baselines likely warrant a lightweight Torch adapter (no gradients) rather than full integration unless iterative refinement on statistical models is a research goal.
+
+## Progress (2025-02-07)
+- Introduced a shared `ResidualWrapperCompatible` mixin that defines `encode`/`decode` hooks expected by a generic residual wrapper.
+- Refactored **gru_ar**, **lstm_ar**, and **tcn** to implement the mixin, exposing pooled latent representations and decoder reuse while keeping their original forwards for backward compatibility.

@@ -1,7 +1,7 @@
 """Base classes for autoregressive models."""
 
 from abc import ABC, abstractmethod
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -85,3 +85,24 @@ class ARBaseModel(nn.Module, ABC):
             f"  num_params={self.get_num_params():,}\n"
             f")"
         )
+
+
+class ResidualWrapperCompatible(ARBaseModel):
+    """Mixin for models that expose encoder/decoder hooks.
+
+    Iterative wrappers (e.g., residual solvers or pondering loops) can reuse
+    these hooks to obtain a pooled latent representation and repeatedly decode
+    refined predictions without re-encoding the input window.
+    """
+
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        """Return a latent representation and any encoder extras."""
+
+        raise NotImplementedError
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        """Decode predictions of length ``pred_len`` from a latent."""
+
+        raise NotImplementedError
