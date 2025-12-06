@@ -74,3 +74,6 @@ High-difficulty baselines likely warrant a lightweight Torch adapter (no gradien
 ## Progress (2025-02-11)
 - Refactored **moderntcn** to implement `ResidualWrapperCompatible`, exposing the convolutional backbone through `encode` and the projection head via `decode` while preserving its autoregressive single-step default.
 - Refactored **softs** to add `encode`/`decode` hooks that thread normalization statistics through the wrapper loop, guarding the configured horizon during decoding and maintaining de-normalized outputs.
+
+## Progress (2025-02-12)
+- Refactored **gru_seq2seq** and **lstm_seq2seq** to inherit from `ResidualWrapperCompatible`, exposing the RNN encoders via `encode` and reusing the stepwise decoder logic through `decode` to support residual pondering while retaining teacher-forcing behavior in the standard forward pass.

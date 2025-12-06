@@ -1,11 +1,11 @@
 """Sequence-to-Sequence encoder-decoder models."""
 
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
 
-from .base import ARBaseModel
+from .base import ResidualWrapperCompatible
 from .registry import register
 
 
@@ -176,7 +176,7 @@ class Seq2SeqDecoder(nn.Module):
 
 
 @register("gru_seq2seq")
-class GRUSeq2SeqModel(ARBaseModel):
+class GRUSeq2SeqModel(ResidualWrapperCompatible):
     """GRU-based Seq2Seq encoder-decoder model.
 
     Uses a GRU encoder to encode the input sequence and a GRU decoder
@@ -236,41 +236,41 @@ class GRUSeq2SeqModel(ARBaseModel):
             use_attention=use_attention
         )
 
-    def forward(
-        self,
-        x: torch.Tensor,
-        context: Optional[torch.Tensor] = None,
-        target: Optional[torch.Tensor] = None,
-        pred_len: int = 1,
-        **kwargs
-    ) -> Dict[str, torch.Tensor]:
-        """Forward pass.
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[Tuple[torch.Tensor, torch.Tensor], Dict[str, torch.Tensor]]:
+        """Encode input sequence for reuse by residual wrappers."""
 
-        Args:
-            x: Input tensor [B, T_in, D_in]
-            context: Optional context tensor
-            target: Target tensor for teacher forcing [B, T_out, D_out]
-            pred_len: Number of steps to predict (default: 1)
-            **kwargs: Additional arguments
-
-        Returns:
-            Dictionary with 'preds' and 'extras'
-        """
-        B, T_in, D_in = x.shape
-
-        # Encode input sequence
+        del context
         encoder_outputs, hidden = self.encoder(x)
+        extras = {"encoder_outputs": encoder_outputs, "hidden": hidden}
+        return (encoder_outputs, hidden), extras
 
-        # Initialize decoder input (last input value projected to output_dim)
-        # Simple approach: use zeros or learn an embedding
-        decoder_input = torch.zeros(B, 1, self.output_dim, device=x.device, dtype=x.dtype)
+    def decode(
+        self,
+        latent: Tuple[torch.Tensor, torch.Tensor],
+        pred_len: int,
+        target: Optional[torch.Tensor] = None,
+        return_extras: bool = False
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, Dict[str, torch.Tensor]]]:
+        """Decode predictions from encoded latent state.
 
-        # Decode step by step
+        When ``target`` is provided, teacher forcing follows the original
+        stochastic schedule used by the single-shot forward pass.
+        """
+
+        encoder_outputs, hidden = latent
+        decoder_input = torch.zeros(
+            encoder_outputs.size(0),
+            1,
+            self.output_dim,
+            device=encoder_outputs.device,
+            dtype=encoder_outputs.dtype,
+        )
+
         predictions = []
         attention_weights = []
-
         for t in range(pred_len):
-            # Decode one step
             output, hidden, attn_weights = self.decoder(
                 decoder_input, hidden, encoder_outputs
             )
@@ -279,37 +279,47 @@ class GRUSeq2SeqModel(ARBaseModel):
             if attn_weights is not None:
                 attention_weights.append(attn_weights)
 
-            # Determine next input
             if target is not None and t < target.shape[1]:
-                # Teacher forcing: use ground truth
                 use_teacher_forcing = torch.rand(1).item() < self.teacher_forcing_ratio
                 if use_teacher_forcing and self.training:
-                    decoder_input = target[:, t:t+1, :]
+                    decoder_input = target[:, t : t + 1, :]
                 else:
                     decoder_input = output
             else:
-                # Use model's own prediction
                 decoder_input = output
 
-        # Concatenate predictions
-        preds = torch.cat(predictions, dim=1)  # [B, pred_len, D_out]
-
-        extras = {
+        preds = torch.cat(predictions, dim=1)
+        decode_extras: Dict[str, torch.Tensor] = {
             "encoder_outputs": encoder_outputs,
-            "hidden": hidden
+            "hidden": hidden,
         }
-
         if attention_weights:
-            extras["attention_weights"] = torch.stack(attention_weights, dim=1)
+            decode_extras["attention_weights"] = torch.stack(attention_weights, dim=1)
 
-        return {
-            "preds": preds,
-            "extras": extras
-        }
+        if return_extras:
+            return preds, decode_extras
+        return preds
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        context: Optional[torch.Tensor] = None,
+        target: Optional[torch.Tensor] = None,
+        pred_len: int = 1,
+        **kwargs
+    ) -> Dict[str, torch.Tensor]:
+        """Forward pass."""
+
+        latent, encode_extras = self.encode(x, context=context)
+        preds, decode_extras = self.decode(
+            latent, pred_len=pred_len, target=target, return_extras=True
+        )
+        extras = {**encode_extras, **decode_extras}
+        return {"preds": preds, "extras": extras}
 
 
 @register("lstm_seq2seq")
-class LSTMSeq2SeqModel(ARBaseModel):
+class LSTMSeq2SeqModel(ResidualWrapperCompatible):
     """LSTM-based Seq2Seq encoder-decoder model.
 
     Uses an LSTM encoder to encode the input sequence and an LSTM decoder
@@ -369,40 +379,41 @@ class LSTMSeq2SeqModel(ARBaseModel):
             use_attention=use_attention
         )
 
-    def forward(
-        self,
-        x: torch.Tensor,
-        context: Optional[torch.Tensor] = None,
-        target: Optional[torch.Tensor] = None,
-        pred_len: int = 1,
-        **kwargs
-    ) -> Dict[str, torch.Tensor]:
-        """Forward pass.
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]], Dict[str, torch.Tensor]]:
+        """Encode input sequence for reuse by residual wrappers."""
 
-        Args:
-            x: Input tensor [B, T_in, D_in]
-            context: Optional context tensor
-            target: Target tensor for teacher forcing [B, T_out, D_out]
-            pred_len: Number of steps to predict (default: 1)
-            **kwargs: Additional arguments
-
-        Returns:
-            Dictionary with 'preds' and 'extras'
-        """
-        B, T_in, D_in = x.shape
-
-        # Encode input sequence
+        del context
         encoder_outputs, (hidden, cell) = self.encoder(x)
+        extras = {
+            "encoder_outputs": encoder_outputs,
+            "hidden": hidden,
+            "cell": cell,
+        }
+        return (encoder_outputs, (hidden, cell)), extras
 
-        # Initialize decoder input
-        decoder_input = torch.zeros(B, 1, self.output_dim, device=x.device, dtype=x.dtype)
+    def decode(
+        self,
+        latent: Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],
+        pred_len: int,
+        target: Optional[torch.Tensor] = None,
+        return_extras: bool = False
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, Dict[str, torch.Tensor]]]:
+        """Decode predictions from encoded latent state."""
 
-        # Decode step by step
+        encoder_outputs, (hidden, cell) = latent
+        decoder_input = torch.zeros(
+            encoder_outputs.size(0),
+            1,
+            self.output_dim,
+            device=encoder_outputs.device,
+            dtype=encoder_outputs.dtype,
+        )
+
         predictions = []
         attention_weights = []
-
         for t in range(pred_len):
-            # Decode one step
             output, (hidden, cell), attn_weights = self.decoder(
                 decoder_input, (hidden, cell), encoder_outputs
             )
@@ -411,31 +422,41 @@ class LSTMSeq2SeqModel(ARBaseModel):
             if attn_weights is not None:
                 attention_weights.append(attn_weights)
 
-            # Determine next input
             if target is not None and t < target.shape[1]:
-                # Teacher forcing: use ground truth
                 use_teacher_forcing = torch.rand(1).item() < self.teacher_forcing_ratio
                 if use_teacher_forcing and self.training:
-                    decoder_input = target[:, t:t+1, :]
+                    decoder_input = target[:, t : t + 1, :]
                 else:
                     decoder_input = output
             else:
-                # Use model's own prediction
                 decoder_input = output
 
-        # Concatenate predictions
-        preds = torch.cat(predictions, dim=1)  # [B, pred_len, D_out]
-
-        extras = {
+        preds = torch.cat(predictions, dim=1)
+        decode_extras: Dict[str, torch.Tensor] = {
             "encoder_outputs": encoder_outputs,
             "hidden": hidden,
-            "cell": cell
+            "cell": cell,
         }
-
         if attention_weights:
-            extras["attention_weights"] = torch.stack(attention_weights, dim=1)
+            decode_extras["attention_weights"] = torch.stack(attention_weights, dim=1)
 
-        return {
-            "preds": preds,
-            "extras": extras
-        }
+        if return_extras:
+            return preds, decode_extras
+        return preds
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        context: Optional[torch.Tensor] = None,
+        target: Optional[torch.Tensor] = None,
+        pred_len: int = 1,
+        **kwargs
+    ) -> Dict[str, torch.Tensor]:
+        """Forward pass."""
+
+        latent, encode_extras = self.encode(x, context=context)
+        preds, decode_extras = self.decode(
+            latent, pred_len=pred_len, target=target, return_extras=True
+        )
+        extras = {**encode_extras, **decode_extras}
+        return {"preds": preds, "extras": extras}
