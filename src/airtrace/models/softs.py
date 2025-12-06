@@ -7,13 +7,13 @@ Reference:
     Code: https://github.com/Secilia-Cxy/SOFTS
 """
 
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .base import ARBaseModel
+from .base import ResidualWrapperCompatible
 from .registry import register
 
 
@@ -144,7 +144,7 @@ class EncoderLayerSOFTS(nn.Module):
 
 
 @register("softs")
-class SOFTS(ARBaseModel):
+class SOFTS(ResidualWrapperCompatible):
     """SOFTS: Series-cOre Fused Time Series forecaster.
 
     A pure MLP-based model for multivariate time series forecasting using
@@ -199,6 +199,7 @@ class SOFTS(ARBaseModel):
         self.pred_len = pred_len
         self.horizon = horizon if horizon is not None else pred_len
         self.use_norm = use_norm
+        self._last_norm: Optional[Tuple[Optional[torch.Tensor], Optional[torch.Tensor], int]] = None
 
         # Channel-as-token embedding: [B, T, D] -> [B, D, d_model]
         self.embedding = nn.Linear(seq_len, hidden_dim)
@@ -221,75 +222,66 @@ class SOFTS(ARBaseModel):
         # Projection head: [B, D, d_model] -> [B, D, horizon] -> [B, horizon, D]
         self.projection = nn.Linear(hidden_dim, self.horizon)
 
-    def forward(
-        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
-    ) -> Dict[str, torch.Tensor]:
-        """Forward pass through SOFTS model.
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context
+        _, _, num_channels = x.shape
 
-        Args:
-            x: Input tensor [B, T, D]
-            context: Optional context (not used in SOFTS)
-            **kwargs: Additional arguments
-
-        Returns:
-            Dictionary containing:
-                - preds: Predictions [B, horizon, D_out]
-                - extras: Dictionary with normalization statistics
-        """
-        batch_size, seq_len, num_channels = x.shape
-
-        # Instance normalization (per channel)
         if self.use_norm:
-            means = x.mean(dim=1, keepdim=True)  # [B, 1, D]
+            means = x.mean(dim=1, keepdim=True)
             x = x - means
             stdev = torch.sqrt(
                 torch.var(x, dim=1, keepdim=True, unbiased=False) + 1e-5
             )
             x = x / stdev
-            # Report per-channel statistics aggregated across the batch for easier
-            # downstream inspection while keeping per-sample values for
-            # de-normalization.
             reported_means = means.mean(dim=0).squeeze(0)
             reported_stdev = stdev.mean(dim=0).squeeze(0)
         else:
             means, stdev = None, None
             reported_means, reported_stdev = None, None
 
-        # Embedding: [B, T, D] -> [B, D, d_model]
-        x = x.permute(0, 2, 1)  # [B, D, T]
-        x = self.embedding(x)  # [B, D, d_model]
+        x = x.permute(0, 2, 1)
+        x = self.embedding(x)
         x = self.embed_dropout(x)
 
-        # Encoder: [B, D, d_model] -> [B, D, d_model]
         for layer in self.encoder_layers:
             x = layer(x)
 
-        # Projection: [B, D, d_model] -> [B, D, horizon]
-        x = self.projection(x)  # [B, D, horizon]
+        self._last_norm = (means, stdev, num_channels)
+        extras = {"means": reported_means, "stdev": reported_stdev}
+        return x, extras
 
-        # Permute to output format: [B, horizon, D]
-        x = x.permute(0, 2, 1)  # [B, horizon, D]
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        if pred_len != self.horizon:
+            raise ValueError(
+                f"pred_len {pred_len} does not match configured horizon {self.horizon}"
+            )
 
-        # Ensure output matches expected channels
-        x = x[:, :, : self.output_dim]
+        preds = self.projection(latent).permute(0, 2, 1)
+        preds = preds[:, :, : self.output_dim]
 
-        # De-normalization
-        if self.use_norm and means is not None:
-            if self.output_dim <= num_channels:
-                stdev_out = stdev[:, :, : self.output_dim]
-                means_out = means[:, :, : self.output_dim]
-            else:
-                pad_size = self.output_dim - num_channels
-                stdev_out = F.pad(stdev, (0, pad_size), mode="replicate")
-                means_out = F.pad(means, (0, pad_size), mode="replicate")
+        if self.use_norm and self._last_norm is not None:
+            means, stdev, num_channels = self._last_norm
+            if means is not None and stdev is not None:
+                if self.output_dim <= num_channels:
+                    stdev_out = stdev[:, :, : self.output_dim]
+                    means_out = means[:, :, : self.output_dim]
+                else:
+                    pad_size = self.output_dim - num_channels
+                    stdev_out = F.pad(stdev, (0, pad_size), mode="replicate")
+                    means_out = F.pad(means, (0, pad_size), mode="replicate")
 
-            x = x * stdev_out
-            x = x + means_out
+                preds = preds * stdev_out
+                preds = preds + means_out
 
-        return {
-            "preds": x,
-            "extras": {
-                "means": reported_means,
-                "stdev": reported_stdev,
-            },
-        }
+        return preds
+
+    def forward(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
+    ) -> Dict[str, torch.Tensor]:
+        pred_len = int(kwargs.get("pred_len", self.horizon))
+        latent, extras = self.encode(x, context=context)
+        preds = self.decode(latent, pred_len)
+        extras["representation"] = latent
+        return {"preds": preds, "extras": extras}

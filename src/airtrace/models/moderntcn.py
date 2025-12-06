@@ -11,12 +11,12 @@ Key innovations over classic TCN:
 - Better parameter efficiency and gradient flow
 """
 
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
 
-from .base import ARBaseModel
+from .base import ResidualWrapperCompatible
 from .registry import register
 
 
@@ -248,7 +248,7 @@ class LargeKernelConv(nn.Module):
 
 
 @register("moderntcn")
-class ModernTCNModel(ARBaseModel):
+class ModernTCNModel(ResidualWrapperCompatible):
     """ModernTCN: Modern Temporal Convolutional Network.
 
     A modern pure convolution architecture for time series analysis with:
@@ -327,59 +327,39 @@ class ModernTCNModel(ARBaseModel):
         # Output projection
         self.output_proj = nn.Linear(hidden_channels, output_dim)
 
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context
+        conv_inp = x.transpose(1, 2)
+        conv_inp = self.input_proj(conv_inp)
+
+        for block in self.blocks:
+            conv_inp = block(conv_inp)
+
+        if self.use_large_kernel:
+            conv_inp = self.large_kernel(conv_inp)
+
+        sequence_output = conv_inp.transpose(1, 2)
+        sequence_output = self.final_norm(sequence_output)
+        final_hidden = sequence_output[:, -1, :]
+        extras = {"hidden": final_hidden, "sequence_output": sequence_output}
+        return final_hidden, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        preds = self.output_proj(latent).unsqueeze(1)
+        if pred_len != 1:
+            preds = preds.expand(-1, pred_len, -1)
+        return preds
+
     def forward(
         self,
         x: torch.Tensor,
         context: Optional[torch.Tensor] = None,
         **kwargs
     ) -> Dict[str, torch.Tensor]:
-        """Forward pass.
-
-        Args:
-            x: Input tensor [B, T_in, D_in]
-            context: Optional context tensor (unused)
-            **kwargs: Additional arguments
-
-        Returns:
-            Dictionary containing:
-                - preds: Predictions [B, 1, D_out]
-                - extras: Dict with intermediate outputs
-        """
-        B, T_in, D_in = x.shape
-
-        # Transpose to [B, D_in, T_in] for conv layers
-        x = x.transpose(1, 2)
-
-        # Input projection
-        x = self.input_proj(x)  # [B, hidden_channels, T_in]
-
-        # Pass through ModernTCN blocks
-        for block in self.blocks:
-            x = block(x)
-
-        # Optional large kernel module
-        if self.use_large_kernel:
-            x = self.large_kernel(x)
-
-        # Transpose back to [B, T_in, hidden_channels]
-        x = x.transpose(1, 2)
-
-        # Final normalization
-        x = self.final_norm(x)
-
-        # Use final timestep for prediction (autoregressive)
-        final_hidden = x[:, -1, :]  # [B, hidden_channels]
-
-        # Project to output dimension
-        preds = self.output_proj(final_hidden)  # [B, D_out]
-
-        # Reshape to [B, 1, D_out]
-        preds = preds.unsqueeze(1)
-
-        return {
-            "preds": preds,
-            "extras": {
-                "hidden": final_hidden,
-                "sequence_output": x,
-            }
-        }
+        pred_len = int(kwargs.get("pred_len", 1))
+        latent, extras = self.encode(x, context=context)
+        preds = self.decode(latent, pred_len)
+        extras["representation"] = latent
+        return {"preds": preds, "extras": extras}

@@ -70,3 +70,7 @@ High-difficulty baselines likely warrant a lightweight Torch adapter (no gradien
 - Refactored **patchtst** to surface patched-token encodings through `encode` and reuse its channel-level projection head in `decode`, enabling repeated residual updates while keeping the single-step default contract.
 - Refactored **timexer** to expose the fused endogenous/exogenous token representations via `encode` and gate decoding through the existing prediction head, aligning cross-attention handling with the residual wrapper interface.
 - Refactored **timemixer** to provide multi-scale pooled predictions as the wrapper latent and reuse the ensemble projection inside `decode`, ensuring the multi-horizon contract remains enforced.
+
+## Progress (2025-02-11)
+- Refactored **moderntcn** to implement `ResidualWrapperCompatible`, exposing the convolutional backbone through `encode` and the projection head via `decode` while preserving its autoregressive single-step default.
+- Refactored **softs** to add `encode`/`decode` hooks that thread normalization statistics through the wrapper loop, guarding the configured horizon during decoding and maintaining de-normalized outputs.
