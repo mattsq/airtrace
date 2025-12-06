@@ -15,12 +15,12 @@ Code: https://github.com/thuml/TimeXer
 """
 
 import math
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
 
-from .base import ARBaseModel
+from .base import ResidualWrapperCompatible
 from .registry import register
 
 
@@ -142,7 +142,7 @@ class GlobalEndogenousToken(nn.Module):
 
 
 @register("timexer")
-class TimeXerModel(ARBaseModel):
+class TimeXerModel(ResidualWrapperCompatible):
     """TimeXer: Transformer for Time Series Forecasting with Exogenous Variables.
 
     TimeXer explicitly handles two types of variables:
@@ -277,137 +277,93 @@ class TimeXerModel(ARBaseModel):
     def forward(
         self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
     ) -> Dict[str, torch.Tensor]:
-        """Forward pass.
+        """Forward pass."""
 
-        Args:
-            x: Endogenous input tensor [B, T_in, D_in]
-            context: Exogenous variables [B, T_in, D_exog] or [B, D_exog]
-                    If None and exog_dim > 0, will use zeros
-            **kwargs: Additional arguments
+        latent, extras = self.encode(x, context=context)
+        preds = self.decode(latent, pred_len=self.pred_len)
 
-        Returns:
-            Dictionary with 'preds' and 'extras'
-        """
-        B, T_in, D_in = x.shape
+        return {"preds": preds, "extras": extras}
+
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        """Encode endogenous/exogenous signals into fused token features."""
+
+        B, _, D_in = x.shape
 
         # ===== Step 1: Process endogenous variables (patch-level) =====
-        # Create patches: [B, D_in, N_patches, patch_len]
         patches = self.patching(x)
-        _, _, N_patches, patch_len = patches.shape
+        _, _, num_patches, _ = patches.shape
+        patches = patches.reshape(B * D_in, num_patches, self.patch_len)
 
-        # Reshape to process all channels in batch
-        # [B, D_in, N_patches, patch_len] -> [B*D_in, N_patches, patch_len]
-        patches = patches.reshape(B * D_in, N_patches, patch_len)
-
-        # Embed patches: [B*D_in, N_patches, patch_len] -> [B*D_in, N_patches, d_model]
         patch_embeddings = self.patch_embedding(patches)
-
-        # Add positional encoding
         patch_embeddings = self.pos_encoder(patch_embeddings)
 
-        # Generate global tokens for each batch element
-        # We need global tokens for each channel separately
-        # [B*D_in, num_global_tokens, d_model]
         global_tokens = self.global_tokens(B * D_in)
-
-        # Concatenate global tokens with patch embeddings
-        # [B*D_in, num_global_tokens + N_patches, d_model]
         endogenous_input = torch.cat([global_tokens, patch_embeddings], dim=1)
-
-        # Pass through transformer encoder
-        # [B*D_in, num_global_tokens + N_patches, d_model]
         endogenous_output = self.endogenous_encoder(endogenous_input)
 
-        # Extract global token representations (first num_global_tokens positions)
-        # [B*D_in, num_global_tokens, d_model]
         global_token_output = endogenous_output[:, : self.num_global_tokens, :]
-
-        # Extract patch representations (for aggregation)
-        # [B*D_in, N_patches, d_model]
         patch_output = endogenous_output[:, self.num_global_tokens :, :]
 
-        # Reshape back to separate batch and channels
-        # [B*D_in, num_global_tokens, d_model] -> [B, D_in, num_global_tokens, d_model]
         global_token_output = global_token_output.reshape(
             B, D_in, self.num_global_tokens, self.d_model
         )
-
-        # [B*D_in, N_patches, d_model] -> [B, D_in, N_patches, d_model]
-        patch_output = patch_output.reshape(B, D_in, N_patches, self.d_model)
+        patch_output = patch_output.reshape(B, D_in, num_patches, self.d_model)
 
         # ===== Step 2: Process exogenous variables (if available) =====
         exog_info = None
         if self.has_exog and context is not None:
-            # Handle context: could be [B, T, D_exog] or [B, D_exog]
             if context.dim() == 2:
-                # [B, D_exog] -> replicate for time dimension
-                # Use mean aggregation or last time step
                 exog_features = context
             else:
-                # [B, T, D_exog] -> aggregate over time (mean)
                 exog_features = context.mean(dim=1)  # [B, D_exog]
 
-            # Embed exogenous features
-            # [B, D_exog] -> [B, D_exog * d_model]
             exog_embedded = self.exog_embedding(exog_features)
-            # Reshape to [B, D_exog, d_model]
             exog_embedded = exog_embedded.reshape(B, self.exog_dim_actual, self.d_model)
 
-            # Cross-attention: global tokens (query) attend to exogenous (key, value)
-            # Flatten global tokens: [B, D_in, num_global_tokens, d_model]
-            #   -> [B, D_in * num_global_tokens, d_model]
             global_flat = global_token_output.reshape(
                 B, D_in * self.num_global_tokens, self.d_model
             )
 
-            # Cross-attention
-            # query: global tokens, key/value: exogenous embeddings
             exog_attended, attn_weights = self.cross_attention(
                 query=global_flat, key=exog_embedded, value=exog_embedded
             )
 
-            # Add residual connection
             global_flat = global_flat + exog_attended
-
-            # Reshape back: [B, D_in * num_global_tokens, d_model]
-            #   -> [B, D_in, num_global_tokens, d_model]
             global_token_output = global_flat.reshape(B, D_in, self.num_global_tokens, self.d_model)
 
             exog_info = {"exog_embedded": exog_embedded, "cross_attn_weights": attn_weights}
 
-        # ===== Step 3: Aggregate and predict =====
-        # Aggregate patch representations per channel (mean pooling)
-        # [B, D_in, N_patches, d_model] -> [B, D_in, d_model]
+        # ===== Step 3: Aggregate features for decoding =====
         patch_aggregated = patch_output.mean(dim=2)
-
-        # Aggregate global tokens per channel
-        # [B, D_in, num_global_tokens, d_model] -> [B, D_in, d_model]
         global_aggregated = global_token_output.mean(dim=2)
-
-        # Concatenate global and patch information
-        # [B, D_in, d_model] + [B, D_in, d_model] -> [B, D_in, 2*d_model]
-        # Then flatten: [B, D_in * 2 * d_model]
-        combined = torch.cat([global_aggregated, patch_aggregated], dim=2)  # [B, D_in, 2*d_model]
+        combined = torch.cat([global_aggregated, patch_aggregated], dim=2)
         combined_flat = combined.reshape(B, D_in * 2 * self.d_model)
-
-        # Prediction head
-        # [B, D_in * 2 * d_model] -> [B, output_dim * pred_len]
-        out = self.head(combined_flat)
-
-        # Reshape to [B, pred_len, output_dim]
-        preds = out.reshape(B, self.pred_len, self.output_dim)
 
         extras = {
             "endogenous_output": endogenous_output,
             "global_tokens": global_token_output,
             "patch_output": patch_output,
-            "num_patches": N_patches,
+            "num_patches": num_patches,
         }
 
         if exog_info is not None:
             extras.update(exog_info)
 
-        return {"preds": preds, "extras": extras}
+        return combined_flat, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        """Decode fused token features into predictions."""
+
+        if pred_len != self.pred_len:
+            raise ValueError(
+                f"TimeXerModel only supports pred_len={self.pred_len}, received {pred_len}."
+            )
+
+        out = self.head(latent)
+        preds = out.reshape(latent.shape[0], self.pred_len, self.output_dim)
+        return preds
 
     def __repr__(self):
         return (

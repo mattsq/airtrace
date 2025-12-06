@@ -65,3 +65,8 @@ High-difficulty baselines likely warrant a lightweight Torch adapter (no gradien
 ## Progress (2025-02-09)
 - Refactored **dlinear** and **nlinear** to implement `ResidualWrapperCompatible` by threading decomposition/centering signals through an `encode` representation and reusing their projection heads inside `decode`, while preserving configured `pred_len` contracts.
 - Updated **tsmixer** to expose normalized mixer outputs via `encode` and reuse the temporal/head projections in `decode`, enabling drop-in residual pondering without altering the existing forward behavior.
+
+## Progress (2025-02-10)
+- Refactored **patchtst** to surface patched-token encodings through `encode` and reuse its channel-level projection head in `decode`, enabling repeated residual updates while keeping the single-step default contract.
+- Refactored **timexer** to expose the fused endogenous/exogenous token representations via `encode` and gate decoding through the existing prediction head, aligning cross-attention handling with the residual wrapper interface.
+- Refactored **timemixer** to provide multi-scale pooled predictions as the wrapper latent and reuse the ensemble projection inside `decode`, ensuring the multi-horizon contract remains enforced.

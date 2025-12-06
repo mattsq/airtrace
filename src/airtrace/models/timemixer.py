@@ -24,7 +24,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .base import ARBaseModel
+from .base import ResidualWrapperCompatible
 from .registry import register
 
 
@@ -357,7 +357,7 @@ class PastDecomposableMixing(nn.Module):
 
 
 @register("timemixer")
-class TimeMixerModel(ARBaseModel):
+class TimeMixerModel(ResidualWrapperCompatible):
     """TimeMixer: Decomposable Multiscale Mixing for Time Series Forecasting.
 
     Fully MLP-based architecture that achieves SOTA performance through:
@@ -493,58 +493,53 @@ class TimeMixerModel(ARBaseModel):
         context: Optional[torch.Tensor] = None,
         **kwargs
     ) -> Dict[str, torch.Tensor]:
-        """Forward pass.
+        del context, kwargs
+        latent, extras = self.encode(x)
+        preds = self.decode(latent, pred_len=self.pred_len)
 
-        Args:
-            x: Input tensor [B, T_in, D_in]
-            context: Optional context tensor (not used in TimeMixer)
-            **kwargs: Additional arguments
+        return {"preds": preds, "extras": extras}
 
-        Returns:
-            Dictionary with 'preds' and 'extras'
-        """
-        B, T_in, D_in = x.shape
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        """Encode sequence into multi-scale pooled predictions."""
 
-        # Project input to model dimension
-        x = self.input_projection(x)  # [B, T_in, d_model]
+        del context
+        _batch_size, _, _ = x.shape
+
+        x = self.input_projection(x)
         x = self.dropout(x)
 
-        # Pass through PDM blocks
         for pdm_block in self.pdm_blocks:
-            x = pdm_block(x)  # [B, T_in, d_model]
+            x = pdm_block(x)
 
-        # Final normalization
-        x = self.norm(x)  # [B, T_in, d_model]
-
-        # Create multi-scale representations
+        x = self.norm(x)
         multi_scale_features = self._create_multi_scale(x, self.down_sampling_layers)
 
-        # Generate predictions at each scale (Future-Multipredictor-Mixing)
         scale_predictions = []
-        for i, (features, pred_head) in enumerate(
-            zip(multi_scale_features, self.prediction_heads)
-        ):
-            # Use global average pooling across time dimension
-            pooled = features.mean(dim=1)  # [B, d_model]
+        for features, pred_head in zip(multi_scale_features, self.prediction_heads):
+            pooled = features.mean(dim=1)
+            scale_predictions.append(pred_head(pooled))
 
-            # Generate prediction for this scale
-            scale_pred = pred_head(pooled)  # [B, pred_len * output_dim]
-            scale_predictions.append(scale_pred)
-
-        # Ensemble predictions from all scales
-        all_preds = torch.cat(scale_predictions, dim=1)  # [B, (num_scales+1) * pred_len * output_dim]
-        final_pred = self.output_projection(all_preds)  # [B, pred_len * output_dim]
-
-        # Reshape to [B, pred_len, output_dim]
-        preds = final_pred.reshape(B, self.pred_len, self.output_dim)
-
-        return {
-            "preds": preds,
-            "extras": {
-                "multi_scale_features": multi_scale_features,
-                "scale_predictions": scale_predictions
-            }
+        latent = torch.cat(scale_predictions, dim=1)
+        extras = {
+            "multi_scale_features": multi_scale_features,
+            "scale_predictions": scale_predictions,
         }
+
+        return latent, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        """Decode ensembled scale predictions into final forecast."""
+
+        if pred_len != self.pred_len:
+            raise ValueError(
+                f"TimeMixerModel only supports pred_len={self.pred_len}, received {pred_len}."
+            )
+
+        final_pred = self.output_projection(latent)
+        preds = final_pred.reshape(latent.shape[0], self.pred_len, self.output_dim)
+        return preds
 
     def __repr__(self):
         return (
