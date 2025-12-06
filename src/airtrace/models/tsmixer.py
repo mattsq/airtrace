@@ -19,12 +19,12 @@ Architecture:
   Output [B, T_out, D_out]
 """
 
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
 
-from .base import ARBaseModel
+from .base import ResidualWrapperCompatible
 from .registry import register
 
 
@@ -116,7 +116,7 @@ class BlockOutputs(list[torch.Tensor]):
 
 
 @register("tsmixer")
-class TSMixerModel(ARBaseModel):
+class TSMixerModel(ResidualWrapperCompatible):
     """TSMixer model for time series forecasting.
 
     TSMixer is an all-MLP architecture that alternates between time-mixing
@@ -184,54 +184,55 @@ class TSMixerModel(ARBaseModel):
         # Final layer norm
         self.final_norm = nn.LayerNorm(input_dim)
 
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context
+        if x.size(1) != self.seq_len:
+            raise ValueError(
+                f"Expected input sequence length {self.seq_len}, got {x.size(1)}"
+            )
+
+        block_outputs: list[torch.Tensor] = []
+        out = x
+        for block in self.mixer_blocks:
+            out = block(out)
+            block_outputs.append(out.detach().clone())
+
+        representation = self.final_norm(out)
+        extras: Dict[str, torch.Tensor] = {
+            "block_outputs": BlockOutputs(block_outputs),
+            "representation": representation,
+        }
+        return representation, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        if pred_len != self.pred_len:
+            raise ValueError(
+                f"TSMixer pred_len must match configured pred_len={self.pred_len}, got {pred_len}"
+            )
+
+        out = latent.transpose(1, 2)           # [B, D_in, T_in]
+        out = self.temporal_projection(out)    # [B, D_in, T_out]
+        out = out.transpose(1, 2)              # [B, T_out, D_in]
+
+        if self.output_projection is not None:
+            out = self.output_projection(out)
+
+        return out
+
     def forward(
         self,
         x: torch.Tensor,
         context: Optional[torch.Tensor] = None,
         **kwargs
     ) -> Dict[str, torch.Tensor]:
-        """Forward pass through TSMixer.
+        """Forward pass through TSMixer using reusable encoder/decoder hooks."""
 
-        Args:
-            x: Input tensor [B, T_in, D_in]
-            context: Optional context tensor (not used in TSMixer)
-            **kwargs: Additional arguments (ignored)
-
-        Returns:
-            Dictionary containing:
-                - preds: Predictions [B, T_out, D_out]
-                - extras: Additional outputs (block outputs for analysis)
-        """
-        if x.size(1) != self.seq_len:
-            raise ValueError(
-                f"Expected input sequence length {self.seq_len}, got {x.size(1)}"
-            )
-
-        # Store intermediate outputs for potential analysis
-        block_outputs: list[torch.Tensor] = []
-
-        # Pass through mixer blocks
-        out = x
-        for block in self.mixer_blocks:
-            out = block(out)
-            block_outputs.append(out.detach().clone())
-
-        # Final normalization
-        out = self.final_norm(out)  # [B, T_in, D_in]
-
-        # Temporal projection: [B, T_in, D_in] -> [B, D_in, T_in] -> [B, D_in, T_out] -> [B, T_out, D_in]
-        out = out.transpose(1, 2)                    # [B, D_in, T_in]
-        out = self.temporal_projection(out)          # [B, D_in, T_out]
-        out = out.transpose(1, 2)                    # [B, T_out, D_in]
-
-        # Output projection if needed: [B, T_out, D_in] -> [B, T_out, D_out]
-        if self.output_projection is not None:
-            out = self.output_projection(out)
-
-        return {
-            "preds": out,
-            "extras": {"block_outputs": BlockOutputs(block_outputs)},
-        }
+        pred_len = int(kwargs.get("pred_len", self.pred_len))
+        representation, extras = self.encode(x, context=context)
+        preds = self.decode(representation, pred_len)
+        return {"preds": preds, "extras": extras}
 
     def __repr__(self) -> str:
         """String representation of the model."""

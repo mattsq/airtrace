@@ -1,12 +1,12 @@
 """DLinear and NLinear baseline models."""
 
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .base import ARBaseModel
+from .base import ResidualWrapperCompatible
 from .registry import register
 
 
@@ -18,7 +18,7 @@ def _ensure_seq_len(x: torch.Tensor, expected_len: int) -> None:
 
 
 @register("dlinear")
-class DLinearModel(ARBaseModel):
+class DLinearModel(ResidualWrapperCompatible):
     """Decomposition-Linear model for time series forecasting.
 
     This model applies a simple moving average decomposition to split the input
@@ -68,14 +68,31 @@ class DLinearModel(ARBaseModel):
 
         return moving_mean
 
-    def forward(
-        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
-    ) -> Dict[str, torch.Tensor]:
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context
         _ensure_seq_len(x, self.seq_len)
 
         moving_mean = self._moving_average(x)
         seasonal_init = x - moving_mean
         trend_init = moving_mean
+
+        representation = torch.cat([seasonal_init, trend_init], dim=-1)
+        extras: Dict[str, torch.Tensor] = {
+            "seasonal_init": seasonal_init,
+            "trend_init": trend_init,
+            "moving_mean": moving_mean,
+        }
+        return representation, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        if pred_len != self.pred_len:
+            raise ValueError(
+                f"DLinear pred_len must match configured pred_len={self.pred_len}, got {pred_len}"
+            )
+
+        seasonal_init, trend_init = torch.chunk(latent, 2, dim=-1)
 
         seasonal = self.seasonal_linear(seasonal_init.transpose(1, 2)).transpose(1, 2)
         trend = self.trend_linear(trend_init.transpose(1, 2)).transpose(1, 2)
@@ -85,17 +102,28 @@ class DLinearModel(ARBaseModel):
         if self.output_projection is not None:
             preds = self.output_projection(preds)
 
-        return {
-            "preds": preds,
-            "extras": {
-                "seasonal_component": seasonal,
-                "trend_component": trend,
-            },
-        }
+        return preds
+
+    def forward(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
+    ) -> Dict[str, torch.Tensor]:
+        pred_len = int(kwargs.get("pred_len", self.pred_len))
+        representation, extras = self.encode(x, context=context)
+        preds = self.decode(representation, pred_len)
+        extras.update({
+            "seasonal_component": self.seasonal_linear(
+                extras["seasonal_init"].transpose(1, 2)
+            ).transpose(1, 2),
+            "trend_component": self.trend_linear(
+                extras["trend_init"].transpose(1, 2)
+            ).transpose(1, 2),
+            "representation": representation,
+        })
+        return {"preds": preds, "extras": extras}
 
 
 @register("nlinear")
-class NLinearModel(ARBaseModel):
+class NLinearModel(ResidualWrapperCompatible):
     """Non-stationary Linear model.
 
     The NLinear variant subtracts the per-feature mean before applying a linear
@@ -124,24 +152,52 @@ class NLinearModel(ARBaseModel):
         else:
             self.output_projection = None
 
-    def forward(
-        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
-    ) -> Dict[str, torch.Tensor]:
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context
         _ensure_seq_len(x, self.seq_len)
 
         if self.center_data:
             mean = x.mean(dim=1, keepdim=True)
             x_centered = x - mean
+            mean_token = mean
         else:
             mean = None
             x_centered = x
+            mean_token = torch.zeros_like(x[:, :1, :])
+
+        representation = torch.cat([x_centered, mean_token], dim=1)
+        mean_offset = mean if mean is not None else mean_token
+        extras: Dict[str, torch.Tensor] = {
+            "mean_offset": mean_offset,
+            "representation": representation,
+        }
+        return representation, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        if pred_len != self.pred_len:
+            raise ValueError(
+                f"NLinear pred_len must match configured pred_len={self.pred_len}, got {pred_len}"
+            )
+
+        x_centered = latent[:, : self.seq_len, :]
+        mean_token = latent[:, self.seq_len :, :]
 
         preds = self.linear(x_centered.transpose(1, 2)).transpose(1, 2)
 
-        if mean is not None:
-            preds = preds + mean
+        if self.center_data:
+            preds = preds + mean_token
 
         if self.output_projection is not None:
             preds = self.output_projection(preds)
 
-        return {"preds": preds, "extras": {"mean_offset": mean}}
+        return preds
+
+    def forward(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
+    ) -> Dict[str, torch.Tensor]:
+        pred_len = int(kwargs.get("pred_len", self.pred_len))
+        representation, extras = self.encode(x, context=context)
+        preds = self.decode(representation, pred_len)
+        return {"preds": preds, "extras": extras}

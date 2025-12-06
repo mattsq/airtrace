@@ -61,3 +61,7 @@ High-difficulty baselines likely warrant a lightweight Torch adapter (no gradien
 ## Progress (2025-02-08)
 - Refactored **transformer** to surface `encode`/`decode` adapters so the encoder stack can be reused by a residual pondering loop while maintaining the existing single-step forward path.
 - Refactored **timesnet** to provide wrapper hooks; the decode step enforces the configured `pred_len` to preserve the existing projection head contract while making the backbone reusable.
+
+## Progress (2025-02-09)
+- Refactored **dlinear** and **nlinear** to implement `ResidualWrapperCompatible` by threading decomposition/centering signals through an `encode` representation and reusing their projection heads inside `decode`, while preserving configured `pred_len` contracts.
+- Updated **tsmixer** to expose normalized mixer outputs via `encode` and reuse the temporal/head projections in `decode`, enabling drop-in residual pondering without altering the existing forward behavior.
