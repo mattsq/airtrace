@@ -1,12 +1,12 @@
 """Temporal Convolutional Network (TCN) model."""
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
 from torch.nn.utils import weight_norm
 
-from .base import ARBaseModel
+from .base import ResidualWrapperCompatible
 from .registry import register
 
 
@@ -92,7 +92,7 @@ class Chomp1d(nn.Module):
 
 
 @register("tcn")
-class TCNModel(ARBaseModel):
+class TCNModel(ResidualWrapperCompatible):
     """Temporal Convolutional Network for timeseries.
 
     Uses dilated causal convolutions for long-range dependencies.
@@ -146,46 +146,31 @@ class TCNModel(ARBaseModel):
         # Output projection
         self.fc_out = nn.Linear(num_channels[-1], output_dim)
 
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context
+        conv_inp = x.transpose(1, 2)
+        out = self.network(conv_inp)
+        sequence_output = out.transpose(1, 2)
+        final_hidden = sequence_output[:, -1, :]
+        extras = {"hidden": final_hidden, "sequence_output": sequence_output}
+        return final_hidden, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        preds = self.fc_out(latent).unsqueeze(1)
+        if pred_len != 1:
+            preds = preds.expand(-1, pred_len, -1)
+        return preds
+
     def forward(
         self,
         x: torch.Tensor,
         context: Optional[torch.Tensor] = None,
         **kwargs
     ) -> Dict[str, torch.Tensor]:
-        """Forward pass.
-
-        Args:
-            x: Input tensor [B, T_in, D_in]
-            context: Optional context tensor
-            **kwargs: Additional arguments
-
-        Returns:
-            Dictionary with 'preds' and 'extras'
-        """
-        B, T_in, D_in = x.shape
-
-        # Transpose to [B, D_in, T_in] for conv layers
-        x = x.transpose(1, 2)
-
-        # Pass through TCN
-        out = self.network(x)  # [B, C, T_in]
-
-        # Transpose back to [B, T_in, C]
-        out = out.transpose(1, 2)
-
-        # Use final timestep for prediction
-        final_hidden = out[:, -1, :]  # [B, C]
-
-        # Project to output dimension
-        preds = self.fc_out(final_hidden)  # [B, D_out]
-
-        # Reshape to [B, 1, D_out]
-        preds = preds.unsqueeze(1)
-
-        return {
-            "preds": preds,
-            "extras": {
-                "hidden": final_hidden,
-                "sequence_output": out
-            }
-        }
+        pred_len = int(kwargs.get("pred_len", 1))
+        latent, extras = self.encode(x, context=context)
+        preds = self.decode(latent, pred_len)
+        extras["representation"] = latent
+        return {"preds": preds, "extras": extras}

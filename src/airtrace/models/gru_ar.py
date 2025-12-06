@@ -1,16 +1,16 @@
 """GRU-based autoregressive model."""
 
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
 
-from .base import ARBaseModel
+from .base import ResidualWrapperCompatible
 from .registry import register
 
 
 @register("gru_ar")
-class GRUARModel(ARBaseModel):
+class GRUARModel(ResidualWrapperCompatible):
     """GRU-based autoregressive model.
 
     Uses a GRU encoder to process input sequences and a linear
@@ -77,63 +77,48 @@ class GRUARModel(ARBaseModel):
         # Dropout
         self.dropout = nn.Dropout(dropout)
 
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context
+        encoder_output, hidden = self.gru(x)
+
+        if self.attention is not None:
+            attn_output, attn_weights = self.attention(
+                encoder_output, encoder_output, encoder_output
+            )
+            representation = attn_output[:, -1, :]
+            extras: Dict[str, torch.Tensor] = {
+                "encoder_output": encoder_output,
+                "hidden": hidden,
+                "attention_weights": attn_weights,
+            }
+        else:
+            if self.bidirectional:
+                hidden = hidden.view(self.num_layers, 2, x.size(0), self.hidden_size)
+                hidden = torch.cat([hidden[-1, 0], hidden[-1, 1]], dim=1)
+            else:
+                hidden = hidden[-1]
+            representation = hidden
+            extras = {"encoder_output": encoder_output, "hidden": hidden}
+
+        representation = self.dropout(representation)
+        return representation, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        preds = self.fc_out(latent).unsqueeze(1)
+        if pred_len != 1:
+            preds = preds.expand(-1, pred_len, -1)
+        return preds
+
     def forward(
         self,
         x: torch.Tensor,
         context: Optional[torch.Tensor] = None,
         **kwargs
     ) -> Dict[str, torch.Tensor]:
-        """Forward pass.
-
-        Args:
-            x: Input tensor [B, T_in, D_in]
-            context: Optional context tensor
-            **kwargs: Additional arguments
-
-        Returns:
-            Dictionary with 'preds' and 'extras'
-        """
-        B, T_in, D_in = x.shape
-
-        # Encode input sequence
-        encoder_output, hidden = self.gru(x)  # [B, T_in, H*num_directions]
-
-        # Optional attention over encoder outputs
-        if self.attention is not None:
-            # Self-attention over encoder outputs
-            attn_output, attn_weights = self.attention(
-                encoder_output, encoder_output, encoder_output
-            )
-            # Use attended representation
-            representation = attn_output[:, -1, :]  # [B, H*num_directions]
-        else:
-            # Use final hidden state
-            if self.bidirectional:
-                # Concatenate forward and backward final states
-                hidden = hidden.view(self.num_layers, 2, B, self.hidden_size)
-                hidden = torch.cat([hidden[-1, 0], hidden[-1, 1]], dim=1)  # [B, H*2]
-            else:
-                hidden = hidden[-1]  # [B, H]
-            representation = hidden
-
-        # Apply dropout
-        representation = self.dropout(representation)
-
-        # Predict output
-        preds = self.fc_out(representation)  # [B, D_out]
-
-        # Reshape to [B, 1, D_out] for consistency
-        preds = preds.unsqueeze(1)
-
-        extras = {
-            "encoder_output": encoder_output,
-            "hidden": hidden
-        }
-
-        if self.attention is not None:
-            extras["attention_weights"] = attn_weights
-
-        return {
-            "preds": preds,
-            "extras": extras
-        }
+        pred_len = int(kwargs.get("pred_len", 1))
+        representation, extras = self.encode(x, context=context)
+        preds = self.decode(representation, pred_len)
+        extras["representation"] = representation
+        return {"preds": preds, "extras": extras}
