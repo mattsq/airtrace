@@ -19,7 +19,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .base import ARBaseModel
+from .base import ResidualWrapperCompatible
 from .registry import register
 
 
@@ -271,7 +271,7 @@ class PositionalEmbedding(nn.Module):
 
 
 @register("timesnet")
-class TimesNetModel(ARBaseModel):
+class TimesNetModel(ResidualWrapperCompatible):
     """TimesNet model for time series forecasting.
 
     TimesNet transforms 1D time series into 2D space through period-based reshaping
@@ -373,6 +373,41 @@ class TimesNetModel(ARBaseModel):
 
         self.dropout = nn.Dropout(dropout)
 
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context
+        x_proj = self.input_projection(x)
+        if self.pos_embedding is not None:
+            x_proj = self.pos_embedding(x_proj)
+
+        x_proj = self.dropout(x_proj)
+
+        layer_outputs = []
+        hidden = x_proj
+        for layer in self.layers:
+            residual = hidden
+            hidden = layer(hidden)
+            hidden = self.norm(hidden + residual)
+            layer_outputs.append(hidden)
+
+        last_hidden = hidden[:, -1, :]
+        extras: Dict[str, torch.Tensor] = {
+            "embeddings": hidden,
+            "layer_outputs": layer_outputs,
+            "last_hidden": last_hidden,
+        }
+        return last_hidden, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        if pred_len != self.pred_len:
+            raise ValueError(
+                f"pred_len {pred_len} does not match configured pred_len {self.pred_len}"
+            )
+
+        pred_flat = self.prediction_head(latent)
+        return pred_flat.reshape(latent.size(0), self.pred_len, self.output_dim)
+
     def forward(
         self,
         x: torch.Tensor,
@@ -384,50 +419,15 @@ class TimesNetModel(ARBaseModel):
         Args:
             x: Input tensor [B, T, D_in]
             context: Optional context tensor (unused)
-            **kwargs: Additional arguments (unused)
+            **kwargs: Additional arguments
 
         Returns:
             Dictionary containing:
                 - preds: Predictions [B, pred_len, D_out]
                 - extras: Additional outputs (embeddings, etc.)
         """
-        B, T, D = x.shape
-
-        # Project input to model dimension
-        x = self.input_projection(x)  # [B, T, d_model]
-
-        # Add positional embedding
-        if self.pos_embedding is not None:
-            x = self.pos_embedding(x)
-
-        x = self.dropout(x)
-
-        # Store intermediate representations for analysis
-        layer_outputs = []
-
-        # Pass through TimesBlock layers
-        for layer in self.layers:
-            x_residual = x
-            x = layer(x)
-            x = x + x_residual  # Residual connection
-            x = self.norm(x)
-            layer_outputs.append(x)
-
-        # Use the last time step for prediction
-        # Or could use mean pooling: x.mean(dim=1)
-        x_last = x[:, -1, :]  # [B, d_model]
-
-        # Predict future steps
-        pred_flat = self.prediction_head(x_last)  # [B, pred_len * output_dim]
-
-        # Reshape to [B, pred_len, output_dim]
-        preds = pred_flat.reshape(B, self.pred_len, self.output_dim)
-
-        return {
-            "preds": preds,
-            "extras": {
-                "embeddings": x,
-                "layer_outputs": layer_outputs,
-                "last_hidden": x_last,
-            },
-        }
+        pred_len = int(kwargs.get("pred_len", self.pred_len))
+        latent, extras = self.encode(x, context=context)
+        preds = self.decode(latent, pred_len)
+        extras["representation"] = latent
+        return {"preds": preds, "extras": extras}

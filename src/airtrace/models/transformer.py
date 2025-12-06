@@ -1,12 +1,12 @@
 """Transformer-based autoregressive model."""
 
 import math
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
 
-from .base import ARBaseModel
+from .base import ResidualWrapperCompatible
 from .registry import register
 
 
@@ -49,7 +49,7 @@ class PositionalEncoding(nn.Module):
 
 
 @register("transformer")
-class TransformerModel(ARBaseModel):
+class TransformerModel(ResidualWrapperCompatible):
     """Transformer-based autoregressive model.
 
     Uses causal self-attention for sequence modeling.
@@ -133,6 +133,33 @@ class TransformerModel(ARBaseModel):
         mask = torch.triu(torch.ones(sz, sz), diagonal=1).bool()
         return mask
 
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context
+        _, seq_len, _ = x.shape
+
+        x_proj = self.input_projection(x)
+        x_embed = self.pos_encoder(x_proj)
+        mask = (
+            self._generate_square_subsequent_mask(seq_len).to(x.device)
+            if self.causal
+            else None
+        )
+        encoder_output = self.transformer_encoder(x_embed, mask=mask)
+        final_hidden = encoder_output[:, -1, :]
+        extras: Dict[str, torch.Tensor] = {
+            "encoder_output": encoder_output,
+            "hidden": final_hidden,
+        }
+        return final_hidden, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        preds = self.fc_out(latent).unsqueeze(1)
+        if pred_len != 1:
+            preds = preds.expand(-1, pred_len, -1)
+        return preds
+
     def forward(
         self,
         x: torch.Tensor,
@@ -149,36 +176,8 @@ class TransformerModel(ARBaseModel):
         Returns:
             Dictionary with 'preds' and 'extras'
         """
-        B, T_in, D_in = x.shape
-
-        # Project input to model dimension
-        x = self.input_projection(x)  # [B, T_in, d_model]
-
-        # Add positional encoding
-        x = self.pos_encoder(x)
-
-        # Create causal mask if needed
-        if self.causal:
-            mask = self._generate_square_subsequent_mask(T_in).to(x.device)
-        else:
-            mask = None
-
-        # Pass through transformer encoder
-        encoder_output = self.transformer_encoder(x, mask=mask)  # [B, T_in, d_model]
-
-        # Use final timestep for prediction
-        final_hidden = encoder_output[:, -1, :]  # [B, d_model]
-
-        # Project to output dimension
-        preds = self.fc_out(final_hidden)  # [B, D_out]
-
-        # Reshape to [B, 1, D_out]
-        preds = preds.unsqueeze(1)
-
-        return {
-            "preds": preds,
-            "extras": {
-                "encoder_output": encoder_output,
-                "hidden": final_hidden
-            }
-        }
+        pred_len = int(kwargs.get("pred_len", 1))
+        latent, extras = self.encode(x, context=context)
+        preds = self.decode(latent, pred_len)
+        extras["representation"] = latent
+        return {"preds": preds, "extras": extras}

@@ -57,3 +57,7 @@ High-difficulty baselines likely warrant a lightweight Torch adapter (no gradien
 ## Progress (2025-02-07)
 - Introduced a shared `ResidualWrapperCompatible` mixin that defines `encode`/`decode` hooks expected by a generic residual wrapper.
 - Refactored **gru_ar**, **lstm_ar**, and **tcn** to implement the mixin, exposing pooled latent representations and decoder reuse while keeping their original forwards for backward compatibility.
+
+## Progress (2025-02-08)
+- Refactored **transformer** to surface `encode`/`decode` adapters so the encoder stack can be reused by a residual pondering loop while maintaining the existing single-step forward path.
+- Refactored **timesnet** to provide wrapper hooks; the decode step enforces the configured `pred_len` to preserve the existing projection head contract while making the backbone reusable.
