@@ -11,12 +11,12 @@ Key innovations:
 """
 
 import math
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
 
-from .base import ARBaseModel
+from .base import ResidualWrapperCompatible
 from .registry import register
 
 
@@ -107,7 +107,7 @@ class PositionalEncoding(nn.Module):
 
 
 @register("patchtst")
-class PatchTSTModel(ARBaseModel):
+class PatchTSTModel(ResidualWrapperCompatible):
     """PatchTST: Patch Time Series Transformer.
 
     Channel-independent approach: Each channel (sensor) is processed
@@ -137,6 +137,7 @@ class PatchTSTModel(ARBaseModel):
         dim_feedforward: int = 256,
         dropout: float = 0.1,
         activation: str = "gelu",
+        pred_len: int = 1,
         **kwargs
     ):
         """Initialize PatchTST model.
@@ -159,6 +160,7 @@ class PatchTSTModel(ARBaseModel):
         self.patch_len = patch_len
         self.stride = stride
         self.d_model = d_model
+        self.pred_len = pred_len
 
         # Patching module
         self.patching = Patching(patch_len, stride)
@@ -200,74 +202,62 @@ class PatchTSTModel(ARBaseModel):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        """Encode input windows into flattened patch representations."""
+
+        B, _, D_in = x.shape
+
+        # Step 1: Create patches
+        patches = self.patching(x)
+        _, _, num_patches, patch_len = patches.shape
+
+        # Step 2: Process each channel independently
+        patches = patches.reshape(B * D_in, num_patches, patch_len)
+
+        # Step 3: Embed patches and add positional encoding
+        patch_embeddings = self.patch_embedding(patches)
+        patch_embeddings = self.pos_encoder(patch_embeddings)
+
+        # Step 4: Pass through transformer encoder
+        encoder_output = self.transformer_encoder(patch_embeddings)
+
+        # Step 5: Aggregate patch representations
+        channel_representations = encoder_output[:, -1, :]
+        channel_representations = channel_representations.reshape(B, D_in, self.d_model)
+
+        # Step 6: Flatten channel representations for decoding
+        flattened = channel_representations.reshape(B, D_in * self.d_model)
+
+        extras = {
+            "encoder_output": encoder_output,
+            "channel_representations": channel_representations,
+            "num_patches": num_patches,
+            "patch_len": self.patch_len,
+        }
+
+        return flattened, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        """Decode predictions from flattened patch features."""
+
+        preds = self.head(latent)
+        preds = preds.unsqueeze(1).repeat(1, pred_len, 1)
+        return preds
+
     def forward(
         self,
         x: torch.Tensor,
         context: Optional[torch.Tensor] = None,
         **kwargs
     ) -> Dict[str, torch.Tensor]:
-        """Forward pass.
+        """Forward pass using shared encode/decode hooks."""
 
-        Args:
-            x: Input tensor [B, T_in, D_in]
-            context: Optional context tensor (not used in PatchTST)
-            **kwargs: Additional arguments
+        latent, extras = self.encode(x, context=context)
+        preds = self.decode(latent, pred_len=self.pred_len)
 
-        Returns:
-            Dictionary with 'preds' and 'extras'
-        """
-        B, T_in, D_in = x.shape
-
-        # Step 1: Create patches
-        # patches: [B, D_in, N_patches, patch_len]
-        patches = self.patching(x)
-        _, _, N_patches, patch_len = patches.shape
-
-        # Step 2: Process each channel independently
-        # Reshape to process all channels in batch
-        # [B, D_in, N_patches, patch_len] -> [B*D_in, N_patches, patch_len]
-        patches = patches.reshape(B * D_in, N_patches, patch_len)
-
-        # Step 3: Embed patches
-        # [B*D_in, N_patches, patch_len] -> [B*D_in, N_patches, d_model]
-        patch_embeddings = self.patch_embedding(patches)
-
-        # Step 4: Add positional encoding
-        patch_embeddings = self.pos_encoder(patch_embeddings)
-
-        # Step 5: Pass through transformer encoder
-        # [B*D_in, N_patches, d_model]
-        encoder_output = self.transformer_encoder(patch_embeddings)
-
-        # Step 6: Aggregate patch representations
-        # Use the representation from the final patch for each channel
-        # [B*D_in, d_model]
-        channel_representations = encoder_output[:, -1, :]
-
-        # Step 7: Reshape back to separate batch and channels
-        # [B*D_in, d_model] -> [B, D_in, d_model]
-        channel_representations = channel_representations.reshape(B, D_in, self.d_model)
-
-        # Step 8: Flatten channel representations
-        # [B, D_in, d_model] -> [B, D_in * d_model]
-        flattened = channel_representations.reshape(B, D_in * self.d_model)
-
-        # Step 9: Final projection to output dimension
-        # [B, D_in * d_model] -> [B, D_out]
-        preds = self.head(flattened)
-
-        # Reshape to [B, 1, D_out] for consistency with other models
-        preds = preds.unsqueeze(1)
-
-        return {
-            "preds": preds,
-            "extras": {
-                "encoder_output": encoder_output,
-                "channel_representations": channel_representations,
-                "num_patches": N_patches,
-                "patch_len": self.patch_len
-            }
-        }
+        return {"preds": preds, "extras": extras}
 
     def __repr__(self):
         return (
