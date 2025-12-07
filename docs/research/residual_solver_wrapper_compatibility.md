@@ -105,3 +105,6 @@ High-difficulty baselines likely warrant a lightweight Torch adapter (no gradien
 
 ## Progress (2025-02-20)
 - Refactored baseline models **persistence**, **moving_average**, **zero**, **linear_trend**, **mean**, **median**, **drift**, **exponential_smoothing**, and **seasonal_naive** to implement `ResidualWrapperCompatible`, exposing their deterministic statistics through `encode`/`decode` so the residual solver wrapper can reuse aligned outputs across pondering steps without altering their single-step default behaviors.
+
+## Progress (2025-02-21)
+- Refactored statistical baselines **polynomial_trend**, **holt_linear_trend**, **holt_winters**, **theta**, **sarima**, and **var** to implement `ResidualWrapperCompatible`, threading their fitted trends or classical estimators through shared `encode`/`decode` hooks so the generic residual pondering wrapper can reuse cached outputs while preserving their existing single-step forecasting contracts.
