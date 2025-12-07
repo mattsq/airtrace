@@ -1,13 +1,13 @@
 """Crossformer: Transformer utilizing cross-dimension dependencies."""
 
 import math
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .base import ARBaseModel
+from .base import ResidualWrapperCompatible
 from .registry import register
 
 
@@ -145,7 +145,7 @@ class CrossformerEncoder(nn.Module):
 
 
 @register("crossformer")
-class CrossformerModel(ARBaseModel):
+class CrossformerModel(ResidualWrapperCompatible):
     """Crossformer model for multivariate forecasting.
 
     Implements the two-stage attention pipeline: temporal attention within each
@@ -217,26 +217,13 @@ class CrossformerModel(ARBaseModel):
         patches = x.unfold(dimension=1, size=self.seg_len, step=self.seg_stride)
         return patches  # [B, N_patches, D, seg_len]
 
-    def forward(
-        self,
-        x: torch.Tensor,
-        context: Optional[torch.Tensor] = None,
-        **kwargs,
-    ) -> Dict[str, torch.Tensor]:
-        """Forward pass for Crossformer.
-
-        Args:
-            x: Input tensor of shape [B, T_in, D_in].
-            context: Optional context tensor (unused).
-            **kwargs: Additional arguments.
-
-        Returns:
-            Dictionary containing predictions and intermediate features.
-        """
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         del context  # Crossformer currently ignores context inputs
 
         patches = self._create_patches(x)
-        B, n_patches, _, _ = patches.shape
+        _, n_patches, _, _ = patches.shape
 
         embedded = self.embedding(patches)
         encoded = self.encoder(embedded, num_groups=self.num_groups)
@@ -248,17 +235,43 @@ class CrossformerModel(ARBaseModel):
         else:
             raise ValueError("pooling must be either 'last' or 'mean'.")
 
-        pooled = self.dropout(pooled)
-        flattened = pooled.reshape(B, self.num_groups * self.d_model)
-        preds = self.projection(flattened).view(B, self.pred_len, self.output_dim)
+        extras: Dict[str, torch.Tensor] = {
+            "num_patches": torch.tensor(n_patches, device=x.device),
+            "num_groups": torch.tensor(self.num_groups, device=x.device),
+            "pooled_tokens": pooled,
+            "encoded_tokens": encoded,
+        }
+        return pooled, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        if pred_len != self.pred_len:
+            raise ValueError(
+                f"Crossformer only supports pred_len={self.pred_len}; got {pred_len}"
+            )
+
+        if latent.dim() != 3:
+            raise ValueError(
+                "Crossformer decode expects latent of shape [B, num_groups, d_model]"
+            )
+
+        pooled = self.dropout(latent)
+        flattened = pooled.reshape(latent.size(0), self.num_groups * self.d_model)
+        return self.projection(flattened).view(latent.size(0), pred_len, self.output_dim)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        context: Optional[torch.Tensor] = None,
+        **kwargs,
+    ) -> Dict[str, torch.Tensor]:
+        """Forward pass for Crossformer."""
+
+        latent, extras = self.encode(x, context=context)
+        preds = self.decode(latent, self.pred_len)
 
         return {
             "preds": preds,
-            "extras": {
-                "num_patches": torch.tensor(n_patches, device=x.device),
-                "num_groups": torch.tensor(self.num_groups, device=x.device),
-                "pooled_tokens": pooled,
-            },
+            "extras": extras,
         }
 
     def __repr__(self) -> str:

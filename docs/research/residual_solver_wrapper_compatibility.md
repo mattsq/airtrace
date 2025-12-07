@@ -81,3 +81,7 @@ High-difficulty baselines likely warrant a lightweight Torch adapter (no gradien
 ## Progress (2025-02-13)
 - Refactored **nbeats** to implement `ResidualWrapperCompatible`, factoring the block stack computation into reusable `encode`/`decode` hooks so stacked forecasts can be reused by a residual pondering wrapper without changing the default forward outputs.
 - Updated **frets** to surface its FFT/iFFT pipeline through `encode` and reuse the temporal/output projections in `decode`, enabling residual refinement on the time-domain latent while preserving the original forecasting contract.
+
+## Progress (2025-02-14)
+- Refactored **crossformer** to implement `ResidualWrapperCompatible`, exposing the pooled token representation via `encode` and reusing its projection head inside `decode` while guarding the configured horizon.
+- Refactored **informer** to provide wrapper hooks that cache the start token during `encode` and reuse the distilled encoder memory within `decode`, enabling the residual solver loop without altering the ProbSparse decoder flow.

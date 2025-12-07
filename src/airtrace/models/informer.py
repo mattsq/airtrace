@@ -6,7 +6,7 @@ from typing import Dict, Optional, Tuple
 import torch
 import torch.nn as nn
 
-from .base import ARBaseModel
+from .base import ResidualWrapperCompatible
 from .registry import register
 
 
@@ -229,7 +229,7 @@ class InformerDecoder(nn.Module):
 
 
 @register("informer")
-class InformerModel(ARBaseModel):
+class InformerModel(ResidualWrapperCompatible):
     """Informer: ProbSparse self-attention with distilling encoder-decoder.
 
     References:
@@ -281,29 +281,54 @@ class InformerModel(ARBaseModel):
         mask = torch.triu(torch.ones(sz, sz, device=device), diagonal=1).bool()
         return mask
 
-    def forward(self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs) -> Dict[str, torch.Tensor]:
-        B, T_in, _ = x.shape
-
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context
         enc_input = self.position_encoding(self.value_embedding(x))
         enc_output, attn_map = self.encoder(enc_input)
 
-        # Decoder input: repeat last observed timestep as start token
         start_token = x[:, -1:, :]
-        dec_input = start_token.repeat(1, self.pred_len, 1)
+        self._cached_start_token = start_token
+
+        extras: Dict[str, torch.Tensor] = {
+            "encoder_output": enc_output,
+            "sparse_attention": attn_map,
+            "start_token": start_token,
+        }
+        return enc_output, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        if pred_len != self.pred_len:
+            raise ValueError(
+                f"Informer only supports pred_len={self.pred_len}; got {pred_len}"
+            )
+
+        if not hasattr(self, "_cached_start_token"):
+            raise ValueError("encode must be called before decode to cache start token")
+
+        start_token = self._cached_start_token
+        dec_input = start_token.repeat(1, pred_len, 1)
         dec_input = self.position_encoding(self.value_embedding(dec_input))
 
-        dec_mask = self._generate_square_subsequent_mask(self.pred_len, x.device)
-        dec_output = self.decoder(dec_input, enc_output, dec_mask)
+        dec_mask = self._generate_square_subsequent_mask(pred_len, dec_input.device)
+        dec_output = self.decoder(dec_input, latent, dec_mask)
+        self._cached_decoder_output = dec_output
 
-        preds = self.projection(dec_output)
+        return self.projection(dec_output)
+
+    def forward(self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs) -> Dict[str, torch.Tensor]:
+        B, T_in, _ = x.shape
+        del B, T_in
+
+        enc_output, extras = self.encode(x, context=context)
+        preds = self.decode(enc_output, self.pred_len)
+
+        extras["decoder_output"] = getattr(self, "_cached_decoder_output", None)
 
         return {
             "preds": preds,
-            "extras": {
-                "encoder_output": enc_output,
-                "decoder_output": dec_output,
-                "sparse_attention": attn_map,
-            },
+            "extras": extras,
         }
 
     def __repr__(self) -> str:  # pragma: no cover - readability helper
