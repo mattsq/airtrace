@@ -266,6 +266,9 @@ class FreTSModel(ResidualWrapperCompatible):
             "freq_components_orig": x_freq_low.abs(),
             "freq_components_processed": x_freq_processed.abs(),
             "time_representation": latent,
+            # Reconstructed time-domain signal from processed frequency components
+            # (kept for backward compatibility with tests and downstream consumers)
+            "time_reconstruction": latent,
         }
         return latent, extras
 
