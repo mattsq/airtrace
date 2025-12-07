@@ -873,7 +873,8 @@ class HoltWintersModel(ResidualWrapperCompatible):
             "beta": torch.tensor(self.beta, device=x.device),
             "gamma": torch.tensor(self.gamma, device=x.device),
             "season_length": torch.tensor(self.season_length, device=x.device),
-            "seasonal_type": torch.tensor(0 if self.seasonal == "additive" else 1, device=x.device),
+            # Preserve human-readable seasonal type for downstream consumers/tests.
+            "seasonal_type": self.seasonal,
             "level": level,
             "trend": trend,
             "seasonals": seasonals,
