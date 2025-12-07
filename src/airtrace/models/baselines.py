@@ -529,7 +529,7 @@ class SeasonalNaiveModel(ResidualWrapperCompatible):
 
 
 @register("polynomial_trend")
-class PolynomialTrendModel(ARBaseModel):
+class PolynomialTrendModel(ResidualWrapperCompatible):
     """Polynomial trend baseline model.
 
     Fits a polynomial trend (quadratic, cubic, etc.) to the input sequence
@@ -560,19 +560,10 @@ class PolynomialTrendModel(ARBaseModel):
         self.degree = degree
         # No trainable parameters at all
 
-    def forward(
-        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
-    ) -> Dict[str, torch.Tensor]:
-        """Forward pass - fit polynomial trend and extrapolate.
-
-        Args:
-            x: Input tensor [B, T_in, D_in]
-            context: Optional context tensor (ignored)
-            **kwargs: Additional arguments (ignored)
-
-        Returns:
-            Dictionary with 'preds' [B, 1, D_out]
-        """
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context
         B, T_in, D_in = x.shape
 
         # Create time indices [0, 1, 2, ..., T_in-1]
@@ -609,30 +600,32 @@ class PolynomialTrendModel(ARBaseModel):
 
         # Reshape back: [B*D_in] -> [B, D_in]
         next_value = next_value.reshape(B, D_in)
+        aligned = _match_output_dim(next_value, self.output_dim)
 
-        # Handle dimension mismatch with non-parametric approach
-        if next_value.shape[1] != self.output_dim:
-            if next_value.shape[1] >= self.output_dim:
-                # Take first output_dim features
-                next_value = next_value[:, :self.output_dim]
-            else:
-                # Pad with zeros if needed
-                padding = torch.zeros(
-                    next_value.shape[0],
-                    self.output_dim - next_value.shape[1],
-                    device=next_value.device,
-                    dtype=next_value.dtype
-                )
-                next_value = torch.cat([next_value, padding], dim=1)
+        extras: Dict[str, torch.Tensor] = {
+            "degree": torch.tensor(self.degree, device=x.device),
+            "coeffs": coeffs.reshape(B, D_in, -1),
+        }
+        extras["latent"] = aligned
+        return aligned, extras
 
-        # Reshape to [B, 1, D_out]
-        preds = next_value.unsqueeze(1)
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        return _repeat_predictions(latent, pred_len)
 
-        return {"preds": preds, "extras": {"degree": self.degree}}
+    def forward(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
+    ) -> Dict[str, torch.Tensor]:
+        """Forward pass - fit polynomial trend and extrapolate."""
+
+        pred_len = int(kwargs.get("pred_len", 1))
+        latent, extras = self.encode(x, context=context)
+        preds = self.decode(latent, pred_len)
+
+        return {"preds": preds, "extras": extras}
 
 
 @register("holt_linear_trend")
-class HoltLinearTrendModel(ARBaseModel):
+class HoltLinearTrendModel(ResidualWrapperCompatible):
     """Holt's linear trend model (double exponential smoothing).
 
     Uses two smoothing equations:
@@ -669,19 +662,10 @@ class HoltLinearTrendModel(ARBaseModel):
         self.beta = beta
         # No trainable parameters at all
 
-    def forward(
-        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
-    ) -> Dict[str, torch.Tensor]:
-        """Forward pass - apply Holt's linear trend method.
-
-        Args:
-            x: Input tensor [B, T_in, D_in]
-            context: Optional context tensor (ignored)
-            **kwargs: Additional arguments (ignored)
-
-        Returns:
-            Dictionary with 'preds' [B, 1, D_out]
-        """
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context
         B, T_in, D_in = x.shape
 
         # Initialize level and trend
@@ -706,33 +690,34 @@ class HoltLinearTrendModel(ARBaseModel):
 
         # Forecast: l_T + b_T
         next_value = level + trend  # [B, D_in]
+        aligned = _match_output_dim(next_value, self.output_dim)
 
-        # Handle dimension mismatch with non-parametric approach
-        if next_value.shape[1] != self.output_dim:
-            if next_value.shape[1] >= self.output_dim:
-                # Take first output_dim features
-                next_value = next_value[:, :self.output_dim]
-            else:
-                # Pad with zeros if needed
-                padding = torch.zeros(
-                    next_value.shape[0],
-                    self.output_dim - next_value.shape[1],
-                    device=next_value.device,
-                    dtype=next_value.dtype
-                )
-                next_value = torch.cat([next_value, padding], dim=1)
-
-        # Reshape to [B, 1, D_out]
-        preds = next_value.unsqueeze(1)
-
-        return {
-            "preds": preds,
-            "extras": {"alpha": self.alpha, "beta": self.beta, "level": level, "trend": trend},
+        extras: Dict[str, torch.Tensor] = {
+            "alpha": torch.tensor(self.alpha, device=x.device),
+            "beta": torch.tensor(self.beta, device=x.device),
+            "level": level,
+            "trend": trend,
         }
+        extras["latent"] = aligned
+        return aligned, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        return _repeat_predictions(latent, pred_len)
+
+    def forward(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
+    ) -> Dict[str, torch.Tensor]:
+        """Forward pass - apply Holt's linear trend method."""
+
+        pred_len = int(kwargs.get("pred_len", 1))
+        latent, extras = self.encode(x, context=context)
+        preds = self.decode(latent, pred_len)
+
+        return {"preds": preds, "extras": extras}
 
 
 @register("holt_winters")
-class HoltWintersModel(ARBaseModel):
+class HoltWintersModel(ResidualWrapperCompatible):
     """Holt-Winters (triple exponential smoothing) baseline model.
 
     Extends Holt's method with a seasonal component controlled by ``gamma`` and ``season_length``.
@@ -841,12 +826,10 @@ class HoltWintersModel(ARBaseModel):
 
         return level, trend, seasonals
 
-    def forward(
-        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
-    ) -> Dict[str, torch.Tensor]:
-        """Forward pass applying Holt-Winters smoothing."""
-
-        del context, kwargs
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context
 
         B, T_in, D_in = x.shape
         level, trend, seasonals = self._initialize_states(x)
@@ -883,40 +866,38 @@ class HoltWintersModel(ARBaseModel):
         else:
             next_value = (level + trend) * next_season
 
-        # Handle dimension mismatch with non-parametric approach
-        if next_value.shape[1] != self.output_dim:
-            if next_value.shape[1] >= self.output_dim:
-                # Take first output_dim features
-                next_value = next_value[:, :self.output_dim]
-            else:
-                # Pad with zeros if needed
-                padding = torch.zeros(
-                    next_value.shape[0],
-                    self.output_dim - next_value.shape[1],
-                    device=next_value.device,
-                    dtype=next_value.dtype
-                )
-                next_value = torch.cat([next_value, padding], dim=1)
+        aligned = _match_output_dim(next_value, self.output_dim)
 
-        preds = next_value.unsqueeze(1)
-
-        return {
-            "preds": preds,
-            "extras": {
-                "alpha": self.alpha,
-                "beta": self.beta,
-                "gamma": self.gamma,
-                "season_length": self.season_length,
-                "seasonal_type": self.seasonal,
-                "level": level,
-                "trend": trend,
-                "seasonals": seasonals,
-            },
+        extras = {
+            "alpha": torch.tensor(self.alpha, device=x.device),
+            "beta": torch.tensor(self.beta, device=x.device),
+            "gamma": torch.tensor(self.gamma, device=x.device),
+            "season_length": torch.tensor(self.season_length, device=x.device),
+            "seasonal_type": torch.tensor(0 if self.seasonal == "additive" else 1, device=x.device),
+            "level": level,
+            "trend": trend,
+            "seasonals": seasonals,
         }
+        extras["latent"] = aligned
+        return aligned, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        return _repeat_predictions(latent, pred_len)
+
+    def forward(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
+    ) -> Dict[str, torch.Tensor]:
+        """Forward pass applying Holt-Winters smoothing."""
+
+        pred_len = int(kwargs.get("pred_len", 1))
+        latent, extras = self.encode(x, context=context)
+        preds = self.decode(latent, pred_len)
+
+        return {"preds": preds, "extras": extras}
 
 
 @register("theta")
-class ThetaModel(ARBaseModel):
+class ThetaModel(ResidualWrapperCompatible):
     """Theta method baseline model.
 
     The Theta method decomposes the time series into two "theta lines":
@@ -949,26 +930,16 @@ class ThetaModel(ARBaseModel):
         self.alpha = alpha
         # No trainable parameters at all
 
-    def forward(
-        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
-    ) -> Dict[str, torch.Tensor]:
-        """Forward pass - apply Theta method.
-
-        Args:
-            x: Input tensor [B, T_in, D_in]
-            context: Optional context tensor (ignored)
-            **kwargs: Additional arguments (ignored)
-
-        Returns:
-            Dictionary with 'preds' [B, 1, D_out]
-        """
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context
         B, T_in, D_in = x.shape
 
         # Create time indices
         t = torch.arange(T_in, device=x.device, dtype=x.dtype)  # [T_in]
 
         # Theta-0 line: Linear regression (long-term trend)
-        # This is the same as linear_trend model
         t_mean = t.mean()
         t_sum = t.sum()
         t_sq_sum = (t**2).sum()
@@ -992,60 +963,47 @@ class ThetaModel(ARBaseModel):
         theta0_forecast = a + b * T_in  # [B, D_in]
 
         # Theta-2 line: Apply second differences and extrapolate
-        # Compute second differences: z_t = y_t - 2*theta*y_{t-1} + theta*y_{t-2}
-        # For theta=2: z_t = y_t - 4*y_{t-1} + 2*y_{t-2}
         if T_in >= 2:
-            # Remove linear trend to get detrended series
             detrended = x - (a.unsqueeze(1) + b.unsqueeze(1) * t_bc)  # [B, T_in, D_in]
-
-            # Apply simple exponential smoothing to detrended series
-            # (classic Theta method uses SES for theta-2 line)
             ses_alpha = 0.3  # Can be tuned
             smoothed = detrended[:, 0, :]  # [B, D_in]
 
             for i in range(1, T_in):
                 smoothed = ses_alpha * detrended[:, i, :] + (1 - ses_alpha) * smoothed
 
-            # Theta-2 forecast is trend + smoothed residual
             theta2_forecast = theta0_forecast + smoothed  # [B, D_in]
         else:
-            # Not enough data for theta-2, fall back to theta-0
             theta2_forecast = theta0_forecast
 
-        # Combine forecasts
         next_value = self.alpha * theta0_forecast + (1 - self.alpha) * theta2_forecast  # [B, D_in]
+        aligned = _match_output_dim(next_value, self.output_dim)
 
-        # Handle dimension mismatch with non-parametric approach
-        if next_value.shape[1] != self.output_dim:
-            if next_value.shape[1] >= self.output_dim:
-                # Take first output_dim features
-                next_value = next_value[:, :self.output_dim]
-            else:
-                # Pad with zeros if needed
-                padding = torch.zeros(
-                    next_value.shape[0],
-                    self.output_dim - next_value.shape[1],
-                    device=next_value.device,
-                    dtype=next_value.dtype
-                )
-                next_value = torch.cat([next_value, padding], dim=1)
-
-        # Reshape to [B, 1, D_out]
-        preds = next_value.unsqueeze(1)
-
-        return {
-            "preds": preds,
-            "extras": {
-                "theta": self.theta,
-                "alpha": self.alpha,
-                "theta0_forecast": theta0_forecast,
-                "theta2_forecast": theta2_forecast,
-            },
+        extras = {
+            "theta": torch.tensor(self.theta, device=x.device),
+            "alpha": torch.tensor(self.alpha, device=x.device),
+            "theta0_forecast": theta0_forecast,
+            "theta2_forecast": theta2_forecast,
         }
+        extras["latent"] = aligned
+        return aligned, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        return _repeat_predictions(latent, pred_len)
+
+    def forward(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
+    ) -> Dict[str, torch.Tensor]:
+        """Forward pass - apply Theta method."""
+
+        pred_len = int(kwargs.get("pred_len", 1))
+        latent, extras = self.encode(x, context=context)
+        preds = self.decode(latent, pred_len)
+
+        return {"preds": preds, "extras": extras}
 
 
 @register("sarima")
-class SARIMAModel(ARBaseModel):
+class SARIMAModel(ResidualWrapperCompatible):
     """Seasonal ARIMA baseline model using statsmodels."""
 
     def __init__(
@@ -1103,14 +1061,10 @@ class SARIMAModel(ARBaseModel):
         forecast = result.forecast(steps=1)
         return float(forecast[0])
 
-    def forward(
-        self,
-        x: torch.Tensor,
-        context: Optional[torch.Tensor] = None,
-        **kwargs,
-    ) -> Dict[str, torch.Tensor]:
-        """Forward pass - fit SARIMA per feature and forecast next timestep."""
-
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, Union[torch.Tensor, str]]]:
+        del context
         B, _, D_in = x.shape
         preds = torch.zeros(B, D_in, dtype=torch.double)
         success_mask = torch.zeros(B, D_in, dtype=torch.bool)
@@ -1143,8 +1097,6 @@ class SARIMAModel(ARBaseModel):
         if self.projection is not None:
             preds_tensor = self.projection(preds_tensor)
 
-        preds_tensor = preds_tensor.unsqueeze(1)
-
         extras: Dict[str, Union[torch.Tensor, str]] = {
             "success_mask": success_mask.to(device=x.device),
             "failure_mask": failure_mask.to(device=x.device),
@@ -1159,11 +1111,29 @@ class SARIMAModel(ARBaseModel):
         if last_error is not None:
             extras["last_error"] = last_error
 
-        return {"preds": preds_tensor, "extras": extras}
+        extras["latent"] = preds_tensor
+        return preds_tensor, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        return _repeat_predictions(latent, pred_len)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        context: Optional[torch.Tensor] = None,
+        **kwargs,
+    ) -> Dict[str, torch.Tensor]:
+        """Forward pass - fit SARIMA per feature and forecast next timestep."""
+
+        pred_len = int(kwargs.get("pred_len", 1))
+        latent, extras = self.encode(x, context=context)
+        preds = self.decode(latent, pred_len)
+
+        return {"preds": preds, "extras": extras}
 
 
 @register("var")
-class VARModel(ARBaseModel):
+class VARModel(ResidualWrapperCompatible):
     """Vector autoregression (VAR) baseline model.
 
     Fits a multivariate autoregression on-the-fly using the incoming window and
@@ -1264,36 +1234,22 @@ class VARModel(ARBaseModel):
 
         return weights, intercept
 
-    def forward(
+    def encode(
         self,
         x: torch.Tensor,
         context: Optional[torch.Tensor] = None,
-        **kwargs,
-    ) -> Dict[str, torch.Tensor]:
-        """Forward pass - fit VAR coefficients and forecast next timestep."""
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context
 
         B, T_in, D_in = x.shape
         extras: Dict[str, torch.Tensor] = {}
 
         if T_in <= self.order:
             last_value = x[:, -1, :]
-            # Handle dimension mismatch with non-parametric approach
-            if last_value.shape[1] != self.output_dim:
-                if last_value.shape[1] >= self.output_dim:
-                    # Take first output_dim features
-                    last_value = last_value[:, :self.output_dim]
-                else:
-                    # Pad with zeros if needed
-                    padding = torch.zeros(
-                        last_value.shape[0],
-                        self.output_dim - last_value.shape[1],
-                        device=last_value.device,
-                        dtype=last_value.dtype
-                    )
-                    last_value = torch.cat([last_value, padding], dim=1)
-            preds = last_value.unsqueeze(1)
+            aligned = _match_output_dim(last_value, self.output_dim)
             extras["fitted"] = torch.tensor(False, device=x.device)
-            return {"preds": preds, "extras": extras}
+            extras["latent"] = aligned
+            return aligned, extras
 
         design, targets = self._prepare_design(x)
         weights, intercept = self._solve_coefficients(design, targets)
@@ -1307,22 +1263,7 @@ class VARModel(ARBaseModel):
         forecast_core = torch.einsum("bod,bodk->bk", lag_tensor, lag_matrices)
         next_value = forecast_core + intercept
 
-        # Handle dimension mismatch with non-parametric approach
-        if next_value.shape[1] != self.output_dim:
-            if next_value.shape[1] >= self.output_dim:
-                # Take first output_dim features
-                next_value = next_value[:, :self.output_dim]
-            else:
-                # Pad with zeros if needed
-                padding = torch.zeros(
-                    next_value.shape[0],
-                    self.output_dim - next_value.shape[1],
-                    device=next_value.device,
-                    dtype=next_value.dtype
-                )
-                next_value = torch.cat([next_value, padding], dim=1)
-
-        preds = next_value.unsqueeze(1)
+        aligned = _match_output_dim(next_value, self.output_dim)
 
         extras.update(
             {
@@ -1332,11 +1273,26 @@ class VARModel(ARBaseModel):
                 "order": torch.tensor(self.order, device=x.device),
             }
         )
+        extras["latent"] = aligned
 
-        return {
-            "preds": preds,
-            "extras": extras,
-        }
+        return aligned, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        return _repeat_predictions(latent, pred_len)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        context: Optional[torch.Tensor] = None,
+        **kwargs,
+    ) -> Dict[str, torch.Tensor]:
+        """Forward pass - fit VAR coefficients and forecast next timestep."""
+
+        pred_len = int(kwargs.get("pred_len", 1))
+        latent, extras = self.encode(x, context=context)
+        preds = self.decode(latent, pred_len)
+
+        return {"preds": preds, "extras": extras}
 
 
 @register("linear_ar")
