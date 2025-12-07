@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .base import ARBaseModel
+from .base import ResidualWrapperCompatible
 from .registry import register
 
 LOGGER = logging.getLogger(__name__)
@@ -211,7 +211,7 @@ class GatedConvAttentionBlock(nn.Module):
 
 
 @register("chronos_bolt")
-class ChronosBoltModel(ARBaseModel):
+class ChronosBoltModel(ResidualWrapperCompatible):
     """Chronos-Bolt style foundation model with optional LoRA adapters."""
 
     def __init__(
@@ -323,13 +323,10 @@ class ChronosBoltModel(ARBaseModel):
             pos_emb = self.pos_embedding[:, :num_tokens, :]
         return tokens + pos_emb
 
-    def forward(
-        self,
-        x: torch.Tensor,
-        context: Optional[torch.Tensor] = None,
-        **kwargs,
-    ) -> Dict[str, torch.Tensor]:
-        del context, kwargs
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context
         if x.shape[1] < self.patch_size:
             raise ValueError("Input sequence is shorter than the patch size")
 
@@ -343,10 +340,27 @@ class ChronosBoltModel(ARBaseModel):
 
         tokens = self.final_norm(tokens)
         pooled = tokens.mean(dim=1)
-        preds = self.head(pooled).view(-1, self.pred_len, self.output_dim)
-
         extras = {
             "patch_tokens": tokens,
             "attention_maps": attn_maps,
         }
+        return pooled, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        if pred_len != self.pred_len:
+            raise ValueError(
+                f"ChronosBoltModel only supports pred_len={self.pred_len}, got {pred_len}"
+            )
+        return self.head(latent).view(-1, pred_len, self.output_dim)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        context: Optional[torch.Tensor] = None,
+        **kwargs,
+    ) -> Dict[str, torch.Tensor]:
+        pred_len = int(kwargs.get("pred_len", self.pred_len))
+        latent, extras = self.encode(x, context=context)
+        preds = self.decode(latent, pred_len)
+        extras["representation"] = latent
         return {"preds": preds, "extras": extras}

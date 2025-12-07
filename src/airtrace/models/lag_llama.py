@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 
-from .base import ARBaseModel
+from .base import ResidualWrapperCompatible
 from .registry import register
 
 
@@ -179,7 +179,7 @@ class LagLlamaNoisePredictor(nn.Module):
 
 
 @register("lag_llama")
-class LagLlamaModel(ARBaseModel):
+class LagLlamaModel(ResidualWrapperCompatible):
     """Retrieval-augmented Lag-Llama-style probabilistic forecaster."""
 
     def __init__(
@@ -340,6 +340,48 @@ class LagLlamaModel(ARBaseModel):
         mean_pred = samples.mean(dim=1)
         return mean_pred, samples
 
+    def encode(
+        self,
+        x: torch.Tensor,
+        context: Optional[torch.Tensor] = None,
+        retrieval_bank: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, Dict[str, Optional[torch.Tensor]]]:
+        del context
+        context_tokens = self._encode_sequences(x)
+        summaries = context_tokens.mean(dim=1)
+        retrieved = self._retrieve(summaries, x.device, retrieval_bank)
+        extras: Dict[str, Optional[torch.Tensor]] = {
+            "context_tokens": context_tokens,
+            "retrieved_neighbors": retrieved,
+        }
+        return summaries, extras
+
+    def decode(
+        self,
+        latent: torch.Tensor,
+        pred_len: int,
+        *,
+        extras: Optional[Dict[str, Optional[torch.Tensor]]] = None,
+        num_samples: int = 1,
+    ) -> torch.Tensor:
+        if pred_len != self.pred_len:
+            raise ValueError(
+                f"LagLlamaModel only supports pred_len={self.pred_len}, got {pred_len}"
+            )
+
+        base = self.decoder(latent).view(latent.shape[0], pred_len, self.output_dim)
+        context_tokens = extras.get("context_tokens") if extras else None
+        retrieved = extras.get("retrieved_neighbors") if extras else None
+        if num_samples <= 1 or self.diffusion_steps == 0 or context_tokens is None:
+            return base
+
+        preds, sample_bank = self._diffusion_sample(
+            base, context_tokens, retrieved, num_samples
+        )
+        if extras is not None:
+            extras["samples"] = sample_bank
+        return preds
+
     def forward(
         self,
         x: torch.Tensor,
@@ -350,26 +392,23 @@ class LagLlamaModel(ARBaseModel):
     ) -> Dict[str, torch.Tensor]:
         """Forward pass returning mean prediction and optional samples."""
 
-        context_tokens = self._encode_sequences(x)
-        summaries = context_tokens.mean(dim=1)
-        retrieved = self._retrieve(summaries, x.device, retrieval_bank)
-        base = self.decoder(summaries).view(x.shape[0], self.pred_len, self.output_dim)
-        if num_samples <= 1 or self.diffusion_steps == 0:
-            preds = base
-            sample_bank = base.unsqueeze(1)
-        else:
-            preds, sample_bank = self._diffusion_sample(
-                base, context_tokens, retrieved, num_samples
-            )
+        latent, extras = self.encode(
+            x, context=context, retrieval_bank=retrieval_bank
+        )
+        preds = self.decode(latent, self.pred_len, extras=extras, num_samples=num_samples)
         context_summary = (
             context.mean(dim=1, keepdim=True).detach()
             if context is not None and context.dim() >= 2
             else None
         )
-        extras: Dict[str, Optional[torch.Tensor]] = {
-            "context_tokens": context_tokens.detach(),
-            "retrieved_neighbors": retrieved.detach() if retrieved is not None else None,
-            "samples": sample_bank.detach(),
+        samples = extras.get("samples") if extras else None
+        if samples is None:
+            samples = preds.unsqueeze(1)
+        final_extras: Dict[str, Optional[torch.Tensor]] = {
+            "context_tokens": extras.get("context_tokens") if extras else None,
+            "retrieved_neighbors": extras.get("retrieved_neighbors") if extras else None,
+            "samples": samples.detach(),
             "context_summary": context_summary,
         }
-        return {"preds": preds, "extras": extras}
+        final_extras["representation"] = latent
+        return {"preds": preds, "extras": final_extras}
