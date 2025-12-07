@@ -25,7 +25,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .base import ARBaseModel
+from .base import ResidualWrapperCompatible
 from .registry import register
 
 
@@ -123,7 +123,7 @@ class TimerInputNormalizer(nn.Module):
 
 
 @register("timer")
-class TimerModel(ARBaseModel):
+class TimerModel(ResidualWrapperCompatible):
     """Timer foundation model for time series forecasting.
 
     This is a wrapper around the HuggingFace Timer model that adapts it to
