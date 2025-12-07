@@ -143,7 +143,7 @@ class MovingAverageModel(ResidualWrapperCompatible):
 
     def encode(
         self, x: torch.Tensor, context: Optional[torch.Tensor] = None
-    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+    ) -> Tuple[torch.Tensor, Dict[str, Union[torch.Tensor, bool]]]:
         del context
         if self.window_size is not None:
             window = x[:, -self.window_size :, :]
@@ -498,7 +498,7 @@ class SeasonalNaiveModel(ResidualWrapperCompatible):
 
     def encode(
         self, x: torch.Tensor, context: Optional[torch.Tensor] = None
-    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+    ) -> Tuple[torch.Tensor, Dict[str, Union[torch.Tensor, bool]]]:
         del context
         B, T_in, _ = x.shape
 
@@ -512,7 +512,7 @@ class SeasonalNaiveModel(ResidualWrapperCompatible):
         aligned = _match_output_dim(seasonal_value, self.output_dim)
         extras = {
             "season_length": torch.tensor(self.season_length, device=x.device),
-            "used_seasonal": torch.tensor(used_seasonal, device=x.device),
+            "used_seasonal": used_seasonal,
         }
         return aligned, extras
 
