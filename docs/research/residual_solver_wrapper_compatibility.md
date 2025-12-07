@@ -92,3 +92,7 @@ High-difficulty baselines likely warrant a lightweight Torch adapter (no gradien
 
 ## Progress (2025-02-16)
 - Refactored **tft**, **mamba2**, **mambats**, **cyclenet**, **itransformer**, and **nonstationary_transformer** to implement `ResidualWrapperCompatible`, exposing reusable encoder/decoder hooks while caching normalization, cycle, and attention artifacts required to reproduce their existing forward contracts under a generic residual pondering wrapper.
+
+## Progress (2025-02-17)
+- Updated **latent_ponder** to consume `ResidualWrapperCompatible` bases through shared `encode`/`decode` hooks while retaining the legacy forward fallback, aligning pondering initialization with the generic residual solver wrapper.
+- Refactored **linear_ar** and **mlp_ar** to implement `ResidualWrapperCompatible`, flattening window inputs into reusable latents and sharing their projection heads inside `decode` so lightweight baselines can participate in residual pondering loops.
