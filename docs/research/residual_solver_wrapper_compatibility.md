@@ -98,4 +98,7 @@ High-difficulty baselines likely warrant a lightweight Torch adapter (no gradien
 - Refactored **linear_ar** and **mlp_ar** to implement `ResidualWrapperCompatible`, flattening window inputs into reusable latents and sharing their projection heads inside `decode` so lightweight baselines can participate in residual pondering loops.
 
 ## Progress (2025-02-18)
-- Refactored **chronos_bolt**, **lag_llama**, **moirai**, and **timer** to implement `ResidualWrapperCompatible`, exposing pooled foundation backbones and reusing their projection heads through `encode`/`decode` adapters while guarding normalization, horizon, and retrieval hooks for a generic residual pondering wrapper.
+- Refactored **chronos_bolt**, **lag_llama**, and **moirai** to implement `ResidualWrapperCompatible`, exposing pooled foundation backbones and reusing their projection heads through `encode`/`decode` adapters while guarding normalization, horizon, and retrieval hooks for a generic residual pondering wrapper.
+
+## Progress (2025-02-19)
+- Refactored **timer** to inherit `ResidualWrapperCompatible`, ensuring the Hugging Face backbone and input normalization caches are surfaced through `encode`/`decode` so a generic residual pondering wrapper can reuse cached representations while preserving the existing forward contract.
