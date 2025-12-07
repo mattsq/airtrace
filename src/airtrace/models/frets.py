@@ -14,13 +14,13 @@ Key design choices for AirTrace:
 
 from __future__ import annotations
 
-from typing import Dict, Literal, Optional
+from typing import Dict, Literal, Optional, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .base import ARBaseModel
+from .base import ResidualWrapperCompatible
 from .registry import register
 
 
@@ -145,7 +145,7 @@ class ChannelMixing(nn.Module):
 
 
 @register("frets")
-class FreTSModel(ARBaseModel):
+class FreTSModel(ResidualWrapperCompatible):
     """FreTS: Frequency-domain MLP model for time series forecasting.
 
     This model:
@@ -225,6 +225,65 @@ class FreTSModel(ARBaseModel):
         else:
             self.output_projection = None
 
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context
+        batch_size, seq_len, _ = x.shape
+
+        if seq_len != self.seq_len:
+            raise ValueError(
+                f"Expected input sequence length {self.seq_len}, got {seq_len}"
+            )
+
+        projected = self.input_projection(x)
+        x_freq = torch.fft.rfft(
+            projected, dim=1, norm="ortho" if self.normalize_fft else None
+        )
+        x_freq_low = x_freq[:, :self.num_freqs, :]
+        x_freq_processed = self.freq_mlp(x_freq_low)
+
+        if self.num_freqs < x_freq.size(1):
+            padding = torch.zeros(
+                batch_size,
+                x_freq.size(1) - self.num_freqs,
+                self.d_model,
+                dtype=x_freq_processed.dtype,
+                device=x_freq_processed.device,
+            )
+            x_freq_full = torch.cat([x_freq_processed, padding], dim=1)
+        else:
+            x_freq_full = x_freq_processed
+
+        latent = torch.fft.irfft(
+            x_freq_full,
+            n=self.seq_len,
+            dim=1,
+            norm="ortho" if self.normalize_fft else None,
+        )
+
+        extras = {
+            "freq_components_orig": x_freq_low.abs(),
+            "freq_components_processed": x_freq_processed.abs(),
+            "time_representation": latent,
+        }
+        return latent, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        if pred_len != self.pred_len:
+            raise ValueError(
+                f"FreTSModel only supports pred_len={self.pred_len}, got {pred_len}"
+            )
+
+        time_features = latent.transpose(1, 2)
+        preds = self.temporal_projection(time_features)
+        preds = preds.transpose(1, 2)
+
+        if self.output_projection is not None:
+            preds = self.output_projection(preds)
+
+        return preds
+
     def forward(
         self,
         x: torch.Tensor,
@@ -243,67 +302,8 @@ class FreTSModel(ARBaseModel):
                 - preds: Predictions [B, T_out, D_out]
                 - extras: Additional outputs (frequency components, etc.)
         """
-        B, T, D = x.shape
-
-        if T != self.seq_len:
-            raise ValueError(
-                f"Expected input sequence length {self.seq_len}, got {T}"
-            )
-
-        # Project input to d_model
-        x = self.input_projection(x)  # [B, T, d_model]
-
-        # Transform to frequency domain using FFT
-        # Apply FFT along the time dimension
-        x_freq = torch.fft.rfft(x, dim=1, norm="ortho" if self.normalize_fft else None)
-        # x_freq: [B, T//2+1, d_model] (complex-valued)
-
-        # Keep only low-frequency components
-        x_freq_low = x_freq[:, :self.num_freqs, :]  # [B, num_freqs, d_model]
-
-        # Store original for extras
-        x_freq_orig = x_freq_low.clone()
-
-        # Process in frequency domain with MLP
-        x_freq_processed = self.freq_mlp(x_freq_low)  # [B, num_freqs, d_model]
-
-        # Pad back to original frequency length if needed
-        if self.num_freqs < x_freq.size(1):
-            # Pad with zeros for high frequencies
-            padding = torch.zeros(
-                B,
-                x_freq.size(1) - self.num_freqs,
-                self.d_model,
-                dtype=x_freq_processed.dtype,
-                device=x_freq_processed.device,
-            )
-            x_freq_full = torch.cat([x_freq_processed, padding], dim=1)
-        else:
-            x_freq_full = x_freq_processed
-
-        # Transform back to time domain using inverse FFT
-        x_time = torch.fft.irfft(
-            x_freq_full,
-            n=self.seq_len,
-            dim=1,
-            norm="ortho" if self.normalize_fft else None,
-        )  # [B, T, d_model]
-
-        # Project from seq_len to pred_len
-        # Transpose to [B, d_model, T] for temporal convolution
-        x_time = x_time.transpose(1, 2)  # [B, d_model, T]
-        preds = self.temporal_projection(x_time)  # [B, d_model, pred_len]
-        preds = preds.transpose(1, 2)  # [B, pred_len, d_model]
-
-        # Output projection to target dimension
-        if self.output_projection is not None:
-            preds = self.output_projection(preds)  # [B, pred_len, output_dim]
-
-        # Prepare extras
-        extras = {
-            "freq_components_orig": x_freq_orig.abs(),  # [B, num_freqs, d_model]
-            "freq_components_processed": x_freq_processed.abs(),  # [B, num_freqs, d_model]
-            "time_reconstruction": x_time.transpose(1, 2),  # [B, T, d_model]
-        }
-
+        pred_len = int(kwargs.get("pred_len", self.pred_len))
+        latent, extras = self.encode(x, context=context)
+        preds = self.decode(latent, pred_len)
+        extras["representation"] = latent
         return {"preds": preds, "extras": extras}
