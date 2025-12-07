@@ -16,13 +16,13 @@ Reference: https://arxiv.org/abs/2310.06625
 """
 
 import math
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
 from torch.nn.parameter import UninitializedParameter
 
-from .base import ARBaseModel
+from .base import ResidualWrapperCompatible
 from .registry import register
 
 
@@ -105,7 +105,7 @@ class LearnablePositionalEncoding(nn.Module):
 
 
 @register("itransformer")
-class iTransformerModel(ARBaseModel):
+class iTransformerModel(ResidualWrapperCompatible):
     """iTransformer: Inverted Transformer for Time Series Forecasting.
 
     Architecture inverts traditional transformer design:
@@ -233,61 +233,49 @@ class iTransformerModel(ARBaseModel):
             if p.dim() > 1 and 'position_embeddings' not in name:
                 nn.init.xavier_uniform_(p)
 
+    def encode(
+        self,
+        x: torch.Tensor,
+        context: Optional[torch.Tensor] = None,
+        **kwargs
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context, kwargs
+
+        # [B, T_in, D_in] -> [B, D_in, d_model]
+        variate_tokens = self.variate_embedding(x)
+        variate_tokens = self.pos_encoder(variate_tokens)
+        encoder_output = self.transformer_encoder(variate_tokens)
+
+        extras = {
+            "encoder_output": encoder_output,
+            "variate_tokens": variate_tokens,
+        }
+        return encoder_output, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        if pred_len != self.horizon:
+            raise ValueError(
+                f"iTransformerModel only supports pred_len={self.horizon}; got {pred_len}"
+            )
+
+        if self.output_dim_equals_input:
+            out = self.projection(latent)
+            return out.permute(0, 2, 1)
+
+        out = self.projection(latent)
+        return out.reshape(latent.size(0), self.horizon, self.output_dim)
+
     def forward(
         self,
         x: torch.Tensor,
         context: Optional[torch.Tensor] = None,
         **kwargs
     ) -> Dict[str, torch.Tensor]:
-        """Forward pass.
+        """Forward pass using reusable encode/decode hooks."""
 
-        Args:
-            x: Input tensor [B, T_in, D_in]
-            context: Optional context tensor (not used in iTransformer)
-            **kwargs: Additional arguments
-
-        Returns:
-            Dictionary with 'preds' and 'extras'
-        """
-        B, T_in, D_in = x.shape
-
-        # Step 1: Embed each variate's time series
-        # [B, T_in, D_in] -> [B, D_in, d_model]
-        x = self.variate_embedding(x)
-
-        # Step 2: Add positional encoding for variates
-        # [B, D_in, d_model]
-        x = self.pos_encoder(x)
-
-        # Step 3: Pass through transformer encoder
-        # Attention captures cross-variate (cross-sensor) correlations
-        # FFN learns temporal patterns for each variate
-        # [B, D_in, d_model]
-        encoder_output = self.transformer_encoder(x)
-
-        # Step 4: Project to output
-        if self.output_dim_equals_input:
-            # Project each variate's d_model vector to horizon predictions
-            # [B, D_in, d_model] -> [B, D_in, horizon]
-            out = self.projection(encoder_output)
-
-            # Permute to [B, horizon, D_in]
-            preds = out.permute(0, 2, 1)
-        else:
-            # Flatten and project to output_dim * horizon
-            # [B, D_in, d_model] -> [B, D_in*d_model] -> [B, output_dim*horizon]
-            out = self.projection(encoder_output)
-
-            # Reshape to [B, horizon, output_dim]
-            preds = out.reshape(B, self.horizon, self.output_dim)
-
-        return {
-            "preds": preds,
-            "extras": {
-                "encoder_output": encoder_output,
-                "variate_tokens": x,
-            }
-        }
+        latent, extras = self.encode(x, context=context, **kwargs)
+        preds = self.decode(latent, self.horizon)
+        return {"preds": preds, "extras": extras}
 
     def __repr__(self):
         return (

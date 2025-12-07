@@ -22,13 +22,13 @@ Code: https://github.com/ACAT-SCUT/CycleNet
 """
 
 import math
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .base import ARBaseModel
+from .base import ResidualWrapperCompatible
 from .registry import register
 
 
@@ -188,7 +188,7 @@ class ResidualBackbone(nn.Module):
 
 
 @register("cyclenet")
-class CycleNetModel(ARBaseModel):
+class CycleNetModel(ResidualWrapperCompatible):
     """CycleNet: Residual Cycle Forecasting for Time Series.
 
     Uses explicit periodic pattern modeling through learnable recurrent cycles.
@@ -356,73 +356,63 @@ class CycleNetModel(ARBaseModel):
 
         self._cycles_initialized = True
 
+    def encode(
+        self,
+        x: torch.Tensor,
+        context: Optional[torch.Tensor] = None,
+        **kwargs
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context, kwargs
+
+        B, T_in, _ = x.shape
+        self._init_backbone_if_needed(T_in)
+        self._maybe_initialize_cycles(x)
+
+        input_cycles = self.learnable_cycles(seq_len=T_in, offset=0, batch_size=B)
+        residuals = x - input_cycles
+        pred_residuals = self.backbone(residuals)
+
+        future_cycles = self.learnable_cycles(
+            seq_len=self.pred_len,
+            offset=T_in,
+            batch_size=B,
+        )
+
+        self._cached_future_cycles = future_cycles
+        extras = {
+            "residuals": residuals,
+            "input_cycles": input_cycles,
+            "future_cycles": future_cycles,
+            "pred_residuals": pred_residuals,
+            "learnable_cycles": self.learnable_cycles.cycles.detach().clone(),
+        }
+        return pred_residuals, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        if pred_len != self.pred_len:
+            raise ValueError(
+                f"CycleNetModel only supports pred_len={self.pred_len}; got {pred_len}"
+            )
+
+        if not hasattr(self, "_cached_future_cycles"):
+            raise ValueError("encode must be called before decode to cache cycle forecasts")
+
+        preds_full = latent + self._cached_future_cycles
+        if self.needs_projection:
+            return self.channel_projection(preds_full)
+        return preds_full
+
     def forward(
         self,
         x: torch.Tensor,
         context: Optional[torch.Tensor] = None,
         **kwargs
     ) -> Dict[str, torch.Tensor]:
-        """Forward pass.
+        """Forward pass using reusable encode/decode hooks."""
 
-        Args:
-            x: Input tensor [B, T_in, D_in]
-            context: Optional context tensor (not used in CycleNet)
-            **kwargs: Additional arguments
-
-        Returns:
-            Dictionary with 'preds' and 'extras'
-        """
-        B, T_in, D_in = x.shape
-
-        # Initialize backbone on first forward pass
-        self._init_backbone_if_needed(T_in)
-
-        # Warm start the cycles so residuals capture non-periodic behaviour.
-        self._maybe_initialize_cycles(x)
-
-        # Step 1: Get cycle values for input sequence
-        # Offset = 0 for input (starts at position 0 in cycle)
-        input_cycles = self.learnable_cycles(
-            seq_len=T_in,
-            offset=0,
-            batch_size=B
-        )  # [B, T_in, D_in]
-
-        # Step 2: Extract residuals by removing cycles
-        residuals = x - input_cycles  # [B, T_in, D_in]
-
-        # Step 3: Predict future residuals using backbone
-        pred_residuals = self.backbone(residuals)  # [B, pred_len, D_in]
-
-        # Step 4: Get cycle values for future sequence
-        # Offset = T_in (future starts after input ends)
-        future_cycles = self.learnable_cycles(
-            seq_len=self.pred_len,
-            offset=T_in,
-            batch_size=B
-        )  # [B, pred_len, D_in]
-
-        # Step 5: Add cycles back to predictions
-        preds_full = pred_residuals + future_cycles  # [B, pred_len, D_in]
-
-        # Step 6: Project to output dimension if needed
-        if self.needs_projection:
-            # Apply projection along the channel dimension
-            # [B, pred_len, D_in] -> [B, pred_len, D_out]
-            preds = self.channel_projection(preds_full)
-        else:
-            preds = preds_full
-
-        return {
-            "preds": preds,
-            "extras": {
-                "residuals": residuals,
-                "input_cycles": input_cycles,
-                "future_cycles": future_cycles,
-                "pred_residuals": pred_residuals,
-                "learnable_cycles": self.learnable_cycles.cycles.detach().clone()
-            }
-        }
+        latent, extras = self.encode(x, context=context, **kwargs)
+        preds = self.decode(latent, self.pred_len)
+        return {"preds": preds, "extras": extras}
 
     def __repr__(self):
         return (

@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Tuple
 import torch
 import torch.nn as nn
 
-from .base import ARBaseModel
+from .base import ResidualWrapperCompatible
 from .chronos_bolt import LoRALinear
 from airtrace.models.registry import register
 
@@ -181,7 +181,7 @@ class TemporalMamba2Block(nn.Module):
 
 
 @register("mamba2")
-class Mamba2Model(ARBaseModel):
+class Mamba2Model(ResidualWrapperCompatible):
     """Temporal Mamba-2 inspired model with chunked selective scan blocks.
 
     A state-space model designed for long-context aircraft timeseries forecasting.
@@ -320,42 +320,41 @@ class Mamba2Model(ARBaseModel):
                 continue
             param.requires_grad = False
 
-    def forward(
-        self,
-        x: torch.Tensor,
-        context: Optional[torch.Tensor] = None,
-        **kwargs: Dict,
-    ) -> Dict[str, torch.Tensor]:
-        """Forward pass through the Temporal Mamba-2 model.
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs: Dict
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context, kwargs
 
-        Args:
-            x: Input tensor [B, T, D_in] where B is batch size, T is sequence length,
-               D_in is input dimension
-            context: Optional context tensor (currently unused - Mamba-2's selective scan
-                    inherently captures relevant context through its state mechanism)
-            **kwargs: Additional arguments (unused, for interface compatibility)
-
-        Returns:
-            Dictionary containing:
-                - preds: Predictions [B, pred_len, D_out]
-                - extras: Dict with 'selective_states' (list of final states per layer)
-                         and 'embeddings' (final token representations)
-        """
-        del context, kwargs  # Context unused: selective scan captures temporal dependencies
         tokens = self.input_proj(x)
         selective_states: List[torch.Tensor] = []
         for layer in self.layers:
             tokens, state = layer(tokens)
             selective_states.append(state)
         tokens = self.final_norm(tokens)
-        # Pool the last token embedding, which already resides in ``embed_dim`` space.
-        # Using the selective state directly would require an extra projection because it
-        # lives in ``state_dim``. Pooling the normalized tokens keeps the prediction head
-        # dimensions consistent and avoids shape mismatches during inference/tests.
+
         pooled = tokens[:, -1, :]
-        preds = self.head(pooled).view(-1, self.pred_len, self.output_dim)
         extras = {
             "selective_states": selective_states,
             "embeddings": tokens,
         }
+        return pooled, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        if pred_len != self.pred_len:
+            raise ValueError(
+                f"Mamba2Model only supports pred_len={self.pred_len}; got {pred_len}"
+            )
+
+        return self.head(latent).view(-1, pred_len, self.output_dim)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        context: Optional[torch.Tensor] = None,
+        **kwargs: Dict,
+    ) -> Dict[str, torch.Tensor]:
+        """Forward pass through the Temporal Mamba-2 model."""
+
+        latent, extras = self.encode(x, context=context, **kwargs)
+        preds = self.decode(latent, self.pred_len)
         return {"preds": preds, "extras": extras}

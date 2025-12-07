@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .base import ARBaseModel
+from .base import ResidualWrapperCompatible
 from .registry import register
 
 
@@ -257,7 +257,7 @@ class PositionalEncoding(nn.Module):
 
 
 @register("nonstationary_transformer")
-class NonStationaryTransformerModel(ARBaseModel):
+class NonStationaryTransformerModel(ResidualWrapperCompatible):
     """Non-stationary Transformer with de-stationary attention blocks."""
 
     def __init__(
@@ -300,13 +300,14 @@ class NonStationaryTransformerModel(ARBaseModel):
             if param.dim() > 1:
                 nn.init.xavier_uniform_(param)
 
-    def forward(
+    def encode(
         self,
         x: torch.Tensor,
         context: Optional[torch.Tensor] = None,
         **kwargs: Dict[str, object],
-    ) -> Dict[str, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         del context, kwargs
+
         stationary_x, mean, std = self.stationarizer(x)
         embedded = self.input_projection(stationary_x)
         embedded = self.positional_encoding(embedded)
@@ -314,23 +315,47 @@ class NonStationaryTransformerModel(ARBaseModel):
         series_mean = embedded.mean(dim=1)
         series_std = embedded.std(dim=1) + self.stationarizer.eps
 
-        encoded, attn_maps = self.encoder(embedded, series_mean=series_mean, series_std=series_std)
+        encoded, attn_maps = self.encoder(
+            embedded, series_mean=series_mean, series_std=series_std
+        )
         final_hidden = encoded[:, -1, :]
 
-        preds_normalized = self.forecast_head(final_hidden).view(
-            x.size(0), self.pred_len, self.output_dim
-        )
-        preds = self._restore_scale(preds_normalized, mean, std)
-
-        return {
-            "preds": preds,
-            "extras": {
-                "encoder_output": encoded,
-                "attention_maps": attn_maps,
-                "series_mean": mean,
-                "series_std": std,
-            },
+        self._cached_scale = (mean, std)
+        extras = {
+            "encoder_output": encoded,
+            "attention_maps": attn_maps,
+            "series_mean": mean,
+            "series_std": std,
         }
+        return final_hidden, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        if pred_len != self.pred_len:
+            raise ValueError(
+                "NonStationaryTransformerModel only supports "
+                f"pred_len={self.pred_len}; got {pred_len}"
+            )
+
+        if not hasattr(self, "_cached_scale"):
+            raise ValueError("encode must be called before decode to cache scale statistics")
+
+        mean, std = self._cached_scale
+        preds_normalized = self.forecast_head(latent).view(
+            latent.size(0), pred_len, self.output_dim
+        )
+        return self._restore_scale(preds_normalized, mean, std)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        context: Optional[torch.Tensor] = None,
+        **kwargs: Dict[str, object],
+    ) -> Dict[str, torch.Tensor]:
+        """Forward pass exposing encoder/decoder hooks for residual wrapping."""
+
+        latent, extras = self.encode(x, context=context, **kwargs)
+        preds = self.decode(latent, self.pred_len)
+        return {"preds": preds, "extras": extras}
 
     def _restore_scale(self, preds: torch.Tensor, mean: torch.Tensor, std: torch.Tensor) -> torch.Tensor:
         if self.output_dim == self.input_dim:
