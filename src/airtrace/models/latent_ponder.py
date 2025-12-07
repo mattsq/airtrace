@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import torch
 import torch.nn as nn
 
-from .base import ARBaseModel
+from .base import ARBaseModel, ResidualWrapperCompatible
 from .registry import build_model, register
 
 
@@ -218,9 +218,9 @@ class LatentPonderWrapper(ARBaseModel):
         context: Optional[torch.Tensor] = None,
         **kwargs: Any,
     ) -> Dict[str, torch.Tensor]:
-        base_output = self.base_model(x, context=context, **kwargs)
-        base_preds = base_output["preds"]
-        pred_len = base_preds.shape[1]
+        base_preds, base_extras, pred_len = self._initial_prediction(
+            x, context=context, **kwargs
+        )
 
         pooled = base_preds.mean(dim=1)
         h = self.encoder(pooled)
@@ -302,7 +302,7 @@ class LatentPonderWrapper(ARBaseModel):
         )
 
         extras: Dict[str, Any] = {
-            "base_extras": base_output.get("extras", {}),
+            "base_extras": base_extras,
             "halt_logits": halt_logits,
             "halt_probs": halt_probs,
             "halt_distribution": halt_probs.detach(),
@@ -322,3 +322,21 @@ class LatentPonderWrapper(ARBaseModel):
             extras["aux_weight"] = float(self.aux_weight)
 
         return {"preds": preds, "extras": extras}
+
+    def _initial_prediction(
+        self,
+        x: torch.Tensor,
+        context: Optional[torch.Tensor] = None,
+        **kwargs: Any,
+    ) -> Tuple[torch.Tensor, Dict[str, Any], int]:
+        pred_len = int(kwargs.get("pred_len", getattr(self.base_model, "pred_len", 1)))
+
+        if isinstance(self.base_model, ResidualWrapperCompatible):
+            latent, base_extras = self.base_model.encode(x, context=context)
+            base_preds = self.base_model.decode(latent, pred_len=pred_len)
+            base_extras = {**base_extras, "latent": latent}
+            return base_preds, base_extras, pred_len
+
+        base_output = self.base_model(x, context=context, **kwargs)
+        base_preds = base_output["preds"]
+        return base_preds, base_output.get("extras", {}), base_preds.shape[1]

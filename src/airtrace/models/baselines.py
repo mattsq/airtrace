@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 
-from .base import ARBaseModel
+from .base import ARBaseModel, ResidualWrapperCompatible
 from .registry import register
 
 
@@ -1473,7 +1473,7 @@ class VARModel(ARBaseModel):
 
 
 @register("linear_ar")
-class LinearARModel(ARBaseModel):
+class LinearARModel(ResidualWrapperCompatible):
     """Simple linear autoregressive (AR) baseline model.
 
     Learns linear weights to combine past values:
@@ -1499,6 +1499,22 @@ class LinearARModel(ARBaseModel):
         # This ensures parameters are registered immediately for optimizer creation
         self.linear = nn.LazyLinear(output_dim)
 
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context
+        latent = x.reshape(x.shape[0], -1)
+        extras: Dict[str, torch.Tensor] = {
+            "input_shape": torch.tensor(x.shape[1:], device=x.device)
+        }
+        return latent, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        preds = self.linear(latent).unsqueeze(1)
+        if pred_len != 1:
+            preds = preds.expand(-1, pred_len, -1)
+        return preds
+
     def forward(
         self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
     ) -> Dict[str, torch.Tensor]:
@@ -1512,22 +1528,16 @@ class LinearARModel(ARBaseModel):
         Returns:
             Dictionary with 'preds' [B, 1, D_out]
         """
-        B, T_in, D_in = x.shape
+        pred_len = int(kwargs.get("pred_len", 1))
+        latent, extras = self.encode(x, context=context)
+        preds = self.decode(latent, pred_len)
+        extras["latent"] = latent
 
-        # Flatten input sequence
-        x_flat = x.reshape(B, -1)  # [B, T_in * D_in]
-
-        # Apply linear transformation
-        next_value = self.linear(x_flat)  # [B, D_out]
-
-        # Reshape to [B, 1, D_out]
-        preds = next_value.unsqueeze(1)
-
-        return {"preds": preds, "extras": {}}
+        return {"preds": preds, "extras": extras}
 
 
 @register("mlp_ar")
-class MLPARModel(ARBaseModel):
+class MLPARModel(ResidualWrapperCompatible):
     """Windowed MLP autoregressive baseline model.
 
     Flattens the input window [T_in, D_in] into a vector and passes it through
@@ -1581,23 +1591,38 @@ class MLPARModel(ARBaseModel):
         # Build MLP using LazyLinear for first layer
         # This allows parameters to be registered immediately while deferring
         # input size determination until first forward pass
-        layers = []
+        feature_layers = []
 
         # First hidden layer - use LazyLinear since we don't know T_in
-        layers.append(nn.LazyLinear(hidden_dims[0]))
-        layers.append(activation_fn())
-        layers.append(nn.Dropout(dropout))
+        feature_layers.append(nn.LazyLinear(hidden_dims[0]))
+        feature_layers.append(activation_fn())
+        feature_layers.append(nn.Dropout(dropout))
 
         # Remaining hidden layers
         for i in range(1, len(hidden_dims)):
-            layers.append(nn.Linear(hidden_dims[i - 1], hidden_dims[i]))
-            layers.append(activation_fn())
-            layers.append(nn.Dropout(dropout))
+            feature_layers.append(nn.Linear(hidden_dims[i - 1], hidden_dims[i]))
+            feature_layers.append(activation_fn())
+            feature_layers.append(nn.Dropout(dropout))
 
-        # Output layer
-        layers.append(nn.Linear(hidden_dims[-1], output_dim))
+        self.feature_extractor = nn.Sequential(*feature_layers)
+        self.head = nn.Linear(hidden_dims[-1], output_dim)
 
-        self.mlp = nn.Sequential(*layers)
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context
+        latent = self.feature_extractor(x.reshape(x.shape[0], -1))
+        extras: Dict[str, torch.Tensor] = {
+            "input_shape": torch.tensor(x.shape[1:], device=x.device),
+            "hidden_dims": torch.tensor(self.hidden_dims, device=x.device),
+        }
+        return latent, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        preds = self.head(latent).unsqueeze(1)
+        if pred_len != 1:
+            preds = preds.expand(-1, pred_len, -1)
+        return preds
 
     def forward(
         self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
@@ -1612,15 +1637,9 @@ class MLPARModel(ARBaseModel):
         Returns:
             Dictionary with 'preds' [B, 1, D_out]
         """
-        B, T_in, D_in = x.shape
+        pred_len = int(kwargs.get("pred_len", 1))
+        latent, extras = self.encode(x, context=context)
+        preds = self.decode(latent, pred_len)
+        extras["latent"] = latent
 
-        # Flatten input sequence
-        x_flat = x.reshape(B, -1)  # [B, T_in * D_in]
-
-        # Pass through MLP
-        next_value = self.mlp(x_flat)  # [B, D_out]
-
-        # Reshape to [B, 1, D_out]
-        preds = next_value.unsqueeze(1)
-
-        return {"preds": preds, "extras": {}}
+        return {"preds": preds, "extras": extras}
