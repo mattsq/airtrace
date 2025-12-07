@@ -410,44 +410,22 @@ class TimerModel(ARBaseModel):
 
         return predictions
 
-    def forward(
-        self,
-        x: torch.Tensor,
-        context: Optional[torch.Tensor] = None,
-        **kwargs,
-    ) -> Dict[str, torch.Tensor]:
-        """Forward pass through Timer model.
-
-        Args:
-            x: Input tensor [B, T_in, D_in]
-            context: Optional context (not used by Timer)
-            **kwargs: Additional arguments (not used)
-
-        Returns:
-            Dictionary containing:
-                - preds: Predictions [B, pred_len, D_out]
-                - extras: Dictionary with additional outputs
-                    - normalization_stats: (mean, std) if normalization applied
-                    - raw_preds: Predictions before denormalization
-        """
-        del context, kwargs  # Timer doesn't use context
+    def _prepare_inputs(
+        self, x: torch.Tensor
+    ) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
+        """Validate dimensions, pad/truncate, and optionally normalize inputs."""
 
         B, T, D = x.shape
-
-        # Validate input dimensions
         if D != self.input_dim:
             raise ValueError(
                 f"Input dimension mismatch: expected {self.input_dim}, got {D}"
             )
 
-        # Truncate or pad to the required context length if needed
         target_context = max(self.lookback_length, self.min_context_length)
-
         if T > target_context:
             x = x[:, -target_context:, :]
             LOGGER.debug(f"Truncated input from {T} to {target_context} steps")
         elif T < target_context:
-            # Pad with zeros at the beginning
             pad_length = target_context - T
             padding = torch.zeros(
                 B, pad_length, D, dtype=x.dtype, device=x.device
@@ -455,41 +433,70 @@ class TimerModel(ARBaseModel):
             x = torch.cat([padding, x], dim=1)
             LOGGER.debug(f"Padded input from {T} to {target_context} steps")
 
-        # Normalize inputs if enabled
-        normalization_stats = None
+        normalization_stats: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
         if self.normalize_inputs and self.normalizer is not None:
             x, mean, std = self.normalizer(x)
             normalization_stats = (mean, std)
 
-        # Process multivariate input
-        # Timer processes each dimension independently
-        preds_normalized = self._process_multivariate(x, self.pred_len)
+        return x, normalization_stats
 
-        # Select output dimensions (support for different input/output dims)
-        if self.output_dim != self.input_dim:
-            # Take first output_dim dimensions
-            preds_normalized = preds_normalized[:, :, :self.output_dim]
-
-        # Denormalize predictions if normalization was applied
-        if self.normalize_inputs and normalization_stats is not None:
-            mean, std = normalization_stats
-            # Adjust stats to match output dimensions
-            if self.output_dim != self.input_dim:
-                mean = mean[:, :, :self.output_dim]
-                std = std[:, :, :self.output_dim]
-            preds = self.normalizer.inverse(preds_normalized, mean, std)
-        else:
-            preds = preds_normalized
-
-        # Prepare extras
-        extras = {
-            "raw_preds": preds_normalized,
-        }
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context
+        prepared, normalization_stats = self._prepare_inputs(x)
+        extras: Dict[str, torch.Tensor] = {"representation": prepared}
         if normalization_stats is not None:
             extras["normalization_mean"] = normalization_stats[0]
             extras["normalization_std"] = normalization_stats[1]
+        return prepared, extras
 
-        return {"preds": preds, "extras": extras}
+    def decode(
+        self,
+        latent: torch.Tensor,
+        pred_len: int,
+        *,
+        extras: Optional[Dict[str, torch.Tensor]] = None,
+    ) -> torch.Tensor:
+        if pred_len <= 0:
+            raise ValueError("pred_len must be positive for TimerModel")
+
+        preds_normalized = self._process_multivariate(latent, pred_len)
+        if self.output_dim != self.input_dim:
+            preds_normalized = preds_normalized[:, :, :self.output_dim]
+
+        preds = preds_normalized
+        if self.normalize_inputs and extras is not None:
+            mean = extras.get("normalization_mean")
+            std = extras.get("normalization_std")
+            if mean is not None and std is not None:
+                if self.output_dim != self.input_dim:
+                    mean = mean[:, :, : self.output_dim]
+                    std = std[:, :, : self.output_dim]
+                preds = self.normalizer.inverse(preds_normalized, mean, std)
+
+        return preds
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        context: Optional[torch.Tensor] = None,
+        **kwargs,
+    ) -> Dict[str, torch.Tensor]:
+        """Forward pass through Timer model."""
+
+        pred_len = int(kwargs.get("pred_len", self.pred_len))
+        latent, extras = self.encode(x, context=context)
+        preds = self.decode(latent, pred_len, extras=extras)
+
+        raw_preds = self._process_multivariate(latent, pred_len)
+        if self.output_dim != self.input_dim:
+            raw_preds = raw_preds[:, :, : self.output_dim]
+
+        extras_out: Dict[str, torch.Tensor] = {"raw_preds": raw_preds}
+        extras_out.update({k: v for k, v in extras.items() if k != "representation"})
+        extras_out["representation"] = latent
+        return {"preds": preds, "extras": extras_out}
 
     def __repr__(self) -> str:
         """String representation of the model."""

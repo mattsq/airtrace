@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .base import ARBaseModel
+from .base import ResidualWrapperCompatible
 from .chronos_bolt import LoRALinear
 from .registry import register
 
@@ -133,7 +133,7 @@ class SelectiveSSMBlock(nn.Module):
 
 
 @register("moirai")
-class MoiraiModel(ARBaseModel):
+class MoiraiModel(ResidualWrapperCompatible):
     """Moirai-style multiresolution selective state-space model."""
 
     def __init__(
@@ -252,7 +252,16 @@ class MoiraiModel(ARBaseModel):
         context: Optional[torch.Tensor] = None,
         **kwargs: Dict,
     ) -> Dict[str, torch.Tensor]:
-        del context, kwargs
+        pred_len = int(kwargs.get("pred_len", self.pred_len))
+        latent, extras = self.encode(x, context=context)
+        preds = self.decode(latent, pred_len)
+        extras["representation"] = latent
+        return {"preds": preds, "extras": extras}
+
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, List[torch.Tensor]]]:
+        del context
         tokens, scale_tokens = self.patcher(x)
         tokens = self._positional_encoding(tokens)
 
@@ -263,11 +272,16 @@ class MoiraiModel(ARBaseModel):
 
         tokens = self.final_norm(tokens)
         pooled = tokens.mean(dim=1)
-        preds = self.head(pooled).view(-1, self.pred_len, self.output_dim)
-
-        extras = {
-            "multiresolution_tokens": scale_tokens,
+        extras: Dict[str, List[torch.Tensor]] = {
+            "multiresolution_tokens": list(scale_tokens),
             "ssm_states": ssm_states,
-            "fused_tokens": tokens,
+            "fused_tokens": [tokens],
         }
-        return {"preds": preds, "extras": extras}
+        return pooled, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        if pred_len != self.pred_len:
+            raise ValueError(
+                f"MoiraiModel only supports pred_len={self.pred_len}, got {pred_len}"
+            )
+        return self.head(latent).view(-1, pred_len, self.output_dim)
