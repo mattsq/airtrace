@@ -85,3 +85,7 @@ High-difficulty baselines likely warrant a lightweight Torch adapter (no gradien
 ## Progress (2025-02-14)
 - Refactored **crossformer** to implement `ResidualWrapperCompatible`, exposing the pooled token representation via `encode` and reusing its projection head inside `decode` while guarding the configured horizon.
 - Refactored **informer** to provide wrapper hooks that cache the start token during `encode` and reuse the distilled encoder memory within `decode`, enabling the residual solver loop without altering the ProbSparse decoder flow.
+
+## Progress (2025-02-15)
+- Refactored **autoformer** to implement `ResidualWrapperCompatible`, caching the decoder start tokens and encoder trend from `encode` and reusing the seasonal/trend decomposition inside `decode` so the residual solver loop can refine outputs without re-embedding the window.
+- Refactored **fedformer** with the same wrapper hooks, aligning its frequency-enhanced decomposition and cached decoder tail with the generic residual solver interface while preserving the configured horizon checks and extras reporting.

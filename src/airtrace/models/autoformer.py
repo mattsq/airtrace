@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .base import ARBaseModel
+from .base import ResidualWrapperCompatible
 from .registry import register
 
 
@@ -337,7 +337,7 @@ class AutoformerDecoder(nn.Module):
 
 
 @register("autoformer")
-class AutoformerModel(ARBaseModel):
+class AutoformerModel(ResidualWrapperCompatible):
     """Autoformer with series decomposition and auto-correlation."""
 
     def __init__(
@@ -388,22 +388,41 @@ class AutoformerModel(ARBaseModel):
         self.decomp = SeriesDecomposition(moving_avg)
         self.projection = nn.Linear(d_model, output_dim)
 
-    def forward(
-        self,
-        x: torch.Tensor,
-        context: Optional[torch.Tensor] = None,
-        **kwargs: Dict[str, object],
-    ) -> Dict[str, torch.Tensor]:
-        del context, kwargs
-        B, T_in, _ = x.shape
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context
+        _, T_in, _ = x.shape
 
         enc_out, enc_trend = self.encoder(self.enc_embedding(x))
-
         label_len = min(self.label_len, T_in)
+        self._cached_decoder_tail = x[:, T_in - label_len :, :]
+        self._cached_encoder_trend = enc_trend
+
+        extras: Dict[str, torch.Tensor] = {
+            "encoder_trend": enc_trend,
+            "decoder_tail": self._cached_decoder_tail,
+        }
+        return enc_out, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        if pred_len != self.pred_len:
+            raise ValueError(
+                f"Autoformer only supports pred_len={self.pred_len}; got {pred_len}"
+            )
+
+        if not hasattr(self, "_cached_decoder_tail") or not hasattr(
+            self, "_cached_encoder_trend"
+        ):
+            raise ValueError("encode must be called before decode")
+
+        tail = self._cached_decoder_tail
+        enc_trend = self._cached_encoder_trend
+
         dec_zeros = torch.zeros(
-            B, self.pred_len, self.input_dim, device=x.device, dtype=x.dtype
+            tail.size(0), pred_len, self.input_dim, device=tail.device, dtype=tail.dtype
         )
-        dec_input = torch.cat([x[:, T_in - label_len :, :], dec_zeros], dim=1)
+        dec_input = torch.cat([tail, dec_zeros], dim=1)
         seasonal_init, trend_init = self.decomp(self.dec_embedding(dec_input))
 
         enc_trend_aligned = enc_trend
@@ -416,17 +435,29 @@ class AutoformerModel(ARBaseModel):
             ).permute(0, 2, 1)
 
         dec_out, trend_out = self.decoder(
-            seasonal_init, trend_init + enc_trend_aligned, enc_out
+            seasonal_init, trend_init + enc_trend_aligned, latent
         )
+        self._cached_decoder_outputs = {
+            "decoder_trend": trend_out,
+            "seasonal_component": dec_out,
+        }
 
         output = dec_out + trend_out
-        preds = self.projection(output[:, -self.pred_len :, :])
+        return self.projection(output[:, -pred_len:, :])
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        context: Optional[torch.Tensor] = None,
+        **kwargs: Dict[str, object],
+    ) -> Dict[str, torch.Tensor]:
+        del kwargs
+        latent, extras = self.encode(x, context=context)
+        preds = self.decode(latent, self.pred_len)
+
+        extras.update(getattr(self, "_cached_decoder_outputs", {}))
 
         return {
             "preds": preds,
-            "extras": {
-                "encoder_trend": enc_trend,
-                "decoder_trend": trend_out,
-                "seasonal_component": dec_out,
-            },
+            "extras": extras,
         }
