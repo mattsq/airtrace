@@ -23,8 +23,35 @@ def _batched_eye(size: int, batch: int, device: torch.device, dtype: torch.dtype
     return eye.unsqueeze(0).expand(batch, -1, -1)
 
 
+def _match_output_dim(values: torch.Tensor, output_dim: int) -> torch.Tensor:
+    """Align a prediction vector to ``output_dim`` via truncation or padding."""
+
+    if values.shape[1] == output_dim:
+        return values
+
+    if values.shape[1] > output_dim:
+        return values[:, :output_dim]
+
+    padding = torch.zeros(
+        values.shape[0],
+        output_dim - values.shape[1],
+        device=values.device,
+        dtype=values.dtype,
+    )
+    return torch.cat([values, padding], dim=1)
+
+
+def _repeat_predictions(values: torch.Tensor, pred_len: int) -> torch.Tensor:
+    """Expand a single-step prediction across the requested horizon."""
+
+    preds = values.unsqueeze(1)
+    if pred_len != 1:
+        preds = preds.expand(-1, pred_len, -1)
+    return preds
+
+
 @register("persistence")
-class PersistenceModel(ARBaseModel):
+class PersistenceModel(ResidualWrapperCompatible):
     """Persistence (naive) baseline model.
 
     Predicts the last observed value of target sensor(s) as the next value.
@@ -45,69 +72,53 @@ class PersistenceModel(ARBaseModel):
         super().__init__(input_dim, output_dim, **kwargs)
         # No trainable parameters at all
 
-    def forward(
-        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
-    ) -> Dict[str, torch.Tensor]:
-        """Forward pass - return last value of target sensors.
+    def encode(
+        self,
+        x: torch.Tensor,
+        context: Optional[torch.Tensor] = None,
+        meta: Optional[Union[List[Dict[str, int]], Dict[str, int]]] = None,
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context
+        last_value = x[:, -1, :]
+        extras: Dict[str, torch.Tensor] = {}
 
-        Args:
-            x: Input tensor [B, T_in, D_in]
-            context: Optional context tensor (ignored)
-            **kwargs: Additional arguments (may contain 'meta' batch)
-
-        Returns:
-            Dictionary with 'preds' [B, 1, D_out]
-        """
-        # Get last timestep
-        last_value = x[:, -1, :]  # [B, D_in]
-
-        # Try to extract target sensor values from metadata
-        meta_batch = kwargs.get("meta", [])
-        if meta_batch and len(meta_batch) > 0:
-            # Get first sample's metadata (assuming homogeneous batch)
-            first_meta = meta_batch[0] if isinstance(meta_batch, list) else meta_batch
-
-            # Check if we have sensor mapping information
+        if meta:
+            first_meta = meta[0] if isinstance(meta, list) else meta
             if "target_sensors" in first_meta and "input_sensor_indices" in first_meta:
                 target_sensors = first_meta["target_sensors"]
                 input_indices = first_meta["input_sensor_indices"]
                 original_dim = first_meta.get("original_sensor_dim", self.input_dim)
 
-                # Find target sensor indices in input (excluding context features)
                 target_indices = []
                 for target in target_sensors:
                     if target in input_indices:
                         idx = input_indices[target]
-                        if idx < original_dim:  # Exclude context features
+                        if idx < original_dim:
                             target_indices.append(idx)
 
-                # Extract target sensor values if found
-                if len(target_indices) > 0:
-                    last_value = last_value[:, target_indices]  # [B, len(targets)]
+                if target_indices:
+                    index_tensor = torch.tensor(target_indices, device=x.device)
+                    last_value = last_value.index_select(dim=1, index=index_tensor)
+                    extras["target_indices"] = index_tensor
 
-        # Handle dimension mismatch with fallback strategy
-        if last_value.shape[1] != self.output_dim:
-            if last_value.shape[1] >= self.output_dim:
-                # Take first output_dim features
-                last_value = last_value[:, :self.output_dim]
-            else:
-                # Pad with zeros if needed
-                padding = torch.zeros(
-                    last_value.shape[0],
-                    self.output_dim - last_value.shape[1],
-                    device=last_value.device,
-                    dtype=last_value.dtype
-                )
-                last_value = torch.cat([last_value, padding], dim=1)
+        aligned_value = _match_output_dim(last_value, self.output_dim)
+        extras["latent"] = aligned_value
+        return aligned_value, extras
 
-        # Reshape to [B, 1, D_out]
-        preds = last_value.unsqueeze(1)
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        return _repeat_predictions(latent, pred_len)
 
-        return {"preds": preds, "extras": {}}
+    def forward(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
+    ) -> Dict[str, torch.Tensor]:
+        pred_len = int(kwargs.get("pred_len", 1))
+        latent, extras = self.encode(x, context=context, meta=kwargs.get("meta"))
+        preds = self.decode(latent, pred_len)
+        return {"preds": preds, "extras": extras}
 
 
 @register("moving_average")
-class MovingAverageModel(ARBaseModel):
+class MovingAverageModel(ResidualWrapperCompatible):
     """Moving average baseline model.
 
     Predicts the mean of the last k values.
@@ -130,51 +141,36 @@ class MovingAverageModel(ARBaseModel):
         self.window_size = window_size
         # No trainable parameters at all
 
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context
+        if self.window_size is not None:
+            window = x[:, -self.window_size :, :]
+            window_size = self.window_size
+        else:
+            window = x
+            window_size = x.shape[1]
+
+        avg_value = window.mean(dim=1)
+        aligned_avg = _match_output_dim(avg_value, self.output_dim)
+        extras = {"window_size": torch.tensor(window_size, device=x.device)}
+        return aligned_avg, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        return _repeat_predictions(latent, pred_len)
+
     def forward(
         self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
     ) -> Dict[str, torch.Tensor]:
-        """Forward pass - return moving average.
-
-        Args:
-            x: Input tensor [B, T_in, D_in]
-            context: Optional context tensor (ignored)
-            **kwargs: Additional arguments (ignored)
-
-        Returns:
-            Dictionary with 'preds' [B, 1, D_out]
-        """
-        # Select window
-        if self.window_size is not None:
-            window = x[:, -self.window_size :, :]  # [B, k, D_in]
-        else:
-            window = x  # [B, T_in, D_in]
-
-        # Compute mean
-        avg_value = window.mean(dim=1)  # [B, D_in]
-
-        # Handle dimension mismatch with non-parametric approach
-        if avg_value.shape[1] != self.output_dim:
-            if avg_value.shape[1] >= self.output_dim:
-                # Take first output_dim features
-                avg_value = avg_value[:, :self.output_dim]
-            else:
-                # Pad with zeros if needed
-                padding = torch.zeros(
-                    avg_value.shape[0],
-                    self.output_dim - avg_value.shape[1],
-                    device=avg_value.device,
-                    dtype=avg_value.dtype
-                )
-                avg_value = torch.cat([avg_value, padding], dim=1)
-
-        # Reshape to [B, 1, D_out]
-        preds = avg_value.unsqueeze(1)
-
-        return {"preds": preds, "extras": {"window_size": window.shape[1]}}
+        pred_len = int(kwargs.get("pred_len", 1))
+        latent, extras = self.encode(x, context=context)
+        preds = self.decode(latent, pred_len)
+        return {"preds": preds, "extras": extras}
 
 
 @register("zero")
-class ZeroModel(ARBaseModel):
+class ZeroModel(ResidualWrapperCompatible):
     """Zero baseline model.
 
     Always predicts zero. Useful baseline for:
@@ -194,29 +190,27 @@ class ZeroModel(ARBaseModel):
         super().__init__(input_dim, output_dim, **kwargs)
         # No parameters needed
 
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context
+        latent = torch.zeros(x.shape[0], self.output_dim, device=x.device, dtype=x.dtype)
+        return latent, {"latent": latent}
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        return _repeat_predictions(latent, pred_len)
+
     def forward(
         self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
     ) -> Dict[str, torch.Tensor]:
-        """Forward pass - return zeros.
-
-        Args:
-            x: Input tensor [B, T_in, D_in]
-            context: Optional context tensor (ignored)
-            **kwargs: Additional arguments (ignored)
-
-        Returns:
-            Dictionary with 'preds' [B, 1, D_out] of zeros
-        """
-        B = x.shape[0]
-
-        # Create zero tensor
-        preds = torch.zeros(B, 1, self.output_dim, device=x.device, dtype=x.dtype)
-
-        return {"preds": preds, "extras": {}}
+        pred_len = int(kwargs.get("pred_len", 1))
+        latent, extras = self.encode(x, context=context)
+        preds = self.decode(latent, pred_len)
+        return {"preds": preds, "extras": extras}
 
 
 @register("linear_trend")
-class LinearTrendModel(ARBaseModel):
+class LinearTrendModel(ResidualWrapperCompatible):
     """Linear trend baseline model.
 
     Fits a simple linear trend to the input sequence and extrapolates
@@ -239,79 +233,48 @@ class LinearTrendModel(ARBaseModel):
         super().__init__(input_dim, output_dim, **kwargs)
         # No trainable parameters at all
 
-    def forward(
-        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
-    ) -> Dict[str, torch.Tensor]:
-        """Forward pass - fit linear trend and extrapolate.
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context
+        B, T_in, _ = x.shape
 
-        Args:
-            x: Input tensor [B, T_in, D_in]
-            context: Optional context tensor (ignored)
-            **kwargs: Additional arguments (ignored)
-
-        Returns:
-            Dictionary with 'preds' [B, 1, D_out]
-        """
-        B, T_in, D_in = x.shape
-
-        # Create time indices [0, 1, 2, ..., T_in-1]
-        t = torch.arange(T_in, device=x.device, dtype=x.dtype)  # [T_in]
-
-        # Fit linear trend using least squares for each batch and feature
-        # y = a + b*t
-        # Using closed-form solution:
-        # b = (n*sum(t*y) - sum(t)*sum(y)) / (n*sum(t^2) - sum(t)^2)
-        # a = mean(y) - b*mean(t)
-
+        t = torch.arange(T_in, device=x.device, dtype=x.dtype)
         t_mean = t.mean()
         t_sum = t.sum()
         t_sq_sum = (t**2).sum()
+        t_b = t.view(1, T_in, 1)
 
-        # Reshape for broadcasting: [T_in] -> [1, T_in, 1]
-        t_bc = t.unsqueeze(0).unsqueeze(2)
+        y_sum = x.sum(dim=1)
+        ty_sum = (t_b * x).sum(dim=1)
 
-        # Compute sums over time dimension
-        y_mean = x.mean(dim=1)  # [B, D_in]
-        ty_sum = (t_bc * x).sum(dim=1)  # [B, D_in]
-        y_sum = x.sum(dim=1)  # [B, D_in]
+        n = torch.tensor(float(T_in), device=x.device, dtype=x.dtype)
+        denominator = torch.clamp(n * t_sq_sum - t_sum**2, min=1e-8)
 
-        # Compute slope (b) and intercept (a)
-        numerator = T_in * ty_sum - t_sum * y_sum
-        denominator = T_in * t_sq_sum - t_sum**2
+        b = (n * ty_sum - t_sum * y_sum) / denominator
+        a = (y_sum / n) - b * t_mean
 
-        # Avoid division by zero (happens with constant time series)
-        b = torch.where(
-            denominator.abs() > 1e-8, numerator / denominator, torch.zeros_like(numerator)
-        )  # [B, D_in]
+        next_t = torch.tensor(float(T_in), device=x.device, dtype=x.dtype)
+        next_value = a + b * next_t
 
-        a = y_mean - b * t_mean  # [B, D_in]
+        aligned = _match_output_dim(next_value, self.output_dim)
+        extras = {"slope": b, "intercept": a}
+        return aligned, extras
 
-        # Predict next timestep (t = T_in)
-        next_value = a + b * T_in  # [B, D_in]
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        return _repeat_predictions(latent, pred_len)
 
-        # Handle dimension mismatch with non-parametric approach
-        if next_value.shape[1] != self.output_dim:
-            if next_value.shape[1] >= self.output_dim:
-                # Take first output_dim features
-                next_value = next_value[:, :self.output_dim]
-            else:
-                # Pad with zeros if needed
-                padding = torch.zeros(
-                    next_value.shape[0],
-                    self.output_dim - next_value.shape[1],
-                    device=next_value.device,
-                    dtype=next_value.dtype
-                )
-                next_value = torch.cat([next_value, padding], dim=1)
-
-        # Reshape to [B, 1, D_out]
-        preds = next_value.unsqueeze(1)
-
-        return {"preds": preds, "extras": {"slope": b, "intercept": a}}
+    def forward(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
+    ) -> Dict[str, torch.Tensor]:
+        pred_len = int(kwargs.get("pred_len", 1))
+        latent, extras = self.encode(x, context=context)
+        preds = self.decode(latent, pred_len)
+        return {"preds": preds, "extras": extras}
 
 
 @register("mean")
-class MeanModel(ARBaseModel):
+class MeanModel(ResidualWrapperCompatible):
     """Historical mean baseline model.
 
     Always predicts the historical mean of the input sequence.
@@ -332,51 +295,32 @@ class MeanModel(ARBaseModel):
         super().__init__(input_dim, output_dim, **kwargs)
         # No trainable parameters at all
 
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context
+        mean_value = x.mean(dim=1)
+        aligned_mean = _match_output_dim(mean_value, self.output_dim)
+        return aligned_mean, {"latent": aligned_mean}
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        return _repeat_predictions(latent, pred_len)
+
     def forward(
         self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
     ) -> Dict[str, torch.Tensor]:
-        """Forward pass - return historical mean.
-
-        Args:
-            x: Input tensor [B, T_in, D_in]
-            context: Optional context tensor (ignored)
-            **kwargs: Additional arguments (ignored)
-
-        Returns:
-            Dictionary with 'preds' [B, 1, D_out]
-        """
-        # Compute mean across time dimension
-        mean_value = x.mean(dim=1)  # [B, D_in]
-
-        # Handle dimension mismatch with non-parametric approach
-        if mean_value.shape[1] != self.output_dim:
-            if mean_value.shape[1] >= self.output_dim:
-                # Take first output_dim features
-                mean_value = mean_value[:, :self.output_dim]
-            else:
-                # Pad with zeros if needed
-                padding = torch.zeros(
-                    mean_value.shape[0],
-                    self.output_dim - mean_value.shape[1],
-                    device=mean_value.device,
-                    dtype=mean_value.dtype
-                )
-                mean_value = torch.cat([mean_value, padding], dim=1)
-
-        # Reshape to [B, 1, D_out]
-        preds = mean_value.unsqueeze(1)
-
-        return {"preds": preds, "extras": {}}
+        pred_len = int(kwargs.get("pred_len", 1))
+        latent, extras = self.encode(x, context=context)
+        preds = self.decode(latent, pred_len)
+        return {"preds": preds, "extras": extras}
 
 
 @register("median")
-class MedianModel(ARBaseModel):
+class MedianModel(ResidualWrapperCompatible):
     """Historical median baseline model.
 
     Always predicts the historical median of the input sequence.
-    More robust to outliers than the mean model.
-
-    Useful baseline for time series with outliers or heavy-tailed distributions.
+    Useful baseline for robust forecasting when data has outliers.
     This is a truly non-trainable baseline with 0 learnable parameters.
     """
 
@@ -391,45 +335,28 @@ class MedianModel(ARBaseModel):
         super().__init__(input_dim, output_dim, **kwargs)
         # No trainable parameters at all
 
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context
+        median_value = x.median(dim=1).values
+        aligned = _match_output_dim(median_value, self.output_dim)
+        return aligned, {"latent": aligned}
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        return _repeat_predictions(latent, pred_len)
+
     def forward(
         self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
     ) -> Dict[str, torch.Tensor]:
-        """Forward pass - return historical median.
-
-        Args:
-            x: Input tensor [B, T_in, D_in]
-            context: Optional context tensor (ignored)
-            **kwargs: Additional arguments (ignored)
-
-        Returns:
-            Dictionary with 'preds' [B, 1, D_out]
-        """
-        # Compute median across time dimension
-        median_value = x.median(dim=1).values  # [B, D_in]
-
-        # Handle dimension mismatch with non-parametric approach
-        if median_value.shape[1] != self.output_dim:
-            if median_value.shape[1] >= self.output_dim:
-                # Take first output_dim features
-                median_value = median_value[:, :self.output_dim]
-            else:
-                # Pad with zeros if needed
-                padding = torch.zeros(
-                    median_value.shape[0],
-                    self.output_dim - median_value.shape[1],
-                    device=median_value.device,
-                    dtype=median_value.dtype
-                )
-                median_value = torch.cat([median_value, padding], dim=1)
-
-        # Reshape to [B, 1, D_out]
-        preds = median_value.unsqueeze(1)
-
-        return {"preds": preds, "extras": {}}
+        pred_len = int(kwargs.get("pred_len", 1))
+        latent, extras = self.encode(x, context=context)
+        preds = self.decode(latent, pred_len)
+        return {"preds": preds, "extras": extras}
 
 
 @register("drift")
-class DriftModel(ARBaseModel):
+class DriftModel(ResidualWrapperCompatible):
     """Drift (random walk with drift) baseline model.
 
     Predicts the last value plus the average change over the input window.
@@ -452,57 +379,38 @@ class DriftModel(ARBaseModel):
         super().__init__(input_dim, output_dim, **kwargs)
         # No trainable parameters at all
 
-    def forward(
-        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
-    ) -> Dict[str, torch.Tensor]:
-        """Forward pass - return last value plus average drift.
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context
+        B, T_in, _ = x.shape
+        first_value = x[:, 0, :]
+        last_value = x[:, -1, :]
 
-        Args:
-            x: Input tensor [B, T_in, D_in]
-            context: Optional context tensor (ignored)
-            **kwargs: Additional arguments (ignored)
-
-        Returns:
-            Dictionary with 'preds' [B, 1, D_out]
-        """
-        B, T_in, D_in = x.shape
-
-        # Get first and last values
-        first_value = x[:, 0, :]  # [B, D_in]
-        last_value = x[:, -1, :]  # [B, D_in]
-
-        # Compute average drift
         if T_in > 1:
-            drift = (last_value - first_value) / (T_in - 1)  # [B, D_in]
+            drift = (last_value - first_value) / (T_in - 1)
         else:
             drift = torch.zeros_like(last_value)
 
-        # Predict: last value + one step of drift
-        next_value = last_value + drift  # [B, D_in]
+        next_value = last_value + drift
+        aligned = _match_output_dim(next_value, self.output_dim)
+        extras = {"drift": drift}
+        return aligned, extras
 
-        # Handle dimension mismatch with non-parametric approach
-        if next_value.shape[1] != self.output_dim:
-            if next_value.shape[1] >= self.output_dim:
-                # Take first output_dim features
-                next_value = next_value[:, :self.output_dim]
-            else:
-                # Pad with zeros if needed
-                padding = torch.zeros(
-                    next_value.shape[0],
-                    self.output_dim - next_value.shape[1],
-                    device=next_value.device,
-                    dtype=next_value.dtype
-                )
-                next_value = torch.cat([next_value, padding], dim=1)
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        return _repeat_predictions(latent, pred_len)
 
-        # Reshape to [B, 1, D_out]
-        preds = next_value.unsqueeze(1)
-
-        return {"preds": preds, "extras": {"drift": drift}}
+    def forward(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
+    ) -> Dict[str, torch.Tensor]:
+        pred_len = int(kwargs.get("pred_len", 1))
+        latent, extras = self.encode(x, context=context)
+        preds = self.decode(latent, pred_len)
+        return {"preds": preds, "extras": extras}
 
 
 @register("exponential_smoothing")
-class ExponentialSmoothingModel(ARBaseModel):
+class ExponentialSmoothingModel(ResidualWrapperCompatible):
     """Exponential smoothing baseline model.
 
     Uses exponentially weighted moving average (EWMA) for prediction.
@@ -520,68 +428,45 @@ class ExponentialSmoothingModel(ARBaseModel):
         Args:
             input_dim: Dimension of input features
             output_dim: Dimension of output predictions
-            alpha: Smoothing parameter (0 < alpha <= 1)
-                  Higher alpha = more weight on recent values
-                  Lower alpha = smoother, more weight on history
+            alpha: Smoothing factor (0 < alpha <= 1)
             **kwargs: Additional arguments (ignored)
         """
-        super().__init__(input_dim, output_dim, **kwargs)
-
-        if not 0 < alpha <= 1:
+        if alpha <= 0 or alpha > 1:
             raise ValueError(f"alpha must be in (0, 1], got {alpha}")
 
+        super().__init__(input_dim, output_dim, **kwargs)
         self.alpha = alpha
         # No trainable parameters at all
+
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context
+        B, T_in, _ = x.shape
+
+        ewma = x[:, 0, :].clone()
+        for t in range(1, T_in):
+            ewma = self.alpha * x[:, t, :] + (1 - self.alpha) * ewma
+
+        next_value = ewma
+        aligned = _match_output_dim(next_value, self.output_dim)
+        extras = {"alpha": torch.tensor(self.alpha, device=x.device)}
+        return aligned, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        return _repeat_predictions(latent, pred_len)
 
     def forward(
         self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
     ) -> Dict[str, torch.Tensor]:
-        """Forward pass - compute EWMA and predict.
-
-        Args:
-            x: Input tensor [B, T_in, D_in]
-            context: Optional context tensor (ignored)
-            **kwargs: Additional arguments (ignored)
-
-        Returns:
-            Dictionary with 'preds' [B, 1, D_out]
-        """
-        B, T_in, D_in = x.shape
-
-        # Compute EWMA iteratively
-        # Start with first value
-        ewma = x[:, 0, :]  # [B, D_in]
-
-        # Update for each subsequent timestep
-        for t in range(1, T_in):
-            ewma = self.alpha * x[:, t, :] + (1 - self.alpha) * ewma
-
-        # The EWMA at the last timestep is our prediction
-        next_value = ewma  # [B, D_in]
-
-        # Handle dimension mismatch with non-parametric approach
-        if next_value.shape[1] != self.output_dim:
-            if next_value.shape[1] >= self.output_dim:
-                # Take first output_dim features
-                next_value = next_value[:, :self.output_dim]
-            else:
-                # Pad with zeros if needed
-                padding = torch.zeros(
-                    next_value.shape[0],
-                    self.output_dim - next_value.shape[1],
-                    device=next_value.device,
-                    dtype=next_value.dtype
-                )
-                next_value = torch.cat([next_value, padding], dim=1)
-
-        # Reshape to [B, 1, D_out]
-        preds = next_value.unsqueeze(1)
-
-        return {"preds": preds, "extras": {"alpha": self.alpha}}
+        pred_len = int(kwargs.get("pred_len", 1))
+        latent, extras = self.encode(x, context=context)
+        preds = self.decode(latent, pred_len)
+        return {"preds": preds, "extras": extras}
 
 
 @register("seasonal_naive")
-class SeasonalNaiveModel(ARBaseModel):
+class SeasonalNaiveModel(ResidualWrapperCompatible):
     """Seasonal naive baseline model.
 
     Predicts the value from the same position in the previous seasonal cycle.
@@ -611,54 +496,36 @@ class SeasonalNaiveModel(ARBaseModel):
         self.season_length = season_length
         # No trainable parameters at all
 
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context
+        B, T_in, _ = x.shape
+
+        if T_in >= self.season_length:
+            seasonal_value = x[:, -self.season_length, :]
+            used_seasonal = True
+        else:
+            seasonal_value = x[:, -1, :]
+            used_seasonal = False
+
+        aligned = _match_output_dim(seasonal_value, self.output_dim)
+        extras = {
+            "season_length": torch.tensor(self.season_length, device=x.device),
+            "used_seasonal": torch.tensor(used_seasonal, device=x.device),
+        }
+        return aligned, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        return _repeat_predictions(latent, pred_len)
+
     def forward(
         self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
     ) -> Dict[str, torch.Tensor]:
-        """Forward pass - return value from previous season.
-
-        Args:
-            x: Input tensor [B, T_in, D_in]
-            context: Optional context tensor (ignored)
-            **kwargs: Additional arguments (ignored)
-
-        Returns:
-            Dictionary with 'preds' [B, 1, D_out]
-        """
-        B, T_in, D_in = x.shape
-
-        # If we have enough history, use seasonal value
-        if T_in >= self.season_length:
-            # Get value from one season ago (relative to last timestep)
-            seasonal_value = x[:, -self.season_length, :]  # [B, D_in]
-        else:
-            # Fall back to persistence if not enough history
-            seasonal_value = x[:, -1, :]  # [B, D_in]
-
-        # Handle dimension mismatch with non-parametric approach
-        if seasonal_value.shape[1] != self.output_dim:
-            if seasonal_value.shape[1] >= self.output_dim:
-                # Take first output_dim features
-                seasonal_value = seasonal_value[:, :self.output_dim]
-            else:
-                # Pad with zeros if needed
-                padding = torch.zeros(
-                    seasonal_value.shape[0],
-                    self.output_dim - seasonal_value.shape[1],
-                    device=seasonal_value.device,
-                    dtype=seasonal_value.dtype
-                )
-                seasonal_value = torch.cat([seasonal_value, padding], dim=1)
-
-        # Reshape to [B, 1, D_out]
-        preds = seasonal_value.unsqueeze(1)
-
-        return {
-            "preds": preds,
-            "extras": {
-                "season_length": self.season_length,
-                "used_seasonal": T_in >= self.season_length,
-            },
-        }
+        pred_len = int(kwargs.get("pred_len", 1))
+        latent, extras = self.encode(x, context=context)
+        preds = self.decode(latent, pred_len)
+        return {"preds": preds, "extras": extras}
 
 
 @register("polynomial_trend")

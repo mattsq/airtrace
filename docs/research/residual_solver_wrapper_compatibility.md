@@ -102,3 +102,6 @@ High-difficulty baselines likely warrant a lightweight Torch adapter (no gradien
 
 ## Progress (2025-02-19)
 - Refactored **timer** to inherit `ResidualWrapperCompatible`, ensuring the Hugging Face backbone and input normalization caches are surfaced through `encode`/`decode` so a generic residual pondering wrapper can reuse cached representations while preserving the existing forward contract.
+
+## Progress (2025-02-20)
+- Refactored baseline models **persistence**, **moving_average**, **zero**, **linear_trend**, **mean**, **median**, **drift**, **exponential_smoothing**, and **seasonal_naive** to implement `ResidualWrapperCompatible`, exposing their deterministic statistics through `encode`/`decode` so the residual solver wrapper can reuse aligned outputs across pondering steps without altering their single-step default behaviors.
