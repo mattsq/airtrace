@@ -77,3 +77,7 @@ High-difficulty baselines likely warrant a lightweight Torch adapter (no gradien
 
 ## Progress (2025-02-12)
 - Refactored **gru_seq2seq** and **lstm_seq2seq** to inherit from `ResidualWrapperCompatible`, exposing the RNN encoders via `encode` and reusing the stepwise decoder logic through `decode` to support residual pondering while retaining teacher-forcing behavior in the standard forward pass.
+
+## Progress (2025-02-13)
+- Refactored **nbeats** to implement `ResidualWrapperCompatible`, factoring the block stack computation into reusable `encode`/`decode` hooks so stacked forecasts can be reused by a residual pondering wrapper without changing the default forward outputs.
+- Updated **frets** to surface its FFT/iFFT pipeline through `encode` and reuse the temporal/output projections in `decode`, enabling residual refinement on the time-domain latent while preserving the original forecasting contract.

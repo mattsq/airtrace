@@ -21,7 +21,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .base import ARBaseModel
+from .base import ResidualWrapperCompatible
 from .registry import register
 
 
@@ -169,7 +169,7 @@ class NBeatsBlock(nn.Module):
 
 
 @register("nbeats")
-class NBeatsModel(ARBaseModel):
+class NBeatsModel(ResidualWrapperCompatible):
     """N-BEATS model with configurable stacks of interpretable blocks."""
 
     def __init__(
@@ -210,13 +210,13 @@ class NBeatsModel(ARBaseModel):
             )
             self.stacks.append(blocks)
 
-    def forward(
-        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
-    ) -> Dict[str, torch.Tensor]:
+    def _compute_block_forecasts(
+        self, x: torch.Tensor
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         residual = x
-        B = x.size(0)
+        batch_size = x.size(0)
         forecast = torch.zeros(
-            B, self.pred_len, self.output_dim, device=x.device, dtype=x.dtype
+            batch_size, self.pred_len, self.output_dim, device=x.device, dtype=x.dtype
         )
         stack_outputs: List[torch.Tensor] = []
 
@@ -229,10 +229,42 @@ class NBeatsModel(ARBaseModel):
                 stack_forecast = stack_forecast + block_forecast
             stack_outputs.append(stack_forecast)
 
-        extras: Dict[str, torch.Tensor] = {
-            "stack_forecasts": torch.stack(stack_outputs, dim=1)
+        stacked = (
+            torch.stack(stack_outputs, dim=1)
             if stack_outputs
             else torch.empty(0, device=x.device, dtype=x.dtype)
-        }
+        )
 
-        return {"preds": forecast, "extras": extras}
+        return forecast, stacked
+
+    def encode(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context
+        forecast, stacked = self._compute_block_forecasts(x)
+        extras: Dict[str, torch.Tensor] = {"stack_forecasts": stacked}
+        return stacked if stacked.numel() > 0 else forecast.unsqueeze(1), extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        if pred_len != self.pred_len:
+            raise ValueError(
+                f"NBeatsModel only supports pred_len={self.pred_len}, got {pred_len}"
+            )
+
+        if latent.dim() == 4:
+            return latent.sum(dim=1)
+        if latent.dim() == 3 and latent.size(1) == pred_len:
+            return latent
+        raise ValueError(
+            "Latent for NBeatsModel decode must be stacked forecasts [B, S, T, D] "
+            "or a single forecast [B, T, D]."
+        )
+
+    def forward(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
+    ) -> Dict[str, torch.Tensor]:
+        pred_len = int(kwargs.get("pred_len", self.pred_len))
+        latent, extras = self.encode(x, context=context)
+        preds = self.decode(latent, pred_len)
+        extras["representation"] = latent
+        return {"preds": preds, "extras": extras}
