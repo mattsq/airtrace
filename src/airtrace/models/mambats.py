@@ -21,7 +21,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .base import ARBaseModel
+from .base import ResidualWrapperCompatible
 from .registry import register
 
 LOGGER = logging.getLogger(__name__)
@@ -354,7 +354,7 @@ class VariableScanEncoder(nn.Module):
 
 
 @register("mambats")
-class MambaTSModel(ARBaseModel):
+class MambaTSModel(ResidualWrapperCompatible):
     """MambaTS: Improved Selective State Space Model for Long-term Time Series Forecasting.
 
     MambaTS adapts the Mamba state-space model for time series with two key innovations:
@@ -506,56 +506,48 @@ class MambaTSModel(ARBaseModel):
 
         return x * std + mean
 
+    def encode(
+        self,
+        x: torch.Tensor,
+        context: Optional[torch.Tensor] = None,
+        **kwargs: Dict,
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del context, kwargs  # Unused
+
+        x_norm, mean, std = self._normalize(x)
+        patch_embeds, num_patches = self.patch_embedding(x_norm)
+        encoded = self.encoder(patch_embeds)
+        pooled = encoded.mean(dim=1)
+
+        self._cached_norm = (mean, std)
+        extras = {
+            "patch_embeds": patch_embeds,
+            "encoded_features": encoded,
+            "num_patches": num_patches,
+        }
+        return pooled, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        if pred_len != self.pred_len:
+            raise ValueError(
+                f"MambaTSModel only supports pred_len={self.pred_len}; got {pred_len}"
+            )
+
+        if not hasattr(self, "_cached_norm"):
+            raise ValueError("encode must be called before decode to cache normalization stats")
+
+        mean, std = self._cached_norm
+        preds = self.head(latent).view(latent.size(0), self.pred_len, self.output_dim)
+        return self._denormalize(preds, mean, std)
+
     def forward(
         self,
         x: torch.Tensor,
         context: Optional[torch.Tensor] = None,
         **kwargs: Dict,
     ) -> Dict[str, torch.Tensor]:
-        """Forward pass through MambaTS.
+        """Forward pass through MambaTS using reusable hooks."""
 
-        Args:
-            x: Input tensor [B, T, D_in] where B is batch size, T is sequence length,
-               D_in is input dimension (number of variables)
-            context: Optional context tensor (currently unused)
-            **kwargs: Additional arguments (unused, for interface compatibility)
-
-        Returns:
-            Dictionary containing:
-                - preds: Predictions [B, pred_len, D_out]
-                - extras: Dict with 'patch_embeds' and 'encoded_features' for analysis
-        """
-        del context, kwargs  # Unused
-
-        B, T, D = x.shape
-
-        # Normalize input
-        x_norm, mean, std = self._normalize(x)
-
-        # Create patch embeddings
-        # [B, T, D] -> [B, num_patches, D, embed_dim]
-        patch_embeds, num_patches = self.patch_embedding(x_norm)
-
-        # Encode with Variable Scan along Time
-        # [B, num_patches, D, embed_dim] -> [B, num_patches * D, embed_dim]
-        encoded = self.encoder(patch_embeds)
-
-        # Pool across all tokens (mean pooling)
-        # [B, num_patches * D, embed_dim] -> [B, embed_dim]
-        pooled = encoded.mean(dim=1)
-
-        # Generate predictions
-        # [B, embed_dim] -> [B, pred_len * output_dim] -> [B, pred_len, output_dim]
-        preds = self.head(pooled)
-        preds = preds.view(B, self.pred_len, self.output_dim)
-
-        # Denormalize predictions
-        preds = self._denormalize(preds, mean, std)
-
-        extras = {
-            "patch_embeds": patch_embeds,
-            "encoded_features": encoded,
-            "num_patches": num_patches,
-        }
-
+        latent, extras = self.encode(x, context=context, **kwargs)
+        preds = self.decode(latent, self.pred_len)
         return {"preds": preds, "extras": extras}

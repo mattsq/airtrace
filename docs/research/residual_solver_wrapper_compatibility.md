@@ -89,3 +89,6 @@ High-difficulty baselines likely warrant a lightweight Torch adapter (no gradien
 ## Progress (2025-02-15)
 - Refactored **autoformer** to implement `ResidualWrapperCompatible`, caching the decoder start tokens and encoder trend from `encode` and reusing the seasonal/trend decomposition inside `decode` so the residual solver loop can refine outputs without re-embedding the window.
 - Refactored **fedformer** with the same wrapper hooks, aligning its frequency-enhanced decomposition and cached decoder tail with the generic residual solver interface while preserving the configured horizon checks and extras reporting.
+
+## Progress (2025-02-16)
+- Refactored **tft**, **mamba2**, **mambats**, **cyclenet**, **itransformer**, and **nonstationary_transformer** to implement `ResidualWrapperCompatible`, exposing reusable encoder/decoder hooks while caching normalization, cycle, and attention artifacts required to reproduce their existing forward contracts under a generic residual pondering wrapper.

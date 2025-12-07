@@ -21,7 +21,7 @@ from typing import Dict, List, Optional, Tuple
 import torch
 import torch.nn as nn
 
-from .base import ARBaseModel
+from .base import ResidualWrapperCompatible
 from .registry import register
 
 
@@ -184,7 +184,7 @@ class InterpretableMultiHeadAttention(nn.Module):
 
 
 @register("tft")
-class TemporalFusionTransformer(ARBaseModel):
+class TemporalFusionTransformer(ResidualWrapperCompatible):
     """Temporal Fusion Transformer for interpretable multi-horizon forecasting."""
 
     def __init__(
@@ -263,24 +263,19 @@ class TemporalFusionTransformer(ARBaseModel):
 
         self.dropout = nn.Dropout(dropout)
 
-    def forward(
+    def encode(
         self,
         x: torch.Tensor,
         context: Optional[torch.Tensor] = None,
         known_future: Optional[torch.Tensor] = None,
         static_covariates: Optional[torch.Tensor] = None,
         **kwargs,
-    ) -> Dict[str, torch.Tensor]:
-        """Forward pass of the TFT.
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        """Encode inputs into fused temporal features.
 
-        Args:
-            x: Historical inputs [B, T_in, D_in]
-            context: Optional context tensor; if 2D it is treated as static features
-            known_future: Optional known future inputs [B, pred_len, D_future]
-            static_covariates: Optional static inputs [B, C_static]
-
-        Returns:
-            Dictionary with predictions and interpretability artifacts.
+        Returns pooled fusion tokens alongside interpretability artifacts so the
+        residual wrapper can reuse the same representation without re-running
+        the variable selection and attention stacks.
         """
 
         del kwargs
@@ -288,12 +283,10 @@ class TemporalFusionTransformer(ARBaseModel):
         if static_context is None and context is not None and context.dim() == 2:
             static_context = context
 
-        # Encoder: variable selection + LSTM over historical context
         enc_features, enc_importance = self.encoder_vsn(x, static_context)
         enc_features = self.dropout(enc_features)
         enc_output, (h_n, c_n) = self.encoder_lstm(enc_features)
 
-        # Prepare decoder inputs (known future or zeros)
         decoder_input_dim = self.known_future_dim if self.known_future_dim > 0 else self.input_dim
         if known_future is None:
             device = x.device
@@ -310,7 +303,6 @@ class TemporalFusionTransformer(ARBaseModel):
         dec_features = self.dropout(dec_features)
         dec_output, _ = self.decoder_lstm(dec_features, (h_n, c_n))
 
-        # Temporal fusion via interpretable attention
         attn_output, attn_weights = self.temporal_attn(dec_output, enc_output, enc_output)
         fusion = torch.cat([dec_output, attn_output], dim=-1)
         fusion = self.post_attn_grn(fusion, static_context)
@@ -323,27 +315,51 @@ class TemporalFusionTransformer(ARBaseModel):
             "attention_weights": attn_weights.detach(),
         }
 
-        if self.quantiles:
-            quantile_values = self.quantile_proj(fusion)
-            quantile_values = quantile_values.view(
-                x.size(0), self.pred_len, self.output_dim, len(self.quantiles)
+        self._cached_quantile_forecast: Optional[torch.Tensor] = None
+        return fusion, extras
+
+    def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
+        if pred_len != self.pred_len:
+            raise ValueError(
+                f"TemporalFusionTransformer only supports pred_len={self.pred_len}; got {pred_len}"
             )
 
-            # Use median (0.5) quantile when available, otherwise center quantile
-            if 0.5 in self.quantiles:
-                median_idx = self.quantiles.index(0.5)
-            else:
-                median_idx = len(self.quantiles) // 2
+        if self.quantiles:
+            quantile_values = self.quantile_proj(latent)
+            quantile_values = quantile_values.view(
+                latent.size(0), pred_len, self.output_dim, len(self.quantiles)
+            )
+            self._cached_quantile_forecast = quantile_values
 
-            preds = quantile_values[..., median_idx]
-            extras["quantile_forecast"] = quantile_values
-        else:
-            preds = self.output_proj(fusion)
+            median_idx = self.quantiles.index(0.5) if 0.5 in self.quantiles else len(self.quantiles) // 2
+            return quantile_values[..., median_idx]
 
-        return {
-            "preds": preds,
-            "extras": extras,
-        }
+        self._cached_quantile_forecast = None
+        return self.output_proj(latent)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        context: Optional[torch.Tensor] = None,
+        known_future: Optional[torch.Tensor] = None,
+        static_covariates: Optional[torch.Tensor] = None,
+        **kwargs,
+    ) -> Dict[str, torch.Tensor]:
+        """Forward pass of the TFT using reusable encode/decode hooks."""
+
+        latent, extras = self.encode(
+            x,
+            context=context,
+            known_future=known_future,
+            static_covariates=static_covariates,
+            **kwargs,
+        )
+        preds = self.decode(latent, self.pred_len)
+
+        if self._cached_quantile_forecast is not None:
+            extras["quantile_forecast"] = self._cached_quantile_forecast
+
+        return {"preds": preds, "extras": extras}
 
     def __repr__(self) -> str:
         return (
