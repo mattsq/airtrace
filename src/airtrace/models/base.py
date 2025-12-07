@@ -95,14 +95,12 @@ class ResidualWrapperCompatible(ARBaseModel):
     refined predictions without re-encoding the input window.
     """
 
+    @abstractmethod
     def encode(
         self, x: torch.Tensor, context: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """Return a latent representation and any encoder extras."""
 
-        raise NotImplementedError
-
+    @abstractmethod
     def decode(self, latent: torch.Tensor, pred_len: int) -> torch.Tensor:
         """Decode predictions of length ``pred_len`` from a latent."""
-
-        raise NotImplementedError
