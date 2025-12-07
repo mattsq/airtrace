@@ -108,3 +108,6 @@ High-difficulty baselines likely warrant a lightweight Torch adapter (no gradien
 
 ## Progress (2025-02-21)
 - Refactored statistical baselines **polynomial_trend**, **holt_linear_trend**, **holt_winters**, **theta**, **sarima**, and **var** to implement `ResidualWrapperCompatible`, threading their fitted trends or classical estimators through shared `encode`/`decode` hooks so the generic residual pondering wrapper can reuse cached outputs while preserving their existing single-step forecasting contracts.
+
+## Progress (2025-02-22)
+- Marked `ResidualWrapperCompatible.encode`/`decode` as abstract methods to enforce the wrapper surface across all compatible models, ensuring the generic residual solver wrapper can rely on the hooks being implemented when instantiating registered models.
