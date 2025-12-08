@@ -3,6 +3,15 @@
 model:
   name: residual_solver
   params:
+    # input_dim and output_dim are injected by build_model, so we don't list them here.
+    
+    # Base model config
+    base_model:
+      name: gru_ar
+      params:
+        hidden_size: 128
+        num_layers: 2
+    
     hidden_dim: 128
     residual_hidden: 128
     update_hidden: 128
@@ -11,7 +20,7 @@ model:
     max_steps: 20
     residual_halt_threshold: 0.01
     residual_bonus_logit: 1.0
-    halt_eps: 1.0e-6
+    halt_eps: 1e-6
     lambda_step: 1.0
     lambda_consistency: 0.1
     lambda_compute: 0.01
