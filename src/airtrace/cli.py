@@ -158,7 +158,8 @@ def train(cfg: DictConfig):
         task=task,
         config=cfg,
         train_loader=train_loader,
-        val_loader=val_loader
+        val_loader=val_loader,
+        transforms=transform_pipeline
     )
 
     # Train
