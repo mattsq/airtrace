@@ -25,6 +25,7 @@ class Trainer:
         config: Dict[str, Any],
         train_loader: Any,
         val_loader: Any,
+        transforms: Optional[Any] = None,
         device: str = "cuda" if torch.cuda.is_available() else "cpu"
     ):
         """Initialize trainer.
@@ -35,6 +36,7 @@ class Trainer:
             config: Training configuration
             train_loader: Training data loader
             val_loader: Validation data loader
+            transforms: Transform pipeline (optional, for checkpoint persistence)
             device: Device to train on
         """
         self.model = model.to(device)
@@ -43,6 +45,7 @@ class Trainer:
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.device = device
+        self.transforms = transforms
 
         # Training config (must be set before building scheduler)
         train_config = config.get("train", {})
@@ -287,6 +290,17 @@ class Trainer:
 
         if self.scheduler is not None:
             checkpoint["scheduler_state_dict"] = self.scheduler.state_dict()
+
+        # Save transform statistics if available
+        if self.transforms is not None and hasattr(self.transforms, 'get_stats'):
+            try:
+                checkpoint["transform_stats"] = self.transforms.get_stats()
+                print("[INFO] Saved transform statistics to checkpoint")
+            except Exception as e:
+                print(f"[WARNING] Could not save transform stats: {e}")
+                checkpoint["transform_stats"] = None
+        else:
+            checkpoint["transform_stats"] = None
 
         # Save best checkpoint (separate from top-k tracking)
         if is_best:
