@@ -68,21 +68,14 @@ class ONNXExporter:
 
         config = checkpoint["config"]
 
-        # Build transform pipeline to get stats
-        transform_stats = None
-        if "transforms" in config and "pipeline" in config.transforms:
-            # Build transforms to access statistics if available
-            # Note: We don't fit them, just instantiate to potentially load cached stats
-            try:
-                transform_pipeline = build_transforms(config.transforms.pipeline)
-                if hasattr(transform_pipeline, 'get_stats'):
-                    # Try to get stats if they were cached
-                    # In practice, we'd need to load from a separate stats file or
-                    # the checkpoint if we extend it to store transform stats
-                    transform_stats = transform_pipeline.get_stats()
-            except Exception as e:
-                print(f"Warning: Could not load transform statistics: {e}")
-                print("Export will proceed without transform integration.")
+        # Load transform statistics from checkpoint (preferred)
+        transform_stats = checkpoint.get("transform_stats")
+
+        if transform_stats is not None:
+            print(f"[INFO] Loaded transform statistics from checkpoint ({len(transform_stats)} transforms)")
+        else:
+            print("[WARNING] No transform statistics in checkpoint")
+            print("[INFO] End-to-end export will not be available without transform stats")
 
         # Determine input/output dimensions
         # Try to get from data config
