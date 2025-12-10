@@ -190,6 +190,8 @@ class RobustScalerTransform(Transform):
         super().__init__()
         self.per_sensor = per_sensor
         self.quantile_range = quantile_range
+        self.with_centering = with_centering
+        self.with_scaling = with_scaling
         self.scaler_x = RobustScaler(
             quantile_range=quantile_range,
             with_centering=with_centering,
@@ -273,3 +275,54 @@ class RobustScalerTransform(Transform):
             y = self.scaler_y.inverse_transform(y.reshape(-1, y_shape[-1])).reshape(y_shape)
 
         return x, y
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get scaler statistics for caching.
+
+        Returns:
+            Dictionary containing scaler parameters
+        """
+        if not self.is_fitted:
+            raise RuntimeError("Transform not fitted. Call fit() first.")
+
+        return {
+            'scaler_x_center': self.scaler_x.center_,
+            'scaler_x_scale': self.scaler_x.scale_,
+            'scaler_y_center': self.scaler_y.center_,
+            'scaler_y_scale': self.scaler_y.scale_,
+            'per_sensor': self.per_sensor,
+            'quantile_range': self.quantile_range,
+            'with_centering': self.with_centering,
+            'with_scaling': self.with_scaling,
+        }
+
+    def set_stats(self, stats: Dict[str, Any]) -> None:
+        """Set scaler statistics from cache.
+
+        Args:
+            stats: Dictionary containing scaler parameters
+        """
+        from sklearn.preprocessing import RobustScaler
+
+        self.per_sensor = stats['per_sensor']
+        self.quantile_range = stats['quantile_range']
+        self.with_centering = stats.get('with_centering', True)
+        self.with_scaling = stats.get('with_scaling', True)
+
+        self.scaler_x = RobustScaler(
+            quantile_range=self.quantile_range,
+            with_centering=self.with_centering,
+            with_scaling=self.with_scaling
+        )
+        self.scaler_x.center_ = stats['scaler_x_center']
+        self.scaler_x.scale_ = stats['scaler_x_scale']
+
+        self.scaler_y = RobustScaler(
+            quantile_range=self.quantile_range,
+            with_centering=self.with_centering,
+            with_scaling=self.with_scaling
+        )
+        self.scaler_y.center_ = stats['scaler_y_center']
+        self.scaler_y.scale_ = stats['scaler_y_scale']
+
+        self.is_fitted = True

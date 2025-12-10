@@ -93,6 +93,54 @@ class RobustScalerWrapper(nn.Module):
         return x * (self.scale + self.epsilon) + self.center
 
 
+class DifferenceWrapper(nn.Module):
+    """PyTorch wrapper for DifferenceTransform to enable ONNX export.
+
+    Applies first-order differencing: x[t] - x[t-1]
+    """
+
+    def __init__(self, order: int = 1):
+        """Initialize difference wrapper.
+
+        Args:
+            order: Order of differencing (1=first difference, 2=second, etc.)
+        """
+        super().__init__()
+        self.order = order
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply differencing.
+
+        Args:
+            x: Input tensor [seq_len, features]
+
+        Returns:
+            Differenced tensor [seq_len, features] (padded to maintain length)
+        """
+        # Apply differencing n times
+        x_diff = x
+        for _ in range(self.order):
+            diff = x_diff[1:] - x_diff[:-1]
+            # Pad at the beginning to maintain sequence length
+            x_diff = torch.cat([x_diff[:1], diff], dim=0)
+        return x_diff
+
+    def inverse(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply inverse differencing (cumulative sum).
+
+        Args:
+            x: Differenced tensor [seq_len, features]
+
+        Returns:
+            Original scale tensor [seq_len, features]
+        """
+        # Apply cumulative sum n times
+        x_inv = x
+        for _ in range(self.order):
+            x_inv = torch.cumsum(x_inv, dim=0)
+        return x_inv
+
+
 class TransformCompose(nn.Module):
     """Composes multiple transform wrappers."""
 
@@ -171,6 +219,10 @@ def create_transform_wrapper(
             return None
 
         return RobustScalerWrapper(center=center, scale=scale)
+
+    elif base_name == 'DifferenceTransform':
+        order = transform_stats.get('order', 1)
+        return DifferenceWrapper(order=order)
 
     else:
         # Unsupported transform

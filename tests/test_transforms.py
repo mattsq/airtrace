@@ -765,3 +765,128 @@ def test_temporal_features_inverse():
 
     # Check original shape restored
     assert x_inv.shape == x_orig.shape
+
+
+# ===== Transform Statistics Persistence Tests =====
+
+
+def test_difference_transform_get_set_stats():
+    """Test that DifferenceTransform can save and restore stats."""
+    dataset = MockDataset()
+
+    # Create and fit transform
+    transform = DifferenceTransform(sensors=['sensor_a', 'sensor_b'], order=2)
+    transform.fit(dataset)
+
+    # Get stats
+    stats = transform.get_stats()
+    assert 'sensors' in stats
+    assert 'order' in stats
+    assert 'sensor_indices' in stats
+    assert stats['order'] == 2
+    assert stats['sensors'] == ['sensor_a', 'sensor_b']
+
+    # Create new transform and restore stats
+    transform2 = DifferenceTransform()
+    transform2.set_stats(stats)
+
+    assert transform2.sensors == transform.sensors
+    assert transform2.order == transform.order
+    assert transform2.sensor_indices == transform.sensor_indices
+    assert transform2.is_fitted
+
+
+def test_difference_transform_get_stats_requires_fit():
+    """Test that DifferenceTransform.get_stats() requires fitting first."""
+    transform = DifferenceTransform(order=1)
+
+    with pytest.raises(RuntimeError, match="Transform not fitted"):
+        transform.get_stats()
+
+
+def test_robust_scaler_get_set_stats():
+    """Test that RobustScalerTransform can save and restore stats."""
+    dataset = MockDataset()
+
+    # Create and fit transform
+    transform = RobustScalerTransform(
+        per_sensor=True,
+        quantile_range=(10.0, 90.0),
+        with_centering=True,
+        with_scaling=True
+    )
+    transform.fit(dataset)
+
+    # Get stats
+    stats = transform.get_stats()
+    assert 'scaler_x_center' in stats
+    assert 'scaler_x_scale' in stats
+    assert 'scaler_y_center' in stats
+    assert 'scaler_y_scale' in stats
+    assert 'per_sensor' in stats
+    assert 'quantile_range' in stats
+    assert 'with_centering' in stats
+    assert 'with_scaling' in stats
+
+    # Create new transform and restore stats
+    transform2 = RobustScalerTransform()
+    transform2.set_stats(stats)
+
+    # Verify attributes restored
+    assert transform2.per_sensor == transform.per_sensor
+    assert transform2.quantile_range == transform.quantile_range
+    assert transform2.with_centering == transform.with_centering
+    assert transform2.with_scaling == transform.with_scaling
+    assert transform2.is_fitted
+
+    # Verify scalers restored
+    np.testing.assert_array_equal(transform2.scaler_x.center_, transform.scaler_x.center_)
+    np.testing.assert_array_equal(transform2.scaler_x.scale_, transform.scaler_x.scale_)
+    np.testing.assert_array_equal(transform2.scaler_y.center_, transform.scaler_y.center_)
+    np.testing.assert_array_equal(transform2.scaler_y.scale_, transform.scaler_y.scale_)
+
+    # Verify both transforms produce same output
+    sample = dataset[0]
+    x1, y1, _ = transform(sample["x"], sample["y"], sample["meta"])
+    x2, y2, _ = transform2(sample["x"], sample["y"], sample["meta"])
+
+    np.testing.assert_allclose(x1, x2, rtol=1e-6)
+    np.testing.assert_allclose(y1, y2, rtol=1e-6)
+
+
+def test_robust_scaler_get_stats_requires_fit():
+    """Test that RobustScalerTransform.get_stats() requires fitting first."""
+    transform = RobustScalerTransform()
+
+    with pytest.raises(RuntimeError, match="Transform not fitted"):
+        transform.get_stats()
+
+
+def test_zscore_transform_get_set_stats():
+    """Test that ZScoreTransform can save and restore stats (regression test)."""
+    dataset = MockDataset()
+
+    # Create and fit transform
+    transform = ZScoreTransform(per_sensor=True, center=True, scale=True)
+    transform.fit(dataset)
+
+    # Get stats
+    stats = transform.get_stats()
+    assert 'scaler_x_mean' in stats
+    assert 'scaler_x_scale' in stats
+    assert 'scaler_y_mean' in stats
+    assert 'scaler_y_scale' in stats
+
+    # Create new transform and restore stats
+    transform2 = ZScoreTransform()
+    transform2.set_stats(stats)
+
+    assert transform2.is_fitted
+
+    # Verify both transforms produce same output
+    sample = dataset[0]
+    x1, y1, _ = transform(sample["x"], sample["y"], sample["meta"])
+    x2, y2, _ = transform2(sample["x"], sample["y"], sample["meta"])
+
+    np.testing.assert_allclose(x1, x2, rtol=1e-6)
+    np.testing.assert_allclose(y1, y2, rtol=1e-6)
