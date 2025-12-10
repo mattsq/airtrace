@@ -239,3 +239,86 @@ def test_validate_epoch_with_multiple_batches_returns_average(tmp_path, writer_s
     assert val_metrics["loss"] > 0
     val_logs = [entry for entry in writer_stub[0].scalars if entry[0].startswith("val/")]
     assert val_logs, "validation metrics should be logged once per epoch"
+
+
+def test_save_checkpoint_includes_transform_stats(tmp_path, writer_stub):
+    """Test that checkpoints include transform statistics when available."""
+    # Create a mock transform pipeline with stats
+    class MockTransform:
+        def __init__(self):
+            self.is_fitted = True
+
+        def get_stats(self):
+            return {
+                "mock_mean": torch.tensor([1.0, 2.0]).numpy(),
+                "mock_std": torch.tensor([0.5, 1.0]).numpy(),
+            }
+
+    mock_transforms = MockTransform()
+
+    trainer = _make_trainer(
+        tmp_path,
+        writer_stub,
+        overrides={"train": {"checkpoint": {"save_top_k": 1}}},
+    )
+
+    # Manually set transforms
+    trainer.transforms = mock_transforms
+
+    # Save checkpoint
+    trainer.save_checkpoint(val_loss=0.5, is_best=True)
+
+    # Load and verify
+    checkpoint_path = trainer.checkpoint_dir / "best.ckpt"
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+
+    assert "transform_stats" in checkpoint
+    assert checkpoint["transform_stats"] is not None
+    assert "mock_mean" in checkpoint["transform_stats"]
+
+
+def test_save_checkpoint_handles_missing_transforms(tmp_path, writer_stub):
+    """Test that checkpoints save successfully when transforms are None."""
+    trainer = _make_trainer(
+        tmp_path,
+        writer_stub,
+        overrides={"train": {"checkpoint": {"save_top_k": 1}}},
+    )
+
+    # transforms should be None by default
+    assert trainer.transforms is None
+
+    # Save checkpoint
+    trainer.save_checkpoint(val_loss=0.5, is_best=True)
+
+    # Load and verify
+    checkpoint_path = trainer.checkpoint_dir / "best.ckpt"
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+
+    assert "transform_stats" in checkpoint
+    assert checkpoint["transform_stats"] is None
+
+
+def test_save_checkpoint_handles_unfitted_transforms(tmp_path, writer_stub):
+    """Test that checkpoints save successfully when transforms raise errors."""
+    class UnfittedTransform:
+        def get_stats(self):
+            raise RuntimeError("Transform not fitted. Call fit() first.")
+
+    trainer = _make_trainer(
+        tmp_path,
+        writer_stub,
+        overrides={"train": {"checkpoint": {"save_top_k": 1}}},
+    )
+
+    trainer.transforms = UnfittedTransform()
+
+    # Save checkpoint - should not fail
+    trainer.save_checkpoint(val_loss=0.5, is_best=True)
+
+    # Load and verify
+    checkpoint_path = trainer.checkpoint_dir / "best.ckpt"
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+
+    assert "transform_stats" in checkpoint
+    assert checkpoint["transform_stats"] is None  # Set to None due to error

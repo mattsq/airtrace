@@ -365,3 +365,72 @@ def test_fixed_sequence_removes_dynamic_axes(tmp_path: Path, monkeypatch):
     assert 1 not in captured_dynamic_axes['input']  # sequence_length removed
     assert 0 in captured_dynamic_axes['output']
     assert 1 not in captured_dynamic_axes['output']  # output_length removed
+
+
+def test_from_checkpoint_loads_transform_stats(tmp_path: Path):
+    """Test that ONNXExporter loads transform stats from checkpoint."""
+    # Use a simple model configuration that exists in registry
+    from airtrace.models import build_model
+
+    config = DictConfig({
+        "model": {"name": "gru_ar", "hidden_size": 16, "num_layers": 1},
+        "data": {
+            "sensors": {"use": ["s1", "s2", "s3"]},
+            "window_size_in": 100,
+        },
+    })
+
+    # Build the actual model to get its state dict
+    model = build_model(config.model, input_dim=3, output_dim=3)
+
+    transform_stats = {
+        "ZScoreTransform_0": {
+            "scaler_x_mean": np.array([1.0, 2.0, 3.0]),
+            "scaler_x_scale": np.array([0.5, 1.0, 1.5]),
+        }
+    }
+
+    checkpoint = {
+        "model_state_dict": model.state_dict(),
+        "config": config,
+        "transform_stats": transform_stats,
+    }
+
+    checkpoint_path = tmp_path / "test_checkpoint.ckpt"
+    torch.save(checkpoint, checkpoint_path)
+
+    exporter = ONNXExporter.from_checkpoint(checkpoint_path)
+
+    assert exporter.transform_stats is not None
+    assert "ZScoreTransform_0" in exporter.transform_stats
+
+
+def test_from_checkpoint_handles_old_checkpoints_without_stats(tmp_path: Path):
+    """Test backwards compatibility with old checkpoints."""
+    from airtrace.models import build_model
+
+    config = DictConfig({
+        "model": {"name": "gru_ar", "hidden_size": 16, "num_layers": 1},
+        "data": {"sensors": {"use": ["s1", "s2"]}, "window_size_in": 100},
+    })
+
+    # Build the actual model to get its state dict
+    model = build_model(config.model, input_dim=2, output_dim=2)
+
+    # Old checkpoint WITHOUT transform_stats key
+    checkpoint = {
+        "model_state_dict": model.state_dict(),
+        "config": config,
+        # No transform_stats
+    }
+
+    checkpoint_path = tmp_path / "old_checkpoint.ckpt"
+    torch.save(checkpoint, checkpoint_path)
+
+    exporter = ONNXExporter.from_checkpoint(checkpoint_path)
+
+    assert exporter.transform_stats is None
+
+    # Model-only export should still work
+    validation = exporter.validate(end_to_end=False, verbose=False)
+    assert validation["passed"] is True
