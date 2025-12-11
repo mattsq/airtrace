@@ -26,7 +26,7 @@ class Trainer:
         train_loader: Any,
         val_loader: Any,
         transforms: Optional[Any] = None,
-        device: str = "cuda" if torch.cuda.is_available() else "cpu"
+        device: str = "cuda" if torch.cuda.is_available() else "cpu",
     ):
         """Initialize trainer.
 
@@ -55,10 +55,14 @@ class Trainer:
 
         # Check if model has trainable parameters
         # Skip UninitializedParameter (used by LazyLinear) - they'll be counted after first forward pass
-        self.has_trainable_params = sum(
-            p.numel() for p in self.model.parameters()
-            if p.requires_grad and not isinstance(p, UninitializedParameter)
-        ) > 0
+        self.has_trainable_params = (
+            sum(
+                p.numel()
+                for p in self.model.parameters()
+                if p.requires_grad and not isinstance(p, UninitializedParameter)
+            )
+            > 0
+        )
 
         # Build optimizer and scheduler (only if model has trainable parameters)
         if self.has_trainable_params:
@@ -67,7 +71,9 @@ class Trainer:
         else:
             self.optimizer = None
             self.scheduler = None
-            print("[INFO] Model has no trainable parameters - skipping optimizer/scheduler creation")
+            print(
+                "[INFO] Model has no trainable parameters - skipping optimizer/scheduler creation"
+            )
 
         # Gradient clipping
         grad_clip_config = train_config.get("grad_clip", {})
@@ -79,7 +85,7 @@ class Trainer:
         self.early_stop_patience = early_stop_config.get("patience", 10)
         self.early_stop_min_delta = early_stop_config.get("min_delta", 1e-4)
         self.early_stop_counter = 0
-        self.best_val_loss = float('inf')
+        self.best_val_loss = float("inf")
 
         # Checkpointing
         checkpoint_config = train_config.get("checkpoint", {})
@@ -157,13 +163,17 @@ class Trainer:
         num_batches = 0
 
         # Conditionally wrap with tqdm for verbose progress
-        train_iter = tqdm(
-            self.train_loader,
-            desc=f"Epoch {self.current_epoch + 1}/{self.epochs} [Train]",
-            leave=False,
-            file=sys.stdout,
-            disable=not self.verbose_progress
-        ) if self.verbose_progress else self.train_loader
+        train_iter = (
+            tqdm(
+                self.train_loader,
+                desc=f"Epoch {self.current_epoch + 1}/{self.epochs} [Train]",
+                leave=False,
+                file=sys.stdout,
+                disable=not self.verbose_progress,
+            )
+            if self.verbose_progress
+            else self.train_loader
+        )
 
         for batch in train_iter:
             # Move batch to device
@@ -183,9 +193,7 @@ class Trainer:
 
                 # Gradient clipping
                 if self.use_grad_clip:
-                    torch.nn.utils.clip_grad_norm_(
-                        self.model.parameters(), self.grad_clip_max_norm
-                    )
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip_max_norm)
 
                 # Optimizer step
                 self.optimizer.step()
@@ -202,9 +210,9 @@ class Trainer:
             self.global_step += 1
 
             # Update progress bar with current loss
-            if self.verbose_progress and hasattr(train_iter, 'set_postfix'):
+            if self.verbose_progress and hasattr(train_iter, "set_postfix"):
                 loss_val = loss.item() if isinstance(loss, torch.Tensor) else loss
-                train_iter.set_postfix({'loss': f'{loss_val:.4f}'}, refresh=True)
+                train_iter.set_postfix({"loss": f"{loss_val:.4f}"}, refresh=True)
 
             # Logging
             if self.global_step % self.log_every_n_steps == 0:
@@ -229,13 +237,17 @@ class Trainer:
         num_batches = 0
 
         # Conditionally wrap with tqdm for verbose progress
-        val_iter = tqdm(
-            self.val_loader,
-            desc=f"Epoch {self.current_epoch + 1}/{self.epochs} [Val]",
-            leave=False,
-            file=sys.stdout,
-            disable=not self.verbose_progress
-        ) if self.verbose_progress else self.val_loader
+        val_iter = (
+            tqdm(
+                self.val_loader,
+                desc=f"Epoch {self.current_epoch + 1}/{self.epochs} [Val]",
+                leave=False,
+                file=sys.stdout,
+                disable=not self.verbose_progress,
+            )
+            if self.verbose_progress
+            else self.val_loader
+        )
 
         with torch.inference_mode():
             for batch in val_iter:
@@ -257,10 +269,14 @@ class Trainer:
                 num_batches += 1
 
                 # Update progress bar with current loss
-                if self.verbose_progress and hasattr(val_iter, 'set_postfix'):
-                    if 'loss' in outputs:
-                        loss_val = outputs['loss'].item() if isinstance(outputs['loss'], torch.Tensor) else outputs['loss']
-                        val_iter.set_postfix({'loss': f'{loss_val:.4f}'}, refresh=True)
+                if self.verbose_progress and hasattr(val_iter, "set_postfix"):
+                    if "loss" in outputs:
+                        loss_val = (
+                            outputs["loss"].item()
+                            if isinstance(outputs["loss"], torch.Tensor)
+                            else outputs["loss"]
+                        )
+                        val_iter.set_postfix({"loss": f"{loss_val:.4f}"}, refresh=True)
 
         # Compute averages
         val_metrics = {}
@@ -284,7 +300,7 @@ class Trainer:
             "epoch": self.current_epoch,
             "model_state_dict": self.model.state_dict(),
             "val_loss": val_loss,
-            "config": self.config
+            "config": self.config,
         }
 
         # Only save optimizer/scheduler state if they exist (trainable models)
@@ -295,7 +311,7 @@ class Trainer:
             checkpoint["scheduler_state_dict"] = self.scheduler.state_dict()
 
         # Save transform statistics if available
-        if self.transforms is not None and hasattr(self.transforms, 'get_stats'):
+        if self.transforms is not None and hasattr(self.transforms, "get_stats"):
             try:
                 checkpoint["transform_stats"] = self.transforms.get_stats()
                 print("[INFO] Saved transform statistics to checkpoint")
@@ -350,7 +366,7 @@ class Trainer:
             print(f"\nBaseline validation metrics: {val_metrics}")
 
             # Save checkpoint for baseline model
-            val_loss = val_metrics.get("loss", float('inf'))
+            val_loss = val_metrics.get("loss", float("inf"))
             self.save_checkpoint(val_loss, is_best=True)
             print(f"\nSaved baseline checkpoint: {self.checkpoint_dir / 'best.ckpt'}")
 
@@ -371,11 +387,11 @@ class Trainer:
             # Learning rate scheduling
             if self.scheduler is not None:
                 self.scheduler.step()
-                current_lr = self.optimizer.param_groups[0]['lr']
+                current_lr = self.optimizer.param_groups[0]["lr"]
                 self.writer.add_scalar("lr", current_lr, epoch)
 
             # Checkpointing
-            val_loss = val_metrics.get("loss", float('inf'))
+            val_loss = val_metrics.get("loss", float("inf"))
             is_best = val_loss < self.best_val_loss
 
             if is_best:

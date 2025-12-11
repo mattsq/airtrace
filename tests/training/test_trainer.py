@@ -61,19 +61,25 @@ class ConstantModel(nn.Module):
 
 
 class DummyTask:
-    def training_step(self, batch: Dict[str, torch.Tensor], model: nn.Module) -> Dict[str, torch.Tensor]:
+    def training_step(
+        self, batch: Dict[str, torch.Tensor], model: nn.Module
+    ) -> Dict[str, torch.Tensor]:
         preds = model(batch["inputs"])
         loss = F.mse_loss(preds, batch["targets"])
         return {"loss": loss, "mae": torch.abs(preds - batch["targets"]).mean()}
 
-    def validation_step(self, batch: Dict[str, torch.Tensor], model: nn.Module) -> Dict[str, torch.Tensor]:
+    def validation_step(
+        self, batch: Dict[str, torch.Tensor], model: nn.Module
+    ) -> Dict[str, torch.Tensor]:
         preds = model(batch["inputs"])
         loss = F.mse_loss(preds, batch["targets"])
         return {"loss": loss, "mae": torch.abs(preds - batch["targets"]).mean()}
 
 
 class ConstantValidationTask(DummyTask):
-    def validation_step(self, batch: Dict[str, torch.Tensor], model: nn.Module) -> Dict[str, torch.Tensor]:
+    def validation_step(
+        self, batch: Dict[str, torch.Tensor], model: nn.Module
+    ) -> Dict[str, torch.Tensor]:
         _ = model(batch["inputs"])
         value = torch.tensor(1.0)
         return {"loss": value, "mae": value}
@@ -84,10 +90,7 @@ def _make_batches(num_batches: int = 2, batch_size: int = 4) -> Iterable[Dict[st
         "inputs": torch.ones(batch_size, 2),
         "targets": torch.ones(batch_size, 1),
     }
-    return [
-        {key: value.clone() for key, value in base.items()}
-        for _ in range(num_batches)
-    ]
+    return [{key: value.clone() for key, value in base.items()} for _ in range(num_batches)]
 
 
 def _build_config(
@@ -243,6 +246,7 @@ def test_validate_epoch_with_multiple_batches_returns_average(tmp_path, writer_s
 
 def test_save_checkpoint_includes_transform_stats(tmp_path, writer_stub):
     """Test that checkpoints include transform statistics when available."""
+
     # Create a mock transform pipeline with stats
     class MockTransform:
         def __init__(self):
@@ -301,6 +305,7 @@ def test_save_checkpoint_handles_missing_transforms(tmp_path, writer_stub):
 
 def test_save_checkpoint_handles_unfitted_transforms(tmp_path, writer_stub):
     """Test that checkpoints save successfully when transforms raise errors."""
+
     class UnfittedTransform:
         def get_stats(self):
             raise RuntimeError("Transform not fitted. Call fit() first.")
@@ -359,8 +364,12 @@ def test_baseline_model_saves_checkpoint(tmp_path, writer_stub):
     assert checkpoint["epoch"] == 0
 
     # Optimizer/scheduler should NOT be in baseline checkpoint
-    assert "optimizer_state_dict" not in checkpoint, "Baseline models should not save optimizer state"
-    assert "scheduler_state_dict" not in checkpoint, "Baseline models should not save scheduler state"
+    assert (
+        "optimizer_state_dict" not in checkpoint
+    ), "Baseline models should not save optimizer state"
+    assert (
+        "scheduler_state_dict" not in checkpoint
+    ), "Baseline models should not save scheduler state"
 
     # Transform stats should be present (even if None)
     assert "transform_stats" in checkpoint
@@ -368,6 +377,7 @@ def test_baseline_model_saves_checkpoint(tmp_path, writer_stub):
 
 def test_baseline_model_checkpoint_can_be_loaded(tmp_path, writer_stub):
     """Test that baseline model checkpoints can be loaded successfully."""
+
     # Create a mock transform to verify it's included
     class MockTransform:
         def get_stats(self):
