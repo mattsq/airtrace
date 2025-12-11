@@ -283,10 +283,13 @@ class Trainer:
         checkpoint = {
             "epoch": self.current_epoch,
             "model_state_dict": self.model.state_dict(),
-            "optimizer_state_dict": self.optimizer.state_dict(),
             "val_loss": val_loss,
             "config": self.config
         }
+
+        # Only save optimizer/scheduler state if they exist (trainable models)
+        if self.optimizer is not None:
+            checkpoint["optimizer_state_dict"] = self.optimizer.state_dict()
 
         if self.scheduler is not None:
             checkpoint["scheduler_state_dict"] = self.scheduler.state_dict()
@@ -345,6 +348,12 @@ class Trainer:
             print("[INFO] Running single validation pass to compute baseline metrics...")
             val_metrics = self.validate_epoch()
             print(f"\nBaseline validation metrics: {val_metrics}")
+
+            # Save checkpoint for baseline model
+            val_loss = val_metrics.get("loss", float('inf'))
+            self.save_checkpoint(val_loss, is_best=True)
+            print(f"\nSaved baseline checkpoint: {self.checkpoint_dir / 'best.ckpt'}")
+
             self.writer.close()
             return
 
