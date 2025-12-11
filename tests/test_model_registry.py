@@ -86,6 +86,19 @@ def test_model_registry_validation(model_registry_restore):
 
 @pytest.mark.parametrize("model_name", list_models())
 def test_registered_models_support_core_interfaces(model_name, tmp_path):
+    onnx_unsupported_models = {
+        "autoformer",  # Uses fft_rfft which has no ONNX mapping
+        "fedformer",  # Uses fft_rfft which has no ONNX mapping
+        "frets",  # Uses fft_rfft which has no ONNX mapping
+        "latent_ponder",  # Alias analysis failure during export
+        "median",  # Uses median operator which isn't supported
+        "polynomial_trend",  # Uses linalg_lstsq which isn't supported
+        "residual_solver",  # Uses cumprod which isn't supported
+        "timer",  # Uses Unfold with inaccessible input size
+        "timesnet",  # Uses fft_rfft which has no ONNX mapping
+        "var",  # Uses linalg_solve which isn't supported
+    }
+
     dataset = _MinimalDataset()
 
     # Build all transforms to ensure they fit and run on minimal data
@@ -146,6 +159,19 @@ def test_registered_models_support_core_interfaces(model_name, tmp_path):
 
     # Export to ONNX and validate that the exported model runs
     from airtrace.export.onnx_exporter import ONNXExporter
+
+    if model_name in onnx_unsupported_models:
+        exporter = ONNXExporter(model, export_config)
+        with pytest.raises(ValueError, match="ONNX export is not supported"):
+            exporter.export(
+                tmp_path / f"{model_name}.onnx",
+                end_to_end=False,
+                sequence_length=dataset.input_length,
+                batch_size=1,
+                verbose=False,
+                fixed_sequence_length=True,
+            )
+        return
 
     exporter = ONNXExporter(model, export_config)
     onnx_paths = exporter.export(
