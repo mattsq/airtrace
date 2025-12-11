@@ -45,6 +45,7 @@ from .registry import build_model, list_models, register
 from .seq2seq import GRUSeq2SeqModel, LSTMSeq2SeqModel
 from .softs import SOFTS
 from .residual_solver import ResidualSolver
+from .s_mamba import SMambaModel
 from .tcn import TCNModel
 from .timemixer import TimeMixerModel
 from .timesnet import TimesNetModel
@@ -91,6 +92,7 @@ __all__ = [
     "MoiraiModel",
     "Mamba2Model",
     "MambaTSModel",
+    "SMambaModel",
     "LagLlamaModel",
     "DLinearModel",
     "NLinearModel",
