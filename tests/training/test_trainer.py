@@ -322,3 +322,109 @@ def test_save_checkpoint_handles_unfitted_transforms(tmp_path, writer_stub):
 
     assert "transform_stats" in checkpoint
     assert checkpoint["transform_stats"] is None  # Set to None due to error
+
+
+def test_baseline_model_saves_checkpoint(tmp_path, writer_stub):
+    """Test that baseline models (non-trainable) save checkpoints correctly."""
+    trainer = _make_trainer(
+        tmp_path,
+        writer_stub,
+        model=ConstantModel(),  # Model with no trainable parameters
+        task=DummyTask(),
+        overrides={"train": {"epochs": 1}},
+    )
+
+    # Verify model has no trainable params
+    assert trainer.has_trainable_params is False
+    assert trainer.optimizer is None
+    assert trainer.scheduler is None
+
+    # Run training (should exit early but save checkpoint)
+    trainer.train()
+
+    # Verify checkpoint was saved
+    checkpoint_path = trainer.checkpoint_dir / "best.ckpt"
+    assert checkpoint_path.exists(), "Baseline model should save checkpoint"
+
+    # Load and verify checkpoint contents
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+
+    # Required fields should be present
+    assert "model_state_dict" in checkpoint
+    assert "config" in checkpoint
+    assert "val_loss" in checkpoint
+    assert "epoch" in checkpoint
+
+    # Epoch should be 0 for baseline models (no training epochs)
+    assert checkpoint["epoch"] == 0
+
+    # Optimizer/scheduler should NOT be in baseline checkpoint
+    assert "optimizer_state_dict" not in checkpoint, "Baseline models should not save optimizer state"
+    assert "scheduler_state_dict" not in checkpoint, "Baseline models should not save scheduler state"
+
+    # Transform stats should be present (even if None)
+    assert "transform_stats" in checkpoint
+
+
+def test_baseline_model_checkpoint_can_be_loaded(tmp_path, writer_stub):
+    """Test that baseline model checkpoints can be loaded successfully."""
+    # Create a mock transform to verify it's included
+    class MockTransform:
+        def get_stats(self):
+            return {"test_param": torch.tensor([1.0, 2.0]).numpy()}
+
+    trainer = _make_trainer(
+        tmp_path,
+        writer_stub,
+        model=ConstantModel(),
+        task=DummyTask(),
+        overrides={"train": {"epochs": 1}},
+    )
+    trainer.transforms = MockTransform()
+
+    # Train and save
+    trainer.train()
+
+    # Load checkpoint
+    checkpoint_path = trainer.checkpoint_dir / "best.ckpt"
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+
+    # Verify model state can be loaded
+    new_model = ConstantModel()
+    new_model.load_state_dict(checkpoint["model_state_dict"])
+
+    # Verify transform stats were saved
+    assert checkpoint["transform_stats"] is not None
+    assert "test_param" in checkpoint["transform_stats"]
+
+    # Verify val_loss is a valid number
+    assert isinstance(checkpoint["val_loss"], (int, float))
+    assert checkpoint["val_loss"] >= 0
+
+
+def test_trainable_model_checkpoint_still_includes_optimizer(tmp_path, writer_stub):
+    """Test that trainable models still save optimizer/scheduler state (regression test)."""
+    trainer = _make_trainer(
+        tmp_path,
+        writer_stub,
+        model=TinyModel(),  # Model WITH trainable parameters
+        overrides={"train": {"epochs": 1, "checkpoint": {"save_top_k": 1}}},
+    )
+
+    # Verify model has trainable params and optimizer
+    assert trainer.has_trainable_params is True
+    assert trainer.optimizer is not None
+
+    # Run training
+    trainer.train()
+
+    # Verify checkpoint was saved
+    checkpoint_path = trainer.checkpoint_dir / "best.ckpt"
+    assert checkpoint_path.exists()
+
+    # Load and verify checkpoint contents
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+
+    # Trainable models SHOULD have optimizer state
+    assert "optimizer_state_dict" in checkpoint, "Trainable models should save optimizer state"
+    assert checkpoint["optimizer_state_dict"] is not None
