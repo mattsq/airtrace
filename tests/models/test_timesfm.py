@@ -68,3 +68,27 @@ def test_timesfm_encode_decode_matches_forward():
     assert decoded.shape == (2, 8, 3)
     assert torch.allclose(decoded, forward_output, atol=1e-5)
     assert extras["pad_len"] >= 0
+
+
+def test_timesfm_forward_allows_pred_len_override():
+    model = TimesFMModel(
+        input_dim=4,
+        output_dim=2,
+        pred_len=6,
+        patch_len=3,
+        patch_stride=3,
+        embed_dim=24,
+        num_layers=1,
+        num_heads=3,
+        ff_expansion=2,
+        dropout=0.0,
+        max_positions=64,
+    )
+    model.eval()
+
+    x = torch.randn(1, 9, 4)
+    output = model(x, pred_len=2)
+
+    assert output["preds"].shape == (1, 2, 2)
+    assert output["extras"]["pred_patch_count"] == torch.tensor(1)
+    assert output["extras"]["pred_len"] == torch.tensor(2)

@@ -97,7 +97,7 @@ class TimesFMModel(ResidualWrapperCompatible):
         self,
         input_dim: int,
         output_dim: int,
-        pred_len: int = 24,
+        pred_len: int = 1,
         patch_len: int = 16,
         patch_stride: int = 16,
         embed_dim: int = 256,
@@ -204,15 +204,16 @@ class TimesFMModel(ResidualWrapperCompatible):
     def forward(
         self, x: torch.Tensor, context: Optional[torch.Tensor] = None, **kwargs
     ) -> Dict[str, torch.Tensor]:
-        del kwargs
         latent, extras = self.encode(x, context)
-        preds = self.decode(latent, self.pred_len)
+        pred_len = int(kwargs.get("pred_len", self.pred_len))
+        preds = self.decode(latent, pred_len)
         extras.update(
             {
                 "hidden_state": latent,
                 "pred_patch_count": torch.tensor(
-                    math.ceil(self.pred_len / self.patch_len), device=x.device
+                    math.ceil(pred_len / self.patch_len), device=x.device
                 ),
+                "pred_len": torch.tensor(pred_len, device=x.device),
             }
         )
         return {"preds": preds, "extras": extras}
