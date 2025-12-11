@@ -288,8 +288,10 @@ class RobustScalerTransform(Transform):
         return {
             'scaler_x_center': self.scaler_x.center_,
             'scaler_x_scale': self.scaler_x.scale_,
+            'scaler_x_n_features_in': self.scaler_x.n_features_in_,
             'scaler_y_center': self.scaler_y.center_,
             'scaler_y_scale': self.scaler_y.scale_,
+            'scaler_y_n_features_in': self.scaler_y.n_features_in_,
             'per_sensor': self.per_sensor,
             'quantile_range': self.quantile_range,
             'with_centering': self.with_centering,
@@ -316,6 +318,7 @@ class RobustScalerTransform(Transform):
         )
         self.scaler_x.center_ = stats['scaler_x_center']
         self.scaler_x.scale_ = stats['scaler_x_scale']
+        self.scaler_x.n_features_in_ = stats['scaler_x_n_features_in']
 
         self.scaler_y = RobustScaler(
             quantile_range=self.quantile_range,
@@ -324,5 +327,6 @@ class RobustScalerTransform(Transform):
         )
         self.scaler_y.center_ = stats['scaler_y_center']
         self.scaler_y.scale_ = stats['scaler_y_scale']
+        self.scaler_y.n_features_in_ = stats['scaler_y_n_features_in']
 
         self.is_fitted = True

@@ -821,8 +821,10 @@ def test_robust_scaler_get_set_stats():
     stats = transform.get_stats()
     assert 'scaler_x_center' in stats
     assert 'scaler_x_scale' in stats
+    assert 'scaler_x_n_features_in' in stats
     assert 'scaler_y_center' in stats
     assert 'scaler_y_scale' in stats
+    assert 'scaler_y_n_features_in' in stats
     assert 'per_sensor' in stats
     assert 'quantile_range' in stats
     assert 'with_centering' in stats
@@ -839,11 +841,13 @@ def test_robust_scaler_get_set_stats():
     assert transform2.with_scaling == transform.with_scaling
     assert transform2.is_fitted
 
-    # Verify scalers restored
+    # Verify scalers restored (including sklearn metadata)
     np.testing.assert_array_equal(transform2.scaler_x.center_, transform.scaler_x.center_)
     np.testing.assert_array_equal(transform2.scaler_x.scale_, transform.scaler_x.scale_)
+    assert transform2.scaler_x.n_features_in_ == transform.scaler_x.n_features_in_
     np.testing.assert_array_equal(transform2.scaler_y.center_, transform.scaler_y.center_)
     np.testing.assert_array_equal(transform2.scaler_y.scale_, transform.scaler_y.scale_)
+    assert transform2.scaler_y.n_features_in_ == transform.scaler_y.n_features_in_
 
     # Verify both transforms produce same output
     sample = dataset[0]

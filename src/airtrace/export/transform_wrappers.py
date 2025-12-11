@@ -109,35 +109,48 @@ class DifferenceWrapper(nn.Module):
         self.order = order
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Apply differencing.
+        """Apply differencing along time axis.
 
         Args:
-            x: Input tensor [seq_len, features]
+            x: Input tensor [B, T, D] (batched) or [T, D] (unbatched)
 
         Returns:
-            Differenced tensor [seq_len, features] (padded to maintain length)
+            Differenced tensor with same shape (padded to maintain length)
         """
-        # Apply differencing n times
+        # Determine if batched (3D) or unbatched (2D)
+        is_batched = x.dim() == 3
+
         x_diff = x
         for _ in range(self.order):
-            diff = x_diff[1:] - x_diff[:-1]
-            # Pad at the beginning to maintain sequence length
-            x_diff = torch.cat([x_diff[:1], diff], dim=0)
+            # Diff along time dimension
+            if is_batched:
+                # [B, T, D] -> [B, T-1, D]
+                diff = x_diff[:, 1:, :] - x_diff[:, :-1, :]
+                # Pad at beginning: [B, 1, D] + [B, T-1, D] -> [B, T, D]
+                x_diff = torch.cat([x_diff[:, :1, :], diff], dim=1)
+            else:
+                # [T, D] -> [T-1, D]
+                diff = x_diff[1:, :] - x_diff[:-1, :]
+                # Pad at beginning: [1, D] + [T-1, D] -> [T, D]
+                x_diff = torch.cat([x_diff[:1, :], diff], dim=0)
         return x_diff
 
     def inverse(self, x: torch.Tensor) -> torch.Tensor:
-        """Apply inverse differencing (cumulative sum).
+        """Apply inverse differencing (cumulative sum) along time axis.
 
         Args:
-            x: Differenced tensor [seq_len, features]
+            x: Differenced tensor [B, T, D] (batched) or [T, D] (unbatched)
 
         Returns:
-            Original scale tensor [seq_len, features]
+            Original scale tensor with same shape
         """
-        # Apply cumulative sum n times
+        # Determine if batched (3D) or unbatched (2D)
+        is_batched = x.dim() == 3
+        time_dim = 1 if is_batched else 0
+
         x_inv = x
         for _ in range(self.order):
-            x_inv = torch.cumsum(x_inv, dim=0)
+            x_inv = torch.cumsum(x_inv, dim=time_dim)
         return x_inv
 
 

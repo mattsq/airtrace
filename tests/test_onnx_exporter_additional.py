@@ -532,3 +532,41 @@ def test_export_end_to_end_with_robust_scaler(tmp_path: Path, monkeypatch):
     test_input = torch.randn(1, 4, 2)
     output = end_to_end_model(test_input)
     assert output.shape == (1, 2, 2)
+
+
+def test_difference_wrapper_batched_input():
+    """Test that DifferenceWrapper correctly handles batched tensors."""
+    from airtrace.export.transform_wrappers import DifferenceWrapper
+    import torch
+
+    wrapper = DifferenceWrapper(order=1)
+
+    # Test with batched input [B=2, T=5, D=3]
+    x_batched = torch.tensor([
+        [[1.0, 2.0, 3.0],
+         [2.0, 3.0, 4.0],
+         [3.0, 4.0, 5.0],
+         [4.0, 5.0, 6.0],
+         [5.0, 6.0, 7.0]],
+        [[10.0, 20.0, 30.0],
+         [20.0, 30.0, 40.0],
+         [30.0, 40.0, 50.0],
+         [40.0, 50.0, 60.0],
+         [50.0, 60.0, 70.0]]
+    ])
+
+    result = wrapper(x_batched)
+
+    # First timestep should be unchanged (padding)
+    assert torch.allclose(result[:, 0, :], x_batched[:, 0, :])
+
+    # Second timestep should be diff: x[t=1] - x[t=0]
+    expected_diff_batch0 = torch.tensor([1.0, 1.0, 1.0])
+    expected_diff_batch1 = torch.tensor([10.0, 10.0, 10.0])
+    assert torch.allclose(result[0, 1, :], expected_diff_batch0)
+    assert torch.allclose(result[1, 1, :], expected_diff_batch1)
+
+    # All diffs should be constant (since input increases linearly)
+    for t in range(1, 5):
+        assert torch.allclose(result[0, t, :], expected_diff_batch0)
+        assert torch.allclose(result[1, t, :], expected_diff_batch1)
