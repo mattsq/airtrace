@@ -94,7 +94,9 @@ def test_registered_models_support_core_interfaces(model_name, tmp_path):
         transform = transform_cls()
         transform.fit(dataset)
         x, y, meta = transform(dataset[0]["x"], dataset[0]["y"], dataset[0]["meta"])
-        assert x.shape[1] == dataset.input_dim
+        # Some transforms append features (e.g., time encodings). Allow expansions while
+        # still ensuring the output tensor is well-formed.
+        assert x.shape[1] >= dataset.input_dim
         assert y.shape[1] == dataset.output_dim
         assert isinstance(meta, dict)
 
