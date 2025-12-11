@@ -387,6 +387,9 @@ class ONNXExporter:
         has_window_size = "window_size_in" in data_config
         results['checks']['config_window_size'] = has_window_size
 
+        if not has_window_size:
+            results['warnings'].append("Missing window_size_in in config")
+
         if verbose:
             status = "[OK]" if has_window_size else "[WARNING]"
             print(f"{status} config_window_size: ", end="")
@@ -394,7 +397,6 @@ class ONNXExporter:
                 print(f"Window size = {data_config['window_size_in']}")
             else:
                 print("Missing window_size_in, will need to specify sequence_length")
-                results['warnings'].append("Missing window_size_in in config")
 
         # Check 3: Transform stats available if end-to-end requested
         if end_to_end:
@@ -417,6 +419,9 @@ class ONNXExporter:
         is_eval = not self.model.training
         results['checks']['model_eval_mode'] = is_eval
 
+        if not is_eval:
+            results['warnings'].append("Model should be in eval mode")
+
         if verbose:
             status = "[OK]" if is_eval else "[WARNING]"
             print(f"{status} model_eval_mode: ", end="")
@@ -424,16 +429,17 @@ class ONNXExporter:
                 print("Model in eval mode")
             else:
                 print("Model in training mode (should use eval)")
-                results['warnings'].append("Model should be in eval mode")
 
         # Check 5: Check for runtime resolvers in config
         config_str = str(self.config)
         has_runtime_resolvers = "${now:" in config_str or "${oc.env:" in config_str
         results['checks']['config_runtime_resolvers'] = not has_runtime_resolvers
 
+        if has_runtime_resolvers:
+            results['warnings'].append("Config has runtime resolvers (${now:...}, ${oc.env:...})")
+
         if verbose and has_runtime_resolvers:
             print("[WARNING] config_runtime_resolvers: Config contains runtime resolvers")
-            results['warnings'].append("Config has runtime resolvers (${now:...}, ${oc.env:...})")
 
         # Check 6: Model architecture complexity
         model_class = self.model.__class__.__name__
@@ -441,9 +447,11 @@ class ONNXExporter:
         is_complex = any(name in model_class for name in complex_models)
         results['checks']['model_architecture'] = model_class
 
+        if is_complex:
+            results['warnings'].append(f"{model_class} may have attention-related export issues")
+
         if verbose and is_complex:
             print(f"[WARNING] model_architecture: {model_class} has complex attention")
-            results['warnings'].append(f"{model_class} may have attention-related export issues")
 
         # Summary
         if verbose:
