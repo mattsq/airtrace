@@ -159,6 +159,7 @@ class TimerModel(ARBaseModel):
 **Paper**: Google Research Blog
 **Code**: https://github.com/google-research/timesfm
 **HuggingFace**: google/timesfm-1.0-200m
+**Status**: Implemented in AirTrace as `TimesFMModel` (see `configs/model/timesfm.yaml`)
 
 #### Key Innovations
 

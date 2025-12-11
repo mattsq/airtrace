@@ -1,0 +1,15 @@
+# @package _global_
+
+model:
+  name: timesfm
+  params:
+    pred_len: 48                # Forecast horizon in timesteps
+    patch_len: 16               # Patch length used for tokenization
+    patch_stride: 16            # Patch stride (overlap control)
+    embed_dim: 256              # Token embedding dimension
+    num_layers: 4               # Transformer depth
+    num_heads: 8                # Number of attention heads
+    ff_expansion: 4             # Feed-forward expansion ratio
+    dropout: 0.1                # Dropout throughout the backbone
+    max_positions: 2048         # Maximum number of positional embeddings
+    normalize_inputs: true      # Apply LayerNorm to inputs before patching

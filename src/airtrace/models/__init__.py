@@ -49,6 +49,7 @@ from .tcn import TCNModel
 from .timemixer import TimeMixerModel
 from .timesnet import TimesNetModel
 from .timexer import TimeXerModel
+from .timesfm import TimesFMModel
 from .timer import TimerModel
 from .transformer import TransformerModel
 from .tft import TemporalFusionTransformer
@@ -76,6 +77,7 @@ __all__ = [
     "TimeMixerModel",
     "TimesNetModel",
     "TimeXerModel",
+    "TimesFMModel",
     "TimerModel",
     "TSMixerModel",
     "SOFTS",
