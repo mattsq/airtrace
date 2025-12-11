@@ -1,0 +1,14 @@
+# @package _global_
+
+model:
+  name: s_mamba
+  params:
+    seq_len: ${data.window.input_len}
+    pred_len: ${data.window.pred_len}
+    embed_dim: 128
+    state_dim: 128
+    num_layers: 4
+    ff_expansion: 2
+    dropout: 0.1
+    bidirectional_scan: true
+    conv_kernel_size: 3
