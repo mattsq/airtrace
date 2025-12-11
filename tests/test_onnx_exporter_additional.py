@@ -434,3 +434,139 @@ def test_from_checkpoint_handles_old_checkpoints_without_stats(tmp_path: Path):
     # Model-only export should still work
     validation = exporter.validate(end_to_end=False, verbose=False)
     assert validation["passed"] is True
+
+
+def test_export_end_to_end_with_multiple_transforms(tmp_path: Path, monkeypatch):
+    """Test end-to-end export with multiple transforms including DifferenceTransform."""
+    model = DummyModel(output_len=2)
+    config = DictConfig({"data": {"window_size_in": 4}, "model": {"name": "dummy"}})
+
+    # Transform stats with both ZScore and Difference transforms
+    transform_stats = {
+        "ZScoreTransform_0": {
+            "scaler_x_mean": np.array([0.0, 1.0], dtype=np.float32),
+            "scaler_x_scale": np.array([1.0, 2.0], dtype=np.float32),
+            "scaler_y_mean": np.array([0.0, 0.5], dtype=np.float32),
+            "scaler_y_scale": np.array([1.0, 0.5], dtype=np.float32),
+        },
+        "DifferenceTransform_1": {
+            "order": 1,
+            "sensors": None,
+            "sensor_indices": None,
+        }
+    }
+
+    exporter = ONNXExporter(model=model, config=config, transform_stats=transform_stats)
+
+    exported_models: List[torch.nn.Module] = []
+
+    def fake_export(model_arg, args, output_file, *_, **__):
+        exported_models.append(model_arg)
+        Path(output_file).write_bytes(b"onnx")
+
+    monkeypatch.setattr(torch.onnx, "export", fake_export)
+
+    output_path = tmp_path / "end_to_end_multi.onnx"
+    files = exporter.export(output_path, end_to_end=True, verbose=False)
+
+    # Verify end-to-end model was exported
+    assert isinstance(exported_models[0], EndToEndModel)
+
+    # Verify metadata
+    metadata_path = output_path.with_suffix(".metadata.json")
+    with metadata_path.open() as f:
+        metadata = json.load(f)
+    assert metadata["end_to_end"] is True
+    assert metadata["has_transforms"] is True
+
+    # Verify the model has transform wrappers
+    end_to_end_model = exported_models[0]
+    assert end_to_end_model.preprocess is not None
+    assert end_to_end_model.postprocess is not None
+    assert not isinstance(end_to_end_model.preprocess, torch.nn.Identity)
+    assert not isinstance(end_to_end_model.postprocess, torch.nn.Identity)
+
+    # Test that the model can process input
+    test_input = torch.randn(1, 4, 2)
+    output = end_to_end_model(test_input)
+    assert output.shape == (1, 2, 2)  # (batch, output_len, output_dim)
+
+
+def test_export_end_to_end_with_robust_scaler(tmp_path: Path, monkeypatch):
+    """Test end-to-end export with RobustScalerTransform."""
+    model = DummyModel(output_len=2)
+    config = DictConfig({"data": {"window_size_in": 4}, "model": {"name": "dummy"}})
+
+    # Transform stats with RobustScaler
+    transform_stats = {
+        "RobustScalerTransform_0": {
+            "scaler_x_center": np.array([0.0, 1.0], dtype=np.float32),
+            "scaler_x_scale": np.array([1.0, 2.0], dtype=np.float32),
+            "scaler_y_center": np.array([0.0, 0.5], dtype=np.float32),
+            "scaler_y_scale": np.array([1.0, 0.5], dtype=np.float32),
+            "per_sensor": True,
+            "quantile_range": (25.0, 75.0),
+            "with_centering": True,
+            "with_scaling": True,
+        }
+    }
+
+    exporter = ONNXExporter(model=model, config=config, transform_stats=transform_stats)
+
+    exported_models: List[torch.nn.Module] = []
+
+    def fake_export(model_arg, args, output_file, *_, **__):
+        exported_models.append(model_arg)
+        Path(output_file).write_bytes(b"onnx")
+
+    monkeypatch.setattr(torch.onnx, "export", fake_export)
+
+    output_path = tmp_path / "end_to_end_robust.onnx"
+    files = exporter.export(output_path, end_to_end=True, verbose=False)
+
+    # Verify end-to-end model was exported
+    assert isinstance(exported_models[0], EndToEndModel)
+
+    # Test that the model can process input
+    end_to_end_model = exported_models[0]
+    test_input = torch.randn(1, 4, 2)
+    output = end_to_end_model(test_input)
+    assert output.shape == (1, 2, 2)
+
+
+def test_difference_wrapper_batched_input():
+    """Test that DifferenceWrapper correctly handles batched tensors."""
+    from airtrace.export.transform_wrappers import DifferenceWrapper
+    import torch
+
+    wrapper = DifferenceWrapper(order=1)
+
+    # Test with batched input [B=2, T=5, D=3]
+    x_batched = torch.tensor([
+        [[1.0, 2.0, 3.0],
+         [2.0, 3.0, 4.0],
+         [3.0, 4.0, 5.0],
+         [4.0, 5.0, 6.0],
+         [5.0, 6.0, 7.0]],
+        [[10.0, 20.0, 30.0],
+         [20.0, 30.0, 40.0],
+         [30.0, 40.0, 50.0],
+         [40.0, 50.0, 60.0],
+         [50.0, 60.0, 70.0]]
+    ])
+
+    result = wrapper(x_batched)
+
+    # First timestep should be unchanged (padding)
+    assert torch.allclose(result[:, 0, :], x_batched[:, 0, :])
+
+    # Second timestep should be diff: x[t=1] - x[t=0]
+    expected_diff_batch0 = torch.tensor([1.0, 1.0, 1.0])
+    expected_diff_batch1 = torch.tensor([10.0, 10.0, 10.0])
+    assert torch.allclose(result[0, 1, :], expected_diff_batch0)
+    assert torch.allclose(result[1, 1, :], expected_diff_batch1)
+
+    # All diffs should be constant (since input increases linearly)
+    for t in range(1, 5):
+        assert torch.allclose(result[0, t, :], expected_diff_batch0)
+        assert torch.allclose(result[1, t, :], expected_diff_batch1)

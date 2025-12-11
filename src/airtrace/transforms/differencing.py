@@ -99,3 +99,29 @@ class DifferenceTransform(Transform):
             y_inv = None
 
         return x_inv, y_inv
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get differencing transform configuration for caching.
+
+        Returns:
+            Dictionary containing transform configuration
+        """
+        if not self.is_fitted:
+            raise RuntimeError("Transform not fitted. Call fit() first.")
+
+        return {
+            'sensors': self.sensors,
+            'order': self.order,
+            'sensor_indices': self.sensor_indices,
+        }
+
+    def set_stats(self, stats: Dict[str, Any]) -> None:
+        """Set differencing transform configuration from cache.
+
+        Args:
+            stats: Dictionary containing transform configuration
+        """
+        self.sensors = stats['sensors']
+        self.order = stats['order']
+        self.sensor_indices = stats.get('sensor_indices')  # May be None
+        self.is_fitted = True

@@ -93,6 +93,67 @@ class RobustScalerWrapper(nn.Module):
         return x * (self.scale + self.epsilon) + self.center
 
 
+class DifferenceWrapper(nn.Module):
+    """PyTorch wrapper for DifferenceTransform to enable ONNX export.
+
+    Applies first-order differencing: x[t] - x[t-1]
+    """
+
+    def __init__(self, order: int = 1):
+        """Initialize difference wrapper.
+
+        Args:
+            order: Order of differencing (1=first difference, 2=second, etc.)
+        """
+        super().__init__()
+        self.order = order
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply differencing along time axis.
+
+        Args:
+            x: Input tensor [B, T, D] (batched) or [T, D] (unbatched)
+
+        Returns:
+            Differenced tensor with same shape (padded to maintain length)
+        """
+        # Determine if batched (3D) or unbatched (2D)
+        is_batched = x.dim() == 3
+
+        x_diff = x
+        for _ in range(self.order):
+            # Diff along time dimension
+            if is_batched:
+                # [B, T, D] -> [B, T-1, D]
+                diff = x_diff[:, 1:, :] - x_diff[:, :-1, :]
+                # Pad at beginning: [B, 1, D] + [B, T-1, D] -> [B, T, D]
+                x_diff = torch.cat([x_diff[:, :1, :], diff], dim=1)
+            else:
+                # [T, D] -> [T-1, D]
+                diff = x_diff[1:, :] - x_diff[:-1, :]
+                # Pad at beginning: [1, D] + [T-1, D] -> [T, D]
+                x_diff = torch.cat([x_diff[:1, :], diff], dim=0)
+        return x_diff
+
+    def inverse(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply inverse differencing (cumulative sum) along time axis.
+
+        Args:
+            x: Differenced tensor [B, T, D] (batched) or [T, D] (unbatched)
+
+        Returns:
+            Original scale tensor with same shape
+        """
+        # Determine if batched (3D) or unbatched (2D)
+        is_batched = x.dim() == 3
+        time_dim = 1 if is_batched else 0
+
+        x_inv = x
+        for _ in range(self.order):
+            x_inv = torch.cumsum(x_inv, dim=time_dim)
+        return x_inv
+
+
 class TransformCompose(nn.Module):
     """Composes multiple transform wrappers."""
 
@@ -171,6 +232,10 @@ def create_transform_wrapper(
             return None
 
         return RobustScalerWrapper(center=center, scale=scale)
+
+    elif base_name == 'DifferenceTransform':
+        order = transform_stats.get('order', 1)
+        return DifferenceWrapper(order=order)
 
     else:
         # Unsupported transform
