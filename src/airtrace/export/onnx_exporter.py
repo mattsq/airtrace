@@ -21,6 +21,20 @@ from .profiles import get_profile_for_model, ExportProfile
 class ONNXExporter:
     """Handles ONNX export of AirTrace models with optional transform handling."""
 
+    # Models that cannot be exported to ONNX along with the reasons why.
+    ONNX_UNSUPPORTED_MODELS = {
+        "autoformer": "uses fft_rfft which is not supported in the current ONNX opset",
+        "fedformer": "uses fft_rfft which is not supported in the current ONNX opset",
+        "frets": "uses fft_rfft which is not supported in the current ONNX opset",
+        "latent_ponder": "fails alias analysis during export",
+        "median": "uses median operator which is not supported",
+        "polynomial_trend": "uses linalg_lstsq which is not supported",
+        "residual_solver": "uses cumprod which is not supported",
+        "timer": "uses unfold with an input-dependent dimension that is unavailable",
+        "timesnet": "uses fft_rfft which is not supported in the current ONNX opset",
+        "var": "uses linalg_solve which is not supported",
+    }
+
     def __init__(
         self,
         model: torch.nn.Module,
@@ -37,6 +51,28 @@ class ONNXExporter:
         self.model = model
         self.config = config
         self.transform_stats = transform_stats
+
+    def _get_model_name(self) -> str:
+        """Resolve the model name for messaging purposes."""
+
+        model_config = (
+            self.config.get("model") if isinstance(self.config, (dict, DictConfig)) else None
+        )
+        if model_config and isinstance(model_config, (dict, DictConfig)):
+            name = model_config.get("name")
+            if isinstance(name, str) and name:
+                return name
+
+        return self.model.__class__.__name__.lower()
+
+    def _get_onnx_unsupported_reason(self, model_name: str) -> Optional[str]:
+        """Return a human-readable reason if the model cannot be exported to ONNX."""
+
+        model_key = model_name.lower()
+        if model_key in self.ONNX_UNSUPPORTED_MODELS:
+            return self.ONNX_UNSUPPORTED_MODELS[model_key]
+
+        return None
 
     @classmethod
     def from_checkpoint(
@@ -613,6 +649,14 @@ class ONNXExporter:
         output_path = Path(output_path)
         output_dir = output_path.parent
         output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Provide an informative error for models we know cannot be exported.
+        model_name = self._get_model_name()
+        unsupported_reason = self._get_onnx_unsupported_reason(model_name)
+        if unsupported_reason:
+            raise ValueError(
+                f"ONNX export is not supported for '{model_name}': {unsupported_reason}."
+            )
 
         # Auto-select opset version if not provided
         if opset_version is None:
