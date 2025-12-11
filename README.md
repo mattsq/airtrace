@@ -671,7 +671,7 @@ See [Synthetic Data Documentation](docs/synthetic_data.md) for details on the ph
 
 ## Model Registry
 
-AirTrace includes 49 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
+AirTrace includes 50 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
 
 ### Recurrent Neural Networks
 
@@ -718,6 +718,7 @@ AirTrace includes 49 registered models spanning from simple baselines to sophist
 | `mamba2` | `Mamba2Model` | Temporal Mamba-2 selective state-space model with hardware-aware chunked scans, bidirectional gating, and LoRA-ready forecast head for 100k-token contexts |
 | `mambats` | `MambaTSModel` | MambaTS - improved selective state-space model with Variable Scan along Time (VST) and Temporal Mamba Blocks (TMB) for efficient long-term forecasting with linear complexity (arXiv 2024) |
 | `lag_llama` | `LagLlamaModel` | Retrieval-augmented Lag-Llama-style diffusion forecaster combining patch tokenization, nearest-neighbor memory, and latent diffusion sampling for probabilistic trajectories |
+| `timesfm` | `TimesFMModel` | TimesFM - decoder-only patch transformer from Google with patch tokenization, causal attention, and lightweight projection head for efficient long-horizon forecasting (ICML 2024) |
 | `timer` | `TimerModel` | Timer - GPT-style pre-trained decoder-only Transformer with zero-shot forecasting capability, trained on 260B time points in Single-Series Sequence (S3) format (ICML 2024) |
 
 ### Convolutional Models
