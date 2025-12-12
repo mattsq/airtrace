@@ -444,6 +444,101 @@ def test_log_transform_invalid_base_errors_during_inverse():
         transform.inverse(x_trans, y_trans)
 
 
+def test_log_transform_not_fitted():
+    """Test that calling transform before fit raises RuntimeError."""
+    transform = LogTransform(base="natural")
+    # Don't call fit
+
+    x = np.abs(np.random.randn(10, 3).astype(np.float32)) + 1.0
+    y = np.abs(np.random.randn(5, 3).astype(np.float32)) + 1.0
+
+    with pytest.raises(RuntimeError, match="Transform not fitted"):
+        transform(x, y, {})
+
+
+def test_log_transform_base_10():
+    """Test log transform with base 10."""
+    dataset = MockDataset(dim=3)
+    transform = LogTransform(base="10")
+    transform.fit(dataset)
+
+    x = np.abs(np.random.randn(10, 3).astype(np.float32)) + 1.0
+    y = np.abs(np.random.randn(5, 3).astype(np.float32)) + 1.0
+
+    x_log, y_log, meta = transform(x, y, {})
+
+    # Verify transformation applied
+    assert x_log.shape == x.shape
+    assert y_log.shape == y.shape
+    assert meta["log_base"] == "10"
+
+    # Verify invertibility
+    x_inv, y_inv = transform.inverse(x_log, y_log)
+    np.testing.assert_allclose(x_inv, x, rtol=1e-3, atol=1e-3)
+    np.testing.assert_allclose(y_inv, y, rtol=1e-3, atol=1e-3)
+
+
+def test_log_transform_inverse_with_y_none():
+    """Test inverse transform when y is None."""
+    dataset = MockDataset(dim=3)
+    transform = LogTransform(base="natural")
+    transform.fit(dataset)
+
+    x = np.abs(np.random.randn(10, 3).astype(np.float32)) + 1.0
+    x_log, _, _ = transform(x, np.zeros((5, 3), dtype=np.float32), {})
+
+    # Inverse with y=None
+    x_inv, y_inv = transform.inverse(x_log, None)
+
+    assert y_inv is None
+    np.testing.assert_allclose(x_inv, x, rtol=1e-3, atol=1e-3)
+
+
+def test_log_transform_selected_sensors_inverse_with_y():
+    """Test inverse transform with selected sensors and y provided."""
+    dataset = MockDataset(dim=4)
+    transform = LogTransform(base="natural", sensors=[0, 2])
+    transform.fit(dataset)
+
+    x = np.abs(np.random.randn(10, 4).astype(np.float32)) + 1.0
+    y = np.abs(np.random.randn(5, 4).astype(np.float32)) + 1.0
+
+    x_log, y_log, _ = transform(x, y, {})
+
+    # Inverse should work correctly
+    x_inv, y_inv = transform.inverse(x_log, y_log)
+
+    # Transformed sensors should be inverted
+    np.testing.assert_allclose(x_inv[:, [0, 2]], x[:, [0, 2]], rtol=1e-3, atol=1e-3)
+    np.testing.assert_allclose(y_inv[:, [0, 2]], y[:, [0, 2]], rtol=1e-3, atol=1e-3)
+
+    # Untransformed sensors should be unchanged
+    np.testing.assert_array_equal(x_inv[:, [1, 3]], x[:, [1, 3]])
+    np.testing.assert_array_equal(y_inv[:, [1, 3]], y[:, [1, 3]])
+
+
+def test_log_transform_base_2():
+    """Test log transform with base 2."""
+    dataset = MockDataset(dim=3)
+    transform = LogTransform(base="2")
+    transform.fit(dataset)
+
+    x = np.abs(np.random.randn(10, 3).astype(np.float32)) + 1.0
+    y = np.abs(np.random.randn(5, 3).astype(np.float32)) + 1.0
+
+    x_log, y_log, meta = transform(x, y, {})
+
+    # Verify transformation applied
+    assert x_log.shape == x.shape
+    assert y_log.shape == y.shape
+    assert meta["log_base"] == "2"
+
+    # Verify invertibility
+    x_inv, y_inv = transform.inverse(x_log, y_log)
+    np.testing.assert_allclose(x_inv, x, rtol=1e-3, atol=1e-3)
+    np.testing.assert_allclose(y_inv, y, rtol=1e-3, atol=1e-3)
+
+
 def test_smooth_transform():
     """Test smoothing transform."""
     dataset = MockDataset()
@@ -485,6 +580,49 @@ def test_smooth_gaussian():
     np.testing.assert_allclose(x, expected_x)
     np.testing.assert_allclose(y, expected_y)
     assert meta["smooth_method"] == "gaussian"
+
+
+def test_smooth_even_window_size():
+    """Test that even window size is automatically incremented to odd."""
+    transform = SmoothTransform(window_size=4, method="uniform")  # Even number
+    assert transform.window_size == 5  # Should be incremented to 5
+
+
+def test_smooth_invalid_method():
+    """Test that invalid smoothing method raises ValueError."""
+    dataset = MockDataset(seq_len=8, dim=2)
+    transform = SmoothTransform(window_size=3, method="invalid_method")
+    transform.fit(dataset)
+
+    sample = dataset[0]
+    with pytest.raises(ValueError, match="Unknown smoothing method"):
+        transform(sample["x"], sample["y"], sample["meta"])
+
+
+def test_smooth_not_fitted():
+    """Test that calling transform before fit raises RuntimeError."""
+    dataset = MockDataset(seq_len=8, dim=2)
+    transform = SmoothTransform(window_size=3, method="uniform")
+    # Don't call fit
+
+    sample = dataset[0]
+    with pytest.raises(RuntimeError, match="Transform not fitted"):
+        transform(sample["x"], sample["y"], sample["meta"])
+
+
+def test_smooth_inverse():
+    """Test that inverse smoothing returns data unchanged (irreversible operation)."""
+    dataset = MockDataset(seq_len=8, dim=2)
+    transform = SmoothTransform(window_size=3, method="uniform")
+    transform.fit(dataset)
+
+    sample = dataset[0]
+    x, y, meta = transform(sample["x"], sample["y"], sample["meta"])
+
+    # Inverse should return smoothed data as-is (smoothing is irreversible)
+    x_inv, y_inv = transform.inverse(x, y)
+    np.testing.assert_array_equal(x_inv, x)
+    np.testing.assert_array_equal(y_inv, y)
 
 
 def test_impute_transform():
@@ -546,6 +684,151 @@ def test_impute_mean():
 
     x_imp, y_imp, _ = transform(x, y, {})
     assert not np.isnan(x_imp).any()
+
+
+def test_impute_not_fitted():
+    """Test that calling impute before fit raises RuntimeError."""
+    transform = ImputeTransform(method="forward")
+    x = np.random.randn(10, 3).astype(np.float32)
+    y = np.random.randn(5, 3).astype(np.float32)
+
+    with pytest.raises(RuntimeError, match="Transform not fitted"):
+        transform(x, y, {})
+
+
+def test_impute_invalid_method():
+    """Test that invalid imputation method raises ValueError."""
+    transform = ImputeTransform(method="invalid_method")
+    transform.fit(MockDataset())
+
+    x = np.random.randn(10, 3).astype(np.float32)
+    y = np.random.randn(5, 3).astype(np.float32)
+
+    with pytest.raises(ValueError, match="Unknown imputation method"):
+        transform(x, y, {})
+
+
+def test_impute_forward_all_nan_column():
+    """Test forward fill with a column that is all NaN."""
+    transform = ImputeTransform(method="forward")
+    transform.fit(MockDataset())
+
+    x = np.random.randn(10, 3).astype(np.float32)
+    x[:, 1] = np.nan  # All NaN in column 1
+    y = np.random.randn(5, 3).astype(np.float32)
+
+    x_imp, y_imp, _ = transform(x, y, {})
+
+    # All-NaN column should be filled with 0
+    assert np.all(x_imp[:, 1] == 0)
+    # Other columns should be unchanged (no NaNs to fill)
+    assert not np.isnan(x_imp).any()
+
+
+def test_impute_forward_with_limit():
+    """Test forward fill with limit on consecutive fills."""
+    transform = ImputeTransform(method="forward", limit=2)
+    transform.fit(MockDataset())
+
+    x = np.ones((10, 2), dtype=np.float32)
+    # Create pattern: valid, NaN, NaN, NaN, valid
+    x[1:4, 0] = np.nan  # 3 consecutive NaNs
+    x[0, 0] = 5.0
+    x[4, 0] = 10.0
+    y = np.array([], dtype=np.float32).reshape(0, 2)
+
+    x_imp, y_imp, _ = transform(x, y, {})
+
+    # First 2 NaNs should be filled with 5.0 (limit=2)
+    assert x_imp[1, 0] == 5.0
+    assert x_imp[2, 0] == 5.0
+    # Third NaN should remain NaN (exceeds limit)
+    assert np.isnan(x_imp[3, 0])
+
+
+def test_impute_backward_edge_cases():
+    """Test backward fill edge cases."""
+    transform = ImputeTransform(method="backward")
+    transform.fit(MockDataset())
+
+    x = np.ones((10, 2), dtype=np.float32)
+    # Create pattern: NaN, NaN, valid
+    x[0:2, 0] = np.nan
+    x[2, 0] = 5.0
+    y = np.array([], dtype=np.float32).reshape(0, 2)
+
+    x_imp, y_imp, _ = transform(x, y, {})
+
+    # NaNs should be filled with next valid value (5.0)
+    assert x_imp[0, 0] == 5.0
+    assert x_imp[1, 0] == 5.0
+
+
+def test_impute_linear_insufficient_points():
+    """Test linear interpolation with insufficient valid points."""
+    transform = ImputeTransform(method="linear")
+    transform.fit(MockDataset())
+
+    x = np.ones((10, 2), dtype=np.float32)
+    # Column 0: only 1 valid point (insufficient for interpolation)
+    x[1:, 0] = np.nan
+    x[0, 0] = 5.0
+    y = np.array([], dtype=np.float32).reshape(0, 2)
+
+    x_imp, y_imp, _ = transform(x, y, {})
+
+    # Insufficient points should fall back to 0-fill
+    assert x_imp[0, 0] == 5.0
+    assert np.all(x_imp[1:, 0] == 0)
+
+
+def test_impute_constant_with_fill_value():
+    """Test constant imputation with custom fill value."""
+    transform = ImputeTransform(method="constant", fill_value=99.0)
+    transform.fit(MockDataset())
+
+    x = np.random.randn(10, 3).astype(np.float32)
+    x[5:7, 1] = np.nan
+    y = np.random.randn(5, 3).astype(np.float32)
+
+    x_imp, y_imp, _ = transform(x, y, {})
+
+    # NaNs should be filled with 99.0
+    assert x_imp[5, 1] == 99.0
+    assert x_imp[6, 1] == 99.0
+
+
+def test_impute_empty_y():
+    """Test imputation with empty y array."""
+    transform = ImputeTransform(method="forward")
+    transform.fit(MockDataset())
+
+    x = np.random.randn(10, 3).astype(np.float32)
+    x[5, 1] = np.nan
+    y = np.array([], dtype=np.float32).reshape(0, 3)
+
+    x_imp, y_imp, meta = transform(x, y, {})
+
+    # x should be imputed
+    assert not np.isnan(x_imp).any()
+    # y should remain empty
+    assert y_imp.shape == (0, 3)
+    assert len(y_imp) == 0
+
+
+def test_impute_inverse():
+    """Test that inverse returns data unchanged (irreversible)."""
+    transform = ImputeTransform(method="forward")
+    transform.fit(MockDataset())
+
+    x = np.random.randn(10, 3).astype(np.float32)
+    y = np.random.randn(5, 3).astype(np.float32)
+
+    x_inv, y_inv = transform.inverse(x, y)
+
+    # Should return unchanged
+    np.testing.assert_array_equal(x_inv, x)
+    np.testing.assert_array_equal(y_inv, y)
 
 
 # ===== Tier 3 Transform Tests =====
@@ -625,6 +908,93 @@ def test_detrend_requires_fit_and_valid_method():
         DetrendTransform(method="unknown").fit(MockDataset())._fit_trend(np.ones((3, 1)))
 
 
+def test_detrend_constant_inverse():
+    """Test that constant detrending inverse correctly restores the mean."""
+    transform = DetrendTransform(method="constant")
+    transform.fit(MockDataset())
+
+    # Create data with constant offset
+    x = np.ones((20, 3), dtype=np.float32) * 5.0 + np.random.randn(20, 3).astype(np.float32) * 0.1
+    y = np.ones((5, 3), dtype=np.float32) * 5.0 + np.random.randn(5, 3).astype(np.float32) * 0.1
+
+    x_det, y_det, meta = transform(x, y, {})
+    x_inv, y_inv = transform.inverse(x_det, y_det, meta)
+
+    # Verify reconstruction
+    np.testing.assert_allclose(x_inv, x, rtol=1e-5, atol=1e-5)
+    np.testing.assert_allclose(y_inv, y, rtol=1e-5, atol=1e-5)
+
+
+def test_detrend_invalid_method_in_inverse():
+    """Test that invalid method in _reconstruct_trend raises ValueError."""
+    transform = DetrendTransform(method="linear")
+    transform.fit(MockDataset())
+
+    # Manually set invalid method to test _reconstruct_trend error
+    transform.method = "invalid_method"
+
+    data = np.ones((10, 2), dtype=np.float32)
+    coeffs = np.ones((2, 2), dtype=np.float32)
+
+    with pytest.raises(ValueError, match="Unknown detrending method"):
+        transform._reconstruct_trend(data, coeffs)
+
+
+def test_detrend_empty_y():
+    """Test detrending with empty y array."""
+    transform = DetrendTransform(method="linear")
+    transform.fit(MockDataset())
+
+    x = np.cumsum(np.ones((20, 3)), axis=0).astype(np.float32)
+    y = np.array([], dtype=np.float32).reshape(0, 3)  # Empty y
+
+    x_det, y_det, meta = transform(x, y, {})
+
+    # Check that x is detrended
+    assert x_det.shape == x.shape
+    # Check that empty y is returned as-is
+    assert y_det.shape == y.shape
+    assert len(y_det) == 0
+    # Check that y_coeffs is None for empty y
+    assert meta["detrend_y_coeffs"] is None
+
+
+def test_detrend_inverse_without_metadata():
+    """Test that inverse without metadata returns data unchanged."""
+    transform = DetrendTransform(method="linear")
+    transform.fit(MockDataset())
+
+    x = np.ones((10, 2), dtype=np.float32)
+    y = np.ones((5, 2), dtype=np.float32)
+
+    # Call inverse without metadata
+    x_inv, y_inv = transform.inverse(x, y, None)
+
+    # Should return unchanged
+    np.testing.assert_array_equal(x_inv, x)
+    np.testing.assert_array_equal(y_inv, y)
+
+
+def test_detrend_inverse_with_none_y():
+    """Test inverse when y is None."""
+    transform = DetrendTransform(method="linear")
+    transform.fit(MockDataset())
+
+    x = np.cumsum(np.ones((20, 3)), axis=0).astype(np.float32)
+
+    # Forward pass with non-None y to get metadata
+    y_dummy = np.ones((5, 3), dtype=np.float32)
+    x_det, _, meta = transform(x, y_dummy, {})
+
+    # Inverse with y=None
+    x_inv, y_inv = transform.inverse(x_det, None, meta)
+
+    # x should be reconstructed
+    np.testing.assert_allclose(x_inv, x, rtol=1e-4, atol=1e-4)
+    # y should be None
+    assert y_inv is None
+
+
 def test_temporal_features_transform():
     """Test temporal features transform."""
     dataset = MockDataset()
@@ -677,6 +1047,51 @@ def test_clip_transform_variants_and_inverse():
     unfitted = ClipTransform()
     with pytest.raises(RuntimeError):
         unfitted(dataset[0]["x"], dataset[0]["y"], {})
+
+
+def test_clip_std_global_bounds():
+    """Test std method with per_sensor=False (global bounds)."""
+    dataset = MockDataset()
+    transform = ClipTransform(method="std", n_std=2.0, per_sensor=False)
+
+    transform.fit(dataset)
+
+    # Bounds should be same for all sensors (global)
+    assert len(set(transform.lower_bounds)) == 1
+    assert len(set(transform.upper_bounds)) == 1
+
+    # Verify bounds calculated correctly
+    global_mean = dataset._x_data.mean()
+    global_std = dataset._x_data.std()
+    expected_lower = global_mean - 2.0 * global_std
+    expected_upper = global_mean + 2.0 * global_std
+
+    np.testing.assert_allclose(transform.lower_bounds[0], expected_lower, rtol=1e-5)
+    np.testing.assert_allclose(transform.upper_bounds[0], expected_upper, rtol=1e-5)
+
+    # Apply transform
+    x, y, meta = transform(dataset[0]["x"], dataset[0]["y"], {})
+    assert meta["clipped"] is True
+    assert meta["clip_method"] == "std"
+
+
+def test_clip_percentile_global_bounds():
+    """Test percentile method with per_sensor=False for edge case verification."""
+    dataset = MockDataset()
+    transform = ClipTransform(method="percentile", lower=10.0, upper=90.0, per_sensor=False)
+
+    transform.fit(dataset)
+
+    # Bounds should be same for all sensors (global)
+    assert len(set(transform.lower_bounds)) == 1
+    assert len(set(transform.upper_bounds)) == 1
+
+    # Verify global percentiles
+    global_lower = np.percentile(dataset._x_data, 10.0)
+    global_upper = np.percentile(dataset._x_data, 90.0)
+
+    np.testing.assert_allclose(transform.lower_bounds[0], global_lower, rtol=1e-5)
+    np.testing.assert_allclose(transform.upper_bounds[0], global_upper, rtol=1e-5)
 
 
 def test_transform_compose_inverse_order():

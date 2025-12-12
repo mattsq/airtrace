@@ -309,3 +309,85 @@ class TestONNXExporterCoverage(unittest.TestCase):
                 self.assertEqual(saved_dict["t1"]["mean"], [1.0])
                 self.assertEqual(saved_dict["t1"]["std"], 2.0)
 
+    def test_get_onnx_unsupported_reason_found(self):
+        """Test _get_onnx_unsupported_reason for unsupported models"""
+        reason = self.exporter._get_onnx_unsupported_reason("autoformer")
+        self.assertIn("fft_rfft", reason)
+
+        reason = self.exporter._get_onnx_unsupported_reason("timer")
+        self.assertIn("unfold", reason)
+
+        reason = self.exporter._get_onnx_unsupported_reason("median")
+        self.assertIn("median operator", reason)
+
+    def test_get_onnx_unsupported_reason_not_found(self):
+        """Test _get_onnx_unsupported_reason for supported models"""
+        reason = self.exporter._get_onnx_unsupported_reason("gru")
+        self.assertIsNone(reason)
+
+        reason = self.exporter._get_onnx_unsupported_reason("dlinear")
+        self.assertIsNone(reason)
+
+    def test_get_model_name_fallback(self):
+        """Test _get_model_name fallback when config has no proper model name"""
+        # Config with no model section
+        cfg = OmegaConf.create({})
+        exporter = ONNXExporter(self.model, cfg)
+        name = exporter._get_model_name()
+        # Should fall back to class name
+        self.assertIsInstance(name, str)
+
+    def test_get_model_name_with_valid_config(self):
+        """Test _get_model_name with proper model.name in config"""
+        cfg = OmegaConf.create({"model": {"name": "gru_ar"}})
+        exporter = ONNXExporter(self.model, cfg)
+        name = exporter._get_model_name()
+        self.assertEqual(name, "gru_ar")
+
+    def test_compute_input_dim_with_temporal_features(self):
+        """Test _compute_input_dim_with_transforms with temporal features"""
+        pipeline = [
+            {"name": "context", "use_static": ["a", "b", "c"]},
+            {"name": "temporal_features"},  # This branch is uncovered
+            {"name": "zscore"}
+        ]
+        dim = ONNXExporter._compute_input_dim_with_transforms(10, pipeline)
+        # Context adds 3, temporal_features adds 0 (pass through)
+        self.assertEqual(dim, 13)
+
+    def test_infer_from_model_weights_decoder_weight(self):
+        """Test _infer_from_model_weights with decoder.weight pattern"""
+        state = {
+            "encoder.weight": torch.randn(10, 20),  # input=20
+            "decoder.weight": torch.randn(5, 10)    # output=5
+        }
+        dims = ONNXExporter._infer_from_model_weights(state)
+        self.assertEqual(dims, (20, 5))
+
+    def test_infer_from_model_weights_only_decoder_bias(self):
+        """Test _infer_from_model_weights finding only decoder.bias"""
+        state = {
+            "gru.weight_ih_l0": torch.randn(30, 10),  # input=10
+            "decoder.bias": torch.randn(5)             # output=5 (fallback)
+        }
+        dims = ONNXExporter._infer_from_model_weights(state)
+        self.assertEqual(dims, (10, 5))
+
+    def test_export_unsupported_model(self):
+        """Test export raises error for ONNX unsupported models"""
+        cfg = OmegaConf.create({"model": {"name": "autoformer"}, "data": {"window_size_in": 100}})
+        exporter = ONNXExporter(self.model, cfg)
+
+        with self.assertRaises(ValueError) as context:
+            exporter.export(Path("model.onnx"), verbose=False)
+
+        self.assertIn("autoformer", str(context.exception))
+        self.assertIn("fft_rfft", str(context.exception))
+
+    def test_get_export_profile(self):
+        """Test get_export_profile returns a valid profile"""
+        profile = self.exporter.get_export_profile()
+        # Profile should have expected attributes
+        self.assertTrue(hasattr(profile, 'name'))
+        self.assertTrue(hasattr(profile, 'verification_tolerance'))
+
