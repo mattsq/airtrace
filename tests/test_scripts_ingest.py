@@ -229,6 +229,13 @@ class TestIngestDataset:
         args.skip_config = False
         args.force = False
         args.dry_run = True
+        args.index_workers = 1
+        args.index_partitioned = False
+        args.stream_index_writes = False
+        args.process_workers = 1
+        args.ffill_limit = 5
+        args.resample_backend = "pandas"
+        args.show_files = False
 
         ingest_dataset(args)
 
@@ -236,6 +243,77 @@ class TestIngestDataset:
         log_output = caplog.text
         assert "[DRY RUN]" in log_output
         assert "Would create:" in log_output
+
+    def test_ingest_dataset_full_flow(self, tmp_path):
+        """Test full ingestion flow."""
+        # Create input directory and file
+        raw_dir = tmp_path / "raw"
+        raw_dir.mkdir()
+        
+        # Create a valid flight dataframe with enough data for windowing
+        # Need enough rows for input_len + pred_len (256 + 32 = 288)
+        n_rows = 1000
+        df = pd.DataFrame({
+            'timestamp': pd.date_range('2024-01-01', periods=n_rows, freq='1S'),
+            'fuel_flow': np.random.randn(n_rows) + 1250,
+            'mach': np.random.randn(n_rows) * 0.01 + 0.82,
+            'altitude': np.random.randn(n_rows) * 100 + 35000,
+        })
+        
+        input_file = raw_dir / "flight_001.parquet"
+        df.to_parquet(input_file, index=False)
+        
+        # Create config output dir
+        config_dir = tmp_path / "configs"
+        config_dir.mkdir()
+        
+        # Create mock args
+        args = MagicMock()
+        args.input_path = str(raw_dir)
+        args.dataset_name = "test_full_flow"
+        args.split = "1.0,0.0,0.0" # All train for simplicity
+        args.seed = 42
+        args.input_len = 50
+        args.pred_len = 10
+        args.stride = 10
+        args.target_sensors = None
+        args.resample_rate = "1S"
+        args.timestamp_column = "timestamp"
+        args.flight_id_column = None
+        args.skip_processed = False
+        args.skip_config = False
+        args.force = True
+        args.dry_run = False
+        args.index_workers = 1
+        args.index_partitioned = False
+        args.stream_index_writes = False
+        args.process_workers = 1
+        args.ffill_limit = 5
+        args.resample_backend = "pandas"
+        args.show_files = False
+        
+        # Run ingestion
+        ingest_dataset(args, output_root=tmp_path, config_root=config_dir)
+        
+        # Verify processed files
+        processed_dir = tmp_path / "data" / "processed"
+        assert processed_dir.exists()
+        assert (processed_dir / "flight_001.parquet").exists()
+        
+        # Verify metadata files
+        metadata_dir = tmp_path / "data" / "metadata"
+        assert metadata_dir.exists()
+        assert (metadata_dir / "test_full_flow_train_index.parquet").exists()
+        
+        # Verify config file
+        config_file = config_dir / "test_full_flow.yaml"
+        assert config_file.exists()
+        
+        # Verify config content
+        import yaml
+        with open(config_file) as f:
+            config = yaml.safe_load(f)
+            assert config["data"]["dataset_name"] == "test_full_flow"
 
     def test_main_keyboard_interrupt(self, caplog):
         """Test handling of keyboard interrupt."""
