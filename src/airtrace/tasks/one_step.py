@@ -43,7 +43,8 @@ class OneStepTask(Task):
 
         # Get model predictions (pass metadata if available)
         output = model(x, meta=batch.get("meta", {}))
-        preds = output["preds"]  # [B, 1, D_out]
+        # Ensure we only take the first step, even if model predicts more
+        preds = output["preds"][:, :1, :]  # [B, 1, D_out]
 
         # For one-step, we predict the first timestep of y
         targets = y[:, 0:1, :]  # [B, 1, D_out]
