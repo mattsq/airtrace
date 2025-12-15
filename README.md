@@ -740,7 +740,7 @@ See [Synthetic Data Documentation](docs/synthetic_data.md) for details on the ph
 
 ## Model Registry
 
-AirTrace includes 51 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
+AirTrace includes 52 registered models spanning from simple baselines to sophisticated neural architectures. All models implement the `ARBaseModel` interface and can be composed with any data transform or task configuration.
 
 ### Recurrent Neural Networks
 
@@ -807,6 +807,7 @@ AirTrace includes 51 registered models spanning from simple baselines to sophist
 | `tsmixer` | `TSMixerModel` | TSMixer - all-MLP architecture with alternating time-mixing and feature-mixing operations for efficient multivariate forecasting (KDD 2023) |
 | `softs` | `SOFTS` | SOFTS - pure MLP-based multivariate forecaster using STAR (Aggregate-Redistribute) module with stochastic pooling for efficient channel mixing (NeurIPS 2024) |
 | `nbeats` | `NBeatsModel` | N-BEATS - residual stack of basis expansion blocks with interpretable trend/seasonality components (ICLR 2020) |
+| `nhits` | `NHiTSModel` | N-HiTS - hierarchical interpolation model with multi-resolution pooling stacks for long-horizon forecasting (AAAI 2023) |
 | `cyclenet` | `CycleNetModel` | CycleNet - residual cycle forecasting with learnable periodic patterns for extreme efficiency (NeurIPS 2024 Spotlight) |
 | `dlinear` | `DLinearModel` | DLinear - decomposition-based linear forecaster with separate trend and seasonal projections |
 | `nlinear` | `NLinearModel` | NLinear - mean-adjusted linear projection for non-stationary series |

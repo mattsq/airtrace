@@ -283,6 +283,8 @@ Simple, efficient, non-sequential architectures that surprisingly compete with t
 **Paper**: https://arxiv.org/abs/2201.12886
 **Code**: https://github.com/Nixtla/neuralforecast
 
+**Status**: Implemented as `NHiTSModel` (`configs/model/nhits.yaml`).
+
 #### Key Innovations
 
 1. **Hierarchical Interpolation**: Multi-rate data sampling (like TimeMixer but simpler)

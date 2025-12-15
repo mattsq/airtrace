@@ -38,6 +38,7 @@ from .mambats import MambaTSModel
 from .moderntcn import ModernTCNModel
 from .moirai import MoiraiModel
 from .nbeats import NBeatsModel
+from .nhits import NHiTSModel
 from .nonstationary_transformer import NonStationaryTransformerModel
 from .informer import InformerModel
 from .patchtst import PatchTSTModel
@@ -81,6 +82,7 @@ __all__ = [
     "TimesFMModel",
     "TimerModel",
     "TSMixerModel",
+    "NHiTSModel",
     "SOFTS",
     "NBeatsModel",
     "AutoformerModel",
