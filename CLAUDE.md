@@ -227,6 +227,33 @@ airtrace train exp=exp_001_gru_zscore model.hidden_dim=256 train.epochs=100
 uv pip install -e ".[dev]" --link-mode=copy
 ```
 
+**Manage config locations:**
+
+AirTrace uses a multi-path config discovery system:
+
+```bash
+# Default: configs written to ~/.airtrace/configs/data/ (survives reinstalls)
+airtrace-ingest data/raw/flights/ --dataset-name my_dataset
+
+# Write to project-local directory (for team sharing via git)
+airtrace-ingest data/raw/flights/ \
+  --dataset-name my_dataset \
+  --config-dir .airtrace/configs/data/
+
+# Use environment variable (useful in CI/CD)
+export AIRTRACE_CONFIG_DIR=/shared/configs
+airtrace-ingest data/raw/flights/ --dataset-name my_dataset
+
+# Inspect search paths
+from airtrace.utils.config_paths import get_config_search_paths
+paths = get_config_search_paths()
+```
+
+**Config search priority (first match wins):**
+1. Project-local: `<cwd>/.airtrace/configs/` (highest priority)
+2. User-level: `~/.airtrace/configs/` (default write location)
+3. Package: `pkg://airtrace.configs` (built-in defaults)
+
 ## Common Pitfalls (DON'T DO THIS)
 
 ### ❌ Hardcoding paths

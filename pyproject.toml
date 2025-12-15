@@ -60,12 +60,17 @@ airtrace = "airtrace.cli:cli"
 airtrace-generate-synthetic = "airtrace.scripts.generate_synthetic_data:cli"
 airtrace-ingest = "airtrace.scripts.ingest:main"
 
+[project.entry-points."hydra_plugins"]
+airtrace_searchpath_plugin = "hydra_plugins.airtrace_searchpath_plugin"
+
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["src", "."]
+include = ["airtrace*", "hydra_plugins*"]
 exclude = ["scripts*"]
 
 [tool.setuptools.package-data]
 airtrace = ["configs/**/*.yaml"]
+"hydra_plugins.airtrace_searchpath_plugin" = ["*.py"]
 
 [tool.black]
 line-length = 100

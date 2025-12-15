@@ -3,9 +3,11 @@ YAML configuration file generation for ingested datasets.
 """
 
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 from datetime import datetime
 import logging
+
+from airtrace.utils.config_paths import get_default_config_write_path
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +42,7 @@ class ConfigGenerator:
 
     def generate(
         self,
-        output_path: Path,
+        output_path: Optional[Path] = None,
         n_flights: int = 0,
         input_path: str = "",
         force: bool = False
@@ -48,13 +50,26 @@ class ConfigGenerator:
         """
         Generate and save YAML config.
 
+        If output_path is None, automatically determines the best location using:
+          1. AIRTRACE_CONFIG_DIR environment variable (if set)
+          2. User directory: ~/.airtrace/configs/data/ (default)
+          3. Package directory (fallback, editable installs only)
+
         Args:
-            output_path: Path to save YAML file
+            output_path: Optional path to save YAML file (None = auto-detect)
             n_flights: Total number of flights (for header comment)
             input_path: Original input path (for header comment)
             force: Overwrite existing file
+
+        Returns:
+            None
         """
-        output_path = Path(output_path)
+        # Auto-detect output path if not provided
+        if output_path is None:
+            output_path = get_default_config_write_path(self.dataset_name)
+            logger.info(f"No output path specified, using default: {output_path}")
+        else:
+            output_path = Path(output_path)
 
         # Check if file exists
         if output_path.exists() and not force:
@@ -72,7 +87,7 @@ class ConfigGenerator:
         with open(output_path, "w") as f:
             f.write(yaml_content)
 
-        logger.info(f"Generated config: {output_path}")
+        logger.info(f"Successfully wrote config to: {output_path}")
 
     def _build_yaml(self, n_flights: int, input_path: str) -> str:
         """Build YAML content string."""
