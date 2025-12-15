@@ -163,6 +163,38 @@ class Task(ABC):
 
         return metrics
 
+    def _validate_pred_shape(
+        self,
+        preds: torch.Tensor,
+        targets: torch.Tensor,
+        context: str = ""
+    ) -> None:
+        """Validate prediction and target shapes match.
+
+        Args:
+            preds: Model predictions
+            targets: Ground truth targets
+            context: Context string for error message (e.g., "training_step")
+
+        Raises:
+            ValueError: If shapes are incompatible
+
+        Note:
+            This validation helps catch configuration errors where a model's
+            pred_len is configured for a different task (e.g., multi-step)
+            than the current task (e.g., one-step).
+        """
+        if preds.shape != targets.shape:
+            raise ValueError(
+                f"{self.__class__.__name__}.{context}: "
+                f"Prediction shape {tuple(preds.shape)} does not match "
+                f"target shape {tuple(targets.shape)}. "
+                f"This usually indicates the model's pred_len is configured "
+                f"for a different task. Expected shapes to match exactly. "
+                f"If using a multi-step model with OneStepTask, ensure "
+                f"predictions are sliced to [:, :1, :] before validation."
+            )
+
     def _apply_extras(
         self,
         output: Dict[str, Any],

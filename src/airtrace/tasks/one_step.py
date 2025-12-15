@@ -49,6 +49,9 @@ class OneStepTask(Task):
         # For one-step, we predict the first timestep of y
         targets = y[:, 0:1, :]  # [B, 1, D_out]
 
+        # Validate shapes match (catches configuration errors)
+        self._validate_pred_shape(preds, targets, context="training_step")
+
         # Compute loss
         loss = self.loss_fn(preds, targets)
 

@@ -297,11 +297,71 @@ Timer is the first HuggingFace-based foundation model in AirTrace, establishing 
 
 ---
 
+### 2025-12-15 Tasks/Models: Task-Model Shape Compatibility and Broadcasting Errors
+
+**Discovered by**: Claude Sonnet 4.5 (MSE broadcasting investigation session)
+**Impact**: OneStepTask, AnomalyTask, all multi-step models (DLinear, NLinear, Transformers, etc.)
+
+**Problem**: Models like DLinear and NLinear output `[B, pred_len, D]` where `pred_len` comes from `${data.window.pred_len}` (typically 16-32 timesteps). When used with OneStepTask, this caused MSE broadcasting warnings because:
+- Model output: `[B, pred_len, D]` (e.g., [64, 32, 30])
+- Target: `[B, 1, D]` (e.g., [64, 1, 30])
+- MSELoss would broadcast and average incorrectly across the `pred_len` dimension
+
+**The Fix**: OneStepTask (and AnomalyTask) now explicitly slice model outputs to first timestep:
+```python
+preds = output["preds"][:, :1, :]  # Force [B, 1, D]
+```
+
+**Models Affected**: 25+ models use `pred_len` parameter configured via `${data.window.pred_len}`:
+- **Decomposition**: DLinear, NLinear
+- **Transformers**: Informer, Autoformer, FEDFormer, Nonstationary Transformer
+- **Patching/Channel-Independent**: PatchTST, iTransformer, Crossformer, Timexer
+- **CNN/Hybrid**: TimesNet, TimeMixer, TSMixer, CycleNet, FRETS, ModernTCN
+- **Foundation**: Timer, Moirai, Lag-Llama, Chronos-Bolt
+- **State Space**: Mamba2, MambaTS, S-Mamba
+- **Advanced**: TFT, N-BEATS, Latent Ponder, SOFTS
+
+All of these are compatible with OneStepTask after the fix (commit 62ba942, PR #197).
+
+**Key Learnings**:
+
+1. **Models are task-agnostic**: They output their configured `pred_len` regardless of task type
+   - DLinear with `pred_len=32` will always output [B, 32, D]
+   - Task is responsible for adapting model outputs to its requirements
+
+2. **Tasks handle shape slicing**:
+   - **OneStepTask**: Slices to `[:, :1, :]` (first timestep)
+   - **MultiStepTask**: Uses `[:, -1:, :]` (last timestep) in autoregressive loop
+   - **AnomalyTask**: Slices to `[:, 0:1, :]` (first timestep)
+
+3. **Config coupling**: `pred_len: ${data.window.pred_len}` couples model to data config
+   - This is intentional for multi-step tasks
+   - OneStepTask now safely handles any `pred_len` value via slicing
+
+4. **Silent failures prevented**: Added `_validate_pred_shape()` method to Task base class
+   - Validates predictions match targets before loss computation
+   - Provides clear error messages if shapes mismatch
+   - Helps catch configuration errors early
+
+**Testing**: Comprehensive regression and integration tests added:
+- `tests/test_one_step_shape_bug.py` - Reproduces original bug and verifies fix
+- `tests/test_dlinear_one_step_integration.py` - Tests DLinear/NLinear with various `pred_len` values
+- Both test suites ensure no MSE broadcasting warnings occur
+
+**Code Reference**:
+- Fix: `src/airtrace/tasks/one_step.py:47`
+- Validation: `src/airtrace/tasks/base.py:166-196`
+- Tests: `tests/test_one_step_shape_bug.py`, `tests/test_dlinear_one_step_integration.py`
+
+**Related**: Moirai `pred_len` learning (similar shape mismatch issue in model validation)
+
+---
+
 ## Current State
 
-**Total learnings**: 9
-**Last updated**: 2025-11-23
-**Most active areas**: Project structure, configuration system, data pipeline, synthetic data, baseline models, model validation, dependency management, foundation model integration
+**Total learnings**: 10
+**Last updated**: 2025-12-15
+**Most active areas**: Project structure, configuration system, data pipeline, synthetic data, baseline models, model validation, dependency management, foundation model integration, task-model compatibility
 
 ---
 
