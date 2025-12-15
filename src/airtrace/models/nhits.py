@@ -100,7 +100,7 @@ class NHiTSModel(ResidualWrapperCompatible):
         self,
         input_dim: int,
         output_dim: int,
-        pred_len: int,
+        pred_len: int = 1,
         pool_sizes: Optional[List[int]] = None,
         blocks_per_stack: int = 1,
         hidden_size: int = 256,
