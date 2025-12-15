@@ -280,7 +280,7 @@ def print_summary(
     print("\n" + "=" * 60 + "\n")
 
 
-def ingest_dataset(args):
+def ingest_dataset(args, output_root: Path = Path("."), config_root: Path = None):
     """Main ingestion pipeline."""
 
     # Parse arguments
@@ -323,12 +323,22 @@ def ingest_dataset(args):
     if sensor_metadata.sampling_rate:
         logger.info(f"  Sampling rate: {sensor_metadata.sampling_rate:.2f}s (std: {sensor_metadata.sampling_std:.2f}s)")
 
+    # Define output paths
+    processed_dir = output_root / "data" / "processed"
+    metadata_dir = output_root / "data" / "metadata"
+
     # Dry run exit
     if args.dry_run:
         logger.info("\n[DRY RUN] Would create:")
-        logger.info(f"  {len(flight_registry)} files in data/processed/")
-        logger.info(f"  3 index files in data/metadata/")
-        logger.info(f"  1 config in src/airtrace/configs/data/{dataset_name}.yaml")
+        logger.info(f"  {len(flight_registry)} files in {processed_dir}")
+        logger.info(f"  3 index files in {metadata_dir}")
+        
+        if config_root:
+            config_display_path = config_root / f"{dataset_name}.yaml"
+        else:
+            config_display_path = Path("src/airtrace/configs/data") / f"{dataset_name}.yaml"
+            
+        logger.info(f"  1 config in {config_display_path}")
         logger.info("\nRun without --dry-run to create files.")
         return
 
@@ -343,8 +353,13 @@ def ingest_dataset(args):
     # Step 3: Process flights
     if not args.skip_processed:
         logger.info("\n[Step 3/5] Processing flights...")
+        
+        # Ensure directories exist
+        processed_dir.mkdir(parents=True, exist_ok=True)
+        metadata_dir.mkdir(parents=True, exist_ok=True)
+        
         processor = FlightProcessor(
-            Path("data/processed"),
+            processed_dir,
             sensor_metadata.sensors,
             sensor_metadata.timestamp_column,
             resample_rate=args.resample_rate,
@@ -352,7 +367,7 @@ def ingest_dataset(args):
             timestamp_dtype=sensor_metadata.timestamp_dtype,
             resample_backend=args.resample_backend,
             ffill_limit=args.ffill_limit,
-            metadata_dir=Path("data/metadata"),
+            metadata_dir=metadata_dir,
             log_each_flight=args.show_files,
             show_progress=not args.show_files,
         )
@@ -393,15 +408,15 @@ def ingest_dataset(args):
         args.input_len,
         args.pred_len,
         args.stride,
-        Path("data/processed"),
-        metadata_dir=Path("data/metadata"),
+        processed_dir,
+        metadata_dir=metadata_dir,
     )
 
     train_path, val_path, test_path, window_counts = indexer.create_all_indices(
         train_ids,
         val_ids,
         test_ids,
-        Path("data/metadata"),
+        metadata_dir,
         dataset_name,
         num_workers=args.index_workers,
         write_partitioned=args.index_partitioned,
@@ -417,10 +432,15 @@ def ingest_dataset(args):
     if not args.skip_config:
         logger.info("\n[Step 5/5] Generating config file...")
         
-        # Get package config directory
-        import airtrace
-        pkg_path = Path(airtrace.__file__).parent
-        config_path = pkg_path / "configs" / "data" / f"{dataset_name}.yaml"
+        if config_root:
+            # Use provided root
+            config_path = config_root / f"{dataset_name}.yaml"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            # Get package config directory
+            import airtrace
+            pkg_path = Path(airtrace.__file__).parent
+            config_path = pkg_path / "configs" / "data" / f"{dataset_name}.yaml"
         
         config_gen = ConfigGenerator(
             dataset_name,

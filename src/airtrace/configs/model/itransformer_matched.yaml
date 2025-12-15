@@ -1,0 +1,23 @@
+# @package _global_
+#
+# iTransformer configuration matched to Informer parameter count
+# This config has 291,409 parameters vs Informer's 291,562 (99.95% match)
+#
+# Key differences from default itransformer.yaml:
+# - Smaller d_model (128 vs 512) to match Informer capacity
+# - Fewer layers (2 vs 3) since no decoder needed
+# - Smaller FFN (296 vs 2048) to precisely match parameters
+# - Fewer heads (4 vs 8) to match Informer's attention structure
+
+model:
+  name: itransformer
+  params:
+    pred_len: ${data.window.pred_len}  # Prediction window length
+    horizon: ${task.horizon}            # Actual prediction horizon
+    d_model: 128                        # Model dimension (embedding size)
+    nhead: 4                            # Number of attention heads (must divide d_model)
+    num_layers: 2                       # Number of transformer encoder layers
+    dim_feedforward: 296                # Dimension of feedforward network
+    dropout: 0.1                        # Dropout probability
+    activation: "gelu"                  # Activation function (relu, gelu)
+    use_norm: true                      # Whether to use layer normalization

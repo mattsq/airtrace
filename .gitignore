@@ -232,3 +232,15 @@ wandb/
 # IDE
 .idea/
 .vscode/
+
+# Model files
+*.pkl
+
+# localally generated data
+data/
+
+# AI generated nul files
+nul
+
+# local claude settings
+.claude/
