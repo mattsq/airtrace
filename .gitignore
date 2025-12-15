@@ -232,3 +232,13 @@ wandb/
 # IDE
 .idea/
 .vscode/
+
+# model files
+*.pkl
+
+# locally generated data
+data/
+
+# AI files
+.claude/
+nul
