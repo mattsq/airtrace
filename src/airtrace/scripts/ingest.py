@@ -18,6 +18,7 @@ from airtrace.data.ingest import (
     WindowIndexer,
     ConfigGenerator,
 )
+from airtrace.utils.config_paths import initialize_user_config_dir
 
 logging.basicConfig(
     level=logging.INFO,
@@ -173,6 +174,16 @@ Examples:
         "--skip-config",
         action="store_true",
         help="Skip creating YAML config file"
+    )
+    parser.add_argument(
+        "--config-dir",
+        type=str,
+        default=None,
+        help=(
+            "Directory to write dataset config file. "
+            "Default: ~/.airtrace/configs/data/. "
+            "Can also set AIRTRACE_CONFIG_DIR environment variable."
+        )
     )
     parser.add_argument(
         "--force",
@@ -416,12 +427,18 @@ def ingest_dataset(args):
     # Step 5: Generate config
     if not args.skip_config:
         logger.info("\n[Step 5/5] Generating config file...")
-        
-        # Get package config directory
-        import airtrace
-        pkg_path = Path(airtrace.__file__).parent
-        config_path = pkg_path / "configs" / "data" / f"{dataset_name}.yaml"
-        
+
+        # Initialize user config directory (creates ~/.airtrace/configs/ with README)
+        initialize_user_config_dir()
+
+        # Determine config path
+        config_path = None
+        if args.config_dir:
+            # User specified explicit directory
+            config_path = Path(args.config_dir) / f"{dataset_name}.yaml"
+            logger.info(f"Using specified config directory: {args.config_dir}")
+        # Otherwise config_path=None will auto-detect (user dir or env var)
+
         config_gen = ConfigGenerator(
             dataset_name,
             sensor_metadata.sensors,
@@ -432,7 +449,7 @@ def ingest_dataset(args):
         )
 
         config_gen.generate(
-            config_path,
+            config_path,  # None = auto-detect best location
             n_flights=len(train_ids) + len(val_ids) + len(test_ids),
             input_path=str(input_path),
             force=args.force

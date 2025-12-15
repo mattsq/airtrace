@@ -203,6 +203,75 @@ After ingestion, verify your data:
 airtrace train --data-check data=my_dataset
 ```
 
+### Config Discovery and Management
+
+AirTrace uses a multi-path config discovery system that makes configs portable and persistent across package reinstalls.
+
+**Where configs are searched (priority order):**
+1. **Project-local**: `<project>/.airtrace/configs/` (highest priority, for team sharing)
+2. **User-level**: `~/.airtrace/configs/` (medium priority, survives reinstalls)
+3. **Package**: Built-in configs (lowest priority, e.g., `synthetic_cruise`, `qantas_737`)
+
+**Where airtrace-ingest writes configs:**
+
+By default, configs created by `airtrace-ingest` are written to `~/.airtrace/configs/data/`, ensuring they persist across package reinstalls and are accessible from any directory.
+
+```bash
+# Default behavior - writes to ~/.airtrace/configs/data/my_dataset.yaml
+airtrace-ingest data/raw/flights/ --dataset-name my_dataset
+
+# Use it from any directory
+cd /some/other/project
+airtrace train data=my_dataset  # Works! Config is discovered automatically
+```
+
+**Custom config locations:**
+
+You can control where configs are written using `--config-dir` or the `AIRTRACE_CONFIG_DIR` environment variable:
+
+```bash
+# Write to a specific directory
+airtrace-ingest data/raw/flights/ \
+  --dataset-name my_dataset \
+  --config-dir ./custom_configs/
+
+# Use environment variable (useful in CI/CD)
+export AIRTRACE_CONFIG_DIR=/shared/team_configs
+airtrace-ingest data/raw/flights/ --dataset-name my_dataset
+
+# Write to project-local directory (share with team via git)
+airtrace-ingest data/raw/flights/ \
+  --dataset-name my_dataset \
+  --config-dir .airtrace/configs/data/
+
+# Add to version control
+git add .airtrace/configs/data/my_dataset.yaml
+git commit -m "Add team dataset config"
+```
+
+**Config priority examples:**
+
+```bash
+# If you have configs in multiple locations:
+# - Package: ~/.venv/.../airtrace/configs/data/my_dataset.yaml
+# - User:    ~/.airtrace/configs/data/my_dataset.yaml
+# - Project: ./.airtrace/configs/data/my_dataset.yaml
+
+# Project config takes precedence (overrides user and package)
+airtrace train data=my_dataset  # Uses project config if it exists
+```
+
+**Inspecting config locations:**
+
+```python
+from airtrace.utils.config_paths import get_config_search_paths
+
+# See where AirTrace searches for configs
+paths = get_config_search_paths()
+for path in paths:
+    print(f"Searching: {path}")
+```
+
 **Skip to Step 5** if using `airtrace-ingest`. The manual steps below are only needed for advanced customization.
 
 ---

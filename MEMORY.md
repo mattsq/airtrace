@@ -357,11 +357,95 @@ All of these are compatible with OneStepTask after the fix (commit 62ba942, PR #
 
 ---
 
+### 2025-12-15 Configuration: Multi-Path Config Discovery System
+
+**Discovered by**: Claude Sonnet 4.5 (Config portability implementation)
+**Impact**: airtrace-ingest, config management, Hydra composition, cross-directory workflows
+
+**Problem**: Previously, `airtrace-ingest` wrote configs to the package directory using `airtrace.__file__` path resolution. This broke portability:
+- Configs created in one directory weren't discoverable from another directory
+- Package reinstalls lost user-created configs
+- No support for user-level or project-level configs
+- Error: "Could not find 'data/simple_otp_dummy_diff'" when running from different locations
+
+**The Solution**: Implemented a Hydra SearchPathPlugin that extends config discovery to multiple locations with clear priority ordering.
+
+**Config Search Priority (First Match Wins)**:
+1. **Project-local**: `<cwd>/.airtrace/configs/` (highest priority, for team sharing via git)
+2. **User-level**: `~/.airtrace/configs/` (medium priority, survives reinstalls)
+3. **Package**: `pkg://airtrace.configs` (lowest priority, built-in defaults)
+
+**Key Implementation Details**:
+
+1. **SearchPath Plugin** (`hydra_plugins/airtrace_searchpath_plugin/__init__.py`):
+   - Implements `hydra.plugins.search_path_plugin.SearchPathPlugin`
+   - Auto-discovered by Hydra via entry points in `pyproject.toml`
+   - Checks for user and project directories, adds to search path if they exist
+   - Project directory is prepended (highest priority), user directory is appended
+
+2. **Default Write Location** (`~/.airtrace/configs/data/`):
+   - User directory is now the default write location for `airtrace-ingest`
+   - Survives package reinstalls (not in package directory)
+   - Accessible from any directory (not tied to cwd)
+   - Auto-initialized with README on first use
+
+3. **Override Options**:
+   - CLI flag: `--config-dir /custom/path`
+   - Environment variable: `AIRTRACE_CONFIG_DIR`
+   - Explicit path argument to `ConfigGenerator.generate()`
+
+4. **Path Resolution Logic** (`src/airtrace/utils/config_paths.py`):
+   ```python
+   get_default_config_write_path(dataset_name)
+   # Priority: explicit arg → env var → user dir → package dir (fallback)
+   ```
+
+**Key Learnings**:
+
+1. **Hydra package resources vs. file paths**: `@hydra.main(config_path="pkg://airtrace.configs")` uses installed package resources, not filesystem paths. This is why writing to `src/airtrace/configs/` didn't make configs discoverable after `pip install`.
+
+2. **SearchPath plugin is the right pattern**: Hydra's `SearchPathPlugin` is the official way to extend config discovery. It's auto-discovered via entry points and works seamlessly with composition.
+
+3. **Package inclusion requires special setup**: The plugin directory must be at package root (not inside `src/`), and `pyproject.toml` must include:
+   ```toml
+   [tool.setuptools.packages.find]
+   where = ["src", "."]
+   include = ["airtrace*", "hydra_plugins*"]
+
+   [project.entry-points."hydra_plugins"]
+   airtrace_searchpath_plugin = "hydra_plugins.airtrace_searchpath_plugin"
+   ```
+
+4. **User directory initialization is idempotent**: `initialize_user_config_dir()` can be called multiple times safely. It creates missing subdirectories and updates the README if needed.
+
+5. **Priority ordering prevents conflicts**: When the same config exists in multiple locations, project config overrides user config, which overrides package config. This allows local customization without modifying package files.
+
+**Testing**: Comprehensive unit and integration tests added:
+- `tests/test_config_search_path.py` - Unit tests for path resolution and plugin
+- `tests/integration/test_config_discovery.py` - End-to-end tests for config discovery
+
+**Code Reference**:
+- Plugin: `hydra_plugins/airtrace_searchpath_plugin/__init__.py`
+- Utilities: `src/airtrace/utils/config_paths.py`
+- Config generator: `src/airtrace/data/ingest/config_gen.py:43-90`
+- Ingest script: `src/airtrace/scripts/ingest.py:427-458`
+- Entry points: `pyproject.toml:63-73`
+
+**Documentation**:
+- User guide: `README.md` (Config Discovery and Management section)
+- Developer guide: `CLAUDE.md` (Manage config locations in "How do I...?" section)
+
+**Migration Path**: Backward compatible - existing package configs continue to work. User-created configs automatically use new user directory on next `airtrace-ingest` run.
+
+**Related**: Project Structure learning (config-code synchronization required)
+
+---
+
 ## Current State
 
-**Total learnings**: 10
+**Total learnings**: 11
 **Last updated**: 2025-12-15
-**Most active areas**: Project structure, configuration system, data pipeline, synthetic data, baseline models, model validation, dependency management, foundation model integration, task-model compatibility
+**Most active areas**: Project structure, configuration system, data pipeline, synthetic data, baseline models, model validation, dependency management, foundation model integration, task-model compatibility, config discovery
 
 ---
 
