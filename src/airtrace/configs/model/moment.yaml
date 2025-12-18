@@ -1,0 +1,33 @@
+# @package _global_
+
+# MOMENT Foundation Model Configuration
+# Paper: https://arxiv.org/abs/2402.03885
+# HuggingFace: AutonLab/MOMENT-1-large
+# Code: https://github.com/moment-timeseries-foundation-model/moment
+
+model:
+  name: moment
+  params:
+    # Prediction parameters
+    pred_len: 96                     # Forecast horizon (timesteps to predict)
+
+    # Model checkpoint
+    checkpoint: "AutonLab/MOMENT-1-large"  # HuggingFace model ID
+                                          # Options: AutonLab/MOMENT-1-large (best accuracy)
+                                          #          AutonLab/MOMENT-1-base (balanced)
+                                          #          AutonLab/MOMENT-1-small (fastest)
+
+    # Input processing
+    patch_size: 16                   # Patch length for tokenization
+    context_length: 512              # Maximum input context window (timesteps)
+    normalize_inputs: true           # Apply z-score normalization (recommended)
+
+    # Training configuration
+    freeze_backbone: false           # Freeze MOMENT backbone for zero-shot inference
+                                    # Set to true for zero-shot, false for fine-tuning
+    train_forecast_head: true       # Train forecast head even when backbone frozen
+                                    # Useful for adapter-based fine-tuning
+
+    # Device configuration
+    device: "cpu"                   # Device to load model on ('cpu' or 'cuda')
+                                    # Use 'cuda' for GPU acceleration if available

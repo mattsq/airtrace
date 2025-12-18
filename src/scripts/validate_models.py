@@ -443,6 +443,16 @@ def validate_single_model(
                 "freeze_backbone": True,
                 "device": device,
             }
+        elif model_name == "moment":
+            # Keep MOMENT lightweight in CI by freezing the backbone (zero-shot).
+            # Use small context length to reduce memory usage.
+            config["params"] = {
+                "pred_len": 1,
+                "context_length": 96,
+                "freeze_backbone": True,
+                "normalize_inputs": True,
+                "device": device,
+            }
 
         model = build_model(config, input_dim=input_dim, output_dim=output_dim)
 
@@ -505,6 +515,30 @@ def validate_single_model(
             }
         }
 
+    except ImportError as e:
+        # Handle missing optional dependencies gracefully
+        if "momentfm" in str(e) or "transformers" in str(e) or any(
+            pkg in str(e) for pkg in ["chronos", "moirai", "lag_llama"]
+        ):
+            print(f"⏭️  Model skipped: Optional dependency not installed")
+            print(f"   {str(e)}")
+            return {
+                "model_name": model_name,
+                "status": "skipped",
+                "reason": "optional_dependency",
+                "error": str(e)
+            }
+        else:
+            # Re-raise if it's a real import error
+            print(f"❌ Model validation failed: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return {
+                "model_name": model_name,
+                "status": "failed",
+                "error": str(e)
+            }
+
     except Exception as e:
         print(f"❌ Model validation failed: {str(e)}")
         import traceback
@@ -544,6 +578,8 @@ def print_summary_table(results: List[Dict]):
             r2 = f"{result['overall_metrics']['r2']:.4f}"
 
             print(f"{model_name:<15} {'✅ PASS':<10} {n_params:<12} {train_time:<12} {rmse:<10} {mae:<10} {r2:<10}")
+        elif status == "skipped":
+            print(f"{model_name:<15} {'⏭️  SKIP':<10} {'-':<12} {'-':<12} {'-':<10} {'-':<10} {'-':<10}")
         else:
             print(f"{model_name:<15} {'❌ FAIL':<10} {'-':<12} {'-':<12} {'-':<10} {'-':<10} {'-':<10}")
 
@@ -551,10 +587,17 @@ def print_summary_table(results: List[Dict]):
 
     # Success rate
     n_success = sum(1 for r in results if r["status"] == "success")
+    n_skipped = sum(1 for r in results if r["status"] == "skipped")
+    n_failed = sum(1 for r in results if r["status"] == "failed")
     n_total = len(results)
-    success_rate = (n_success / n_total * 100) if n_total > 0 else 0
+    n_tested = n_total - n_skipped  # Only count actually tested models
+    success_rate = (n_success / n_tested * 100) if n_tested > 0 else 0
 
-    print(f"Success Rate: {n_success}/{n_total} ({success_rate:.1f}%)")
+    print(f"Success Rate: {n_success}/{n_tested} ({success_rate:.1f}%)")
+    if n_skipped > 0:
+        print(f"Skipped (optional deps): {n_skipped}")
+    if n_failed > 0:
+        print(f"Failed: {n_failed}")
     print()
 
 
@@ -715,11 +758,17 @@ def main():
 
     # Exit with error code if any model failed
     n_failed = sum(1 for r in results if r["status"] == "failed")
+    n_skipped = sum(1 for r in results if r["status"] == "skipped")
+    n_success = sum(1 for r in results if r["status"] == "success")
+
     if n_failed > 0:
         print(f"\n❌ {n_failed} model(s) failed validation")
         sys.exit(1)
     else:
-        print(f"\n✅ All models passed validation!")
+        if n_skipped > 0:
+            print(f"\n✅ All tested models passed validation! ({n_success} passed, {n_skipped} skipped)")
+        else:
+            print(f"\n✅ All models passed validation!")
         sys.exit(0)
 
 

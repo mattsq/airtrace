@@ -37,6 +37,7 @@ from .mamba2 import Mamba2Model
 from .mambats import MambaTSModel
 from .moderntcn import ModernTCNModel
 from .moirai import MoiraiModel
+from .moment import MomentModel
 from .nbeats import NBeatsModel
 from .nhits import NHiTSModel
 from .nonstationary_transformer import NonStationaryTransformerModel
@@ -92,6 +93,7 @@ __all__ = [
     "CrossformerModel",
     "ChronosBoltModel",
     "MoiraiModel",
+    "MomentModel",
     "Mamba2Model",
     "MambaTSModel",
     "SMambaModel",
