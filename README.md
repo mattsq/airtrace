@@ -784,6 +784,7 @@ AirTrace includes 52 registered models spanning from simple baselines to sophist
 |------------|-------|-------------|
 | `chronos_bolt` | `ChronosBoltModel` | Chronos-Bolt inspired pretrained foundation model with gated conv-attention blocks, tokenizer-free patching, and optional LoRA adapters for efficient fine-tuning |
 | `moirai` | `MoiraiModel` | Moirai-style multiresolution selective state-space model combining hierarchical patching with selective scan blocks and optional LoRA adapters |
+| `moment` | `MomentModel` | MOMENT - open-source foundation model with patch-based transformer, masked reconstruction pre-training on Time-series Pile dataset, supports forecasting/classification/anomaly detection with few-shot and zero-shot capabilities (ICML 2024, CMU Auton Lab) |
 | `mamba2` | `Mamba2Model` | Temporal Mamba-2 selective state-space model with hardware-aware chunked scans, bidirectional gating, and LoRA-ready forecast head for 100k-token contexts |
 | `mambats` | `MambaTSModel` | MambaTS - improved selective state-space model with Variable Scan along Time (VST) and Temporal Mamba Blocks (TMB) for efficient long-term forecasting with linear complexity (arXiv 2024) |
 | `s_mamba` | `SMambaModel` | S-Mamba - simple selective state-space model with per-variate tokenization, bidirectional scan blocks, and MLP-based temporal mixing (Neurocomputing 2025) |
