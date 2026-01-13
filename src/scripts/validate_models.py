@@ -388,7 +388,8 @@ def validate_single_model(
     input_dim: int,
     output_dim: int,
     n_epochs: int = 10,
-    device: str = "cpu"
+    device: str = "cpu",
+    max_batches: Optional[int] = None,
 ) -> Dict:
     """Validate a single model.
 
@@ -400,6 +401,7 @@ def validate_single_model(
         output_dim: Output feature dimension
         n_epochs: Number of training epochs
         device: Device to use
+        max_batches: Optional cap on batches processed during training/validation
 
     Returns:
         Dictionary with validation results
@@ -468,16 +470,16 @@ def validate_single_model(
             print(f"🏋️  Training for {n_epochs} epochs...")
         else:
             print(f"📐 Baseline model (no training) - computing loss...")
-        max_batches = 1 if n_trainable == 0 else None
-        if max_batches is not None:
-            print(f"  ⏩ Using first {max_batches} batch for baseline evaluation")
+        batch_limit = max_batches if max_batches is not None else (1 if n_trainable == 0 else None)
+        if batch_limit is not None:
+            print(f"  ⏩ Using first {batch_limit} batch for evaluation")
         start_time = time.time()
         train_losses = train_model(
             model=model,
             train_loader=train_loader,
             n_epochs=n_epochs,
             device=device,
-            max_batches=max_batches,
+            max_batches=batch_limit,
         )
         train_time = time.time() - start_time
 
@@ -487,7 +489,7 @@ def validate_single_model(
             model=model,
             val_loader=val_loader,
             device=device,
-            max_batches=max_batches,
+            max_batches=batch_limit,
         )
 
         # Compute metrics
@@ -643,6 +645,12 @@ def main():
         help="Device to use (cpu or cuda)"
     )
     parser.add_argument(
+        "--max-batches",
+        type=int,
+        default=None,
+        help="Optional cap on the number of batches to process for training and validation"
+    )
+    parser.add_argument(
         "--models",
         type=str,
         nargs="*",
@@ -729,7 +737,8 @@ def main():
             input_dim=input_dim,
             output_dim=output_dim,
             n_epochs=args.n_epochs,
-            device=args.device
+            device=args.device,
+            max_batches=args.max_batches,
         )
         results.append(result)
 
